@@ -1,0 +1,48 @@
+﻿# Dependencies
+node_modules/
+go/pkg/
+vendor/
+
+# Build outputs
+frontend/android/app/build/
+frontend/android/build/
+frontend/dist/
+frontend/android/gradlew
+frontend/android/gradle/wrapper/gradle-wrapper.jar
+frontend/test-results/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Capacitor
+frontend/android/.gradle/
+frontend/android/local.properties
+
+# Go
+.cryon/
+*.exe
+go.sum
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Android SDK
+Android/
+android/
+
+# Temporary files
+*.tmp
+*.temp
