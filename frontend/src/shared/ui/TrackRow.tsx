@@ -7,6 +7,7 @@ import { sourceName } from "../sources";
 import { cn } from "../lib/cn";
 import { TrackQuickActions } from "./TrackQuickActions";
 import { ServiceIcon } from "./ServiceIcon";
+import { ArtistLink } from "./ArtistLink";
 
 interface TrackRowProps {
   track: Track;
@@ -80,7 +81,7 @@ export function TrackRow({
             {track.title}
           </div>
           <div className="truncate text-sm text-slate-400">
-            {track.artist}
+            <ArtistLink name={track.artist} />
             {showAlbum && track.album ? ` · ${track.album}` : ""}
           </div>
         </div>

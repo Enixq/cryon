@@ -48,6 +48,7 @@ import {
   setOAuthApplicationConfig,
   validateSource,
 } from "../shared/api/client";
+import { configuredBaseUrl, setConfiguredBaseUrl } from "../shared/lib/httpBridge";
 
 // Ключи персистентных настроек в хранилище. Плавный переход и нормализация
 // хранятся под ключами playback.crossfade / playback.normalizeVolume внутри
@@ -338,6 +339,7 @@ export function SettingsPage() {
       {tab === "general" && (
         <>
           <div className="columns-1 gap-5 lg:columns-2">
+            {(isMobileShell() || Boolean(configuredBaseUrl())) && <MobileServerSection />}
             <Section title="Интерфейс" description="Оформление приложения.">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between rounded-xl bg-white/[0.05] p-3">
@@ -368,6 +370,57 @@ export function SettingsPage() {
         </>
       )}
     </div>
+  );
+}
+
+/** Мы внутри нативной Android-оболочки (Capacitor)? */
+function isMobileShell(): boolean {
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return Boolean(cap?.isNativePlatform?.());
+}
+
+/**
+ * Адрес десктоп-приложения Cryon в локальной сети (для телефона). Сохраняется в
+ * localStorage; после сохранения приложение перезапускается, и HTTP-мост
+ * (httpBridge) переустанавливается на новый адрес — весь остальной код работает
+ * как на десктопе. На самом десктопе секция не показывается: там нативный Wails.
+ */
+function MobileServerSection() {
+  const [url, setUrl] = useState<string>(() => configuredBaseUrl());
+  const [busy, setBusy] = useState(false);
+  const apply = () => {
+    setConfiguredBaseUrl(url);
+    setBusy(true);
+    // Перезапуск, чтобы мост переустановился и client.ts «увидел» бэкенд.
+    window.setTimeout(() => window.location.reload(), 350);
+  };
+  const trimmed = url.trim();
+  return (
+    <Section
+      title="Сервер Cryon (для телефона)"
+      description="Адрес запущенного на компьютере приложения Cryon в вашей Wi-Fi-сети. Его показывает окно приложения на ПК при запуске. Пример: http://192.168.1.50:8899"
+    >
+      <div className="flex flex-col gap-2">
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          inputMode="url"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="http://192.168.х.х:8899"
+          className="rounded-xl bg-white/[0.06] px-3 py-2.5 font-mono text-sm text-white outline-none placeholder:text-slate-500 focus:bg-white/10"
+        />
+        <button
+          type="button"
+          onClick={apply}
+          disabled={busy}
+          className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm text-slate-200 transition-colors hover:border-[var(--app-accent)] hover:text-white disabled:opacity-60"
+        >
+          {busy ? "Перезапуск…" : trimmed ? "Подключиться и перезапустить" : "Отключить (демо-режим)"}
+        </button>
+      </div>
+    </Section>
   );
 }
 

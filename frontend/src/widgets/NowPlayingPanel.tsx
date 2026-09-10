@@ -29,6 +29,8 @@ import { useTrackCover } from "../shared/lib/useTrackCover";
 import { useCoverPalette } from "../shared/lib/useCoverPalette";
 import { sourceName } from "../shared/sources";
 import { cn } from "../shared/lib/cn";
+import { ArtistLink } from "../shared/ui/ArtistLink";
+import { useUiStore } from "../store/uiStore";
 import { useLyrics } from "../shared/lib/useLyrics";
 import { activeLineIndex, type LyricLine } from "../shared/lib/lyrics";
 
@@ -169,7 +171,9 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h3 className="truncate text-xl font-bold text-white">{track.title}</h3>
-              <p className="truncate text-slate-400">{track.artist}</p>
+              <p className="truncate text-slate-400">
+                <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
+              </p>
             </div>
             <button
               onClick={() => toggleLikeWithTrack({ ...track, liked: isFavorite })}
@@ -416,7 +420,9 @@ function QueueRow({
         <div className={cn("truncate text-sm font-medium", active ? "text-[#c084fc]" : "text-white")}>
           {item.title}
         </div>
-        <div className="truncate text-xs text-slate-400">{item.artist}</div>
+        <div className="truncate text-xs text-slate-400">
+          <ArtistLink name={item.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
+        </div>
       </div>
       {active && playing ? (
         <span className="text-[#a855f7]" aria-hidden>

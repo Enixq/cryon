@@ -4,6 +4,7 @@ import { useUiStore } from "../store/uiStore";
 import { Cover } from "../shared/ui/Cover";
 import { useTrackCover } from "../shared/lib/useTrackCover";
 import { sourceName } from "../shared/sources";
+import { ArtistLink } from "../shared/ui/ArtistLink";
 
 /**
  * Компактный мини-плеер над нижней навигацией (мобильная версия
@@ -46,7 +47,7 @@ export function MobileMiniPlayer() {
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-white">{track.title}</div>
             <div className="truncate text-xs text-slate-400">
-              {track.artist} · {sourceName(track.source)}
+              <ArtistLink name={track.artist} /> · {sourceName(track.source)}
             </div>
           </div>
         </button>

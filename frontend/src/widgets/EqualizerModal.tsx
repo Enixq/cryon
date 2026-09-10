@@ -145,7 +145,10 @@ export function EqualizerModal() {
                 value={gains[i] ?? 0}
                 onChange={(e) => setBand(i, Number(e.target.value))}
                 aria-label={`Полоса ${EQ_LABELS[i]} Гц`}
-                className="h-36 cursor-pointer"
+                // Явная центрированная ширина: нативный вертикальный range без
+                // width брал разную ширину в разных движках и мог смотреться
+                // смещённым в колонке. w-6 + mx-auto держат ползунок по центру.
+                className="mx-auto h-36 w-6 cursor-pointer"
                 style={{
                   writingMode: "vertical-lr",
                   direction: "rtl",

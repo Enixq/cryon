@@ -8,6 +8,7 @@ import { PlaylistCard } from "../shared/ui/PlaylistCard";
 import { Cover } from "../shared/ui/Cover";
 import { PageHeader } from "../shared/ui/PageHeader";
 import { TabBar, type TabItem } from "../shared/ui/TabBar";
+import { ArtistLink } from "../shared/ui/ArtistLink";
 import { useTrackCover } from "../shared/lib/useTrackCover";
 import { pluralWithCount } from "../shared/lib/format";
 import { listLocalTracks, listFavorites, listPlaylists } from "../shared/api/client";
@@ -131,10 +132,14 @@ export function LibraryPage() {
         actions={
           <button
             onClick={handleAddFolder}
-            className="flex items-center gap-2 rounded-xl bg-white/8 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/12"
+            aria-label="Добавить папку с музыкой"
+            title="Добавить папку с музыкой"
+            className="flex shrink-0 items-center gap-2 rounded-xl bg-white/8 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/12"
           >
             <FolderOpen size={16} />
-            Добавить папку с музыкой
+            {/* На телефоне подпись скрыта (иначе длинная кнопка распирала шапку
+                по ширине) — остаётся понятная иконка с aria-label/title. */}
+            <span className="hidden sm:inline">Добавить папку с музыкой</span>
           </button>
         }
       />
@@ -194,7 +199,7 @@ export function LibraryPage() {
                 <strong className="mt-3 truncate text-[15px] font-semibold text-white group-hover:text-[#c084fc]">
                   {albumName}
                 </strong>
-                <span className="truncate text-sm text-slate-400">{artist} · {pluralWithCount(tracks.length, "трек", "трека", "треков")}</span>
+                <span className="truncate text-sm text-slate-400"><ArtistLink name={artist} /> · {pluralWithCount(tracks.length, "трек", "трека", "треков")}</span>
               </button>
             );
           })}

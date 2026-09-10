@@ -192,14 +192,45 @@ APK на машине пользователя:
 
 ### Фаза 1 — Рефактор ядра (вынести из `package main`)
 gomobile не биндит `package main`. Выносим бэкенд в импортируемый пакет.
-- [ ] Создать `internal/core`: перенести туда `App`, реестр источников
-      ([registry.go](internal/services/registry.go) уже в `internal/services`),
-      health, wiring из [main.go](main.go)/[app.go](app.go). `main` и `mobile`
-      оба импортируют `internal/core`.
-- [ ] `localAssetHandler` ([localserver.go](localserver.go)) переносится вместе с
-      ядром (он уже почти автономен, зависит только от `*App` и `local`).
-- [ ] Десктопный `main` продолжает работать через `core` — проверить, что Wails-
-      сборка не сломалась.
+
+> **⚠️ Единственный шаг, обязательно требующий компилятора Go.** Он трогает ядро
+> рабочей десктоп-сборки и пространство имён Wails-биндингов, поэтому вслепую
+> (при недоступном гейте, см. §10) его делать НЕЛЬЗЯ — молча сломаем десктоп,
+> которым пользуются каждый день. Готов к мгновенному применению, как только
+> вернётся `go build`. Стратегия ниже сохраняет десктоп «по построению».
+
+**Риск пространства имён и как его снять.** Сгенерированные биндинги жёстко
+зашивают пакет: [App.js](frontend/wailsjs/go/main/App.js) вызывает
+`window['go']['main']['App']['Method'](...)`, а [client.ts](frontend/src/shared/api/client.ts)
+импортирует `wailsjs/go/main/App`. Если просто перенести `App` в пакет `core`,
+Wails перегенерирует биндинги как `window.go.core.App` (+ путь `wailsjs/go/core/App`)
+и весь фронтенд-мост (и [httpBridge.ts](frontend/src/shared/lib/httpBridge.ts),
+ставящий `window.go.main.App`) сломается.
+
+**Решение — обёртка через встраивание (embedding), пространство `main` сохраняется:**
+- [ ] Создать `internal/core`: перенести туда бизнес-логику — `App` (переименовать
+      в `core.App`), health, wiring, реестр уже в `internal/services`. Экспортировать
+      минимальную поверхность для `main` и `mobile`: `NewApp`, `(*App).Startup`,
+      `(*App).Shutdown`, `(*App).AssetHandler() http.Handler`,
+      `(*App).UseWailsRuntime()` (ставит desktop-хост изнутри пакета),
+      `(*App).StartMobileServer(fs.FS) (string, func(), error)`.
+- [ ] `platform.go`/`platform_wails.go`/`rpcbridge.go`/`lanserver*.go`/`mobileserver.go`
+      переезжают в `core` вместе с `App` (тот же пакет — приватные поля вроде
+      `ctx`/`platform` остаются доступны хостам). `platform_wails.go` сохраняет
+      тег `//go:build !android`, так что `core` компилируется и под android/arm64.
+- [ ] В `package main` оставить ТОНКУЮ обёртку `type App struct { *core.App }` и
+      `func NewApp() *App { a := &App{core.NewApp()}; a.UseWailsRuntime(); return a }`.
+      Wails биндит `main.App`; методы `*core.App` **промотятся** (Go включает
+      промотнутые методы в набор методов, а Wails строит биндинги рефлексией) →
+      генерируется прежний `wailsjs/go/main/App` с `window.go.main.App`.
+      **Фронтенд, httpBridge и client.ts не меняются.**
+- [ ] `main.go`: `AssetServer.Handler: app.AssetHandler()`, `OnStartup: app.Startup`,
+      `OnShutdown: app.Shutdown`, `Bind: []interface{}{app}` (обёртка).
+- [ ] **После правок — обязательно:** `wails generate module` (регенерация
+      биндингов) → `go build ./...` → `wails build`. Свериться, что в
+      `wailsjs/go/main/App.js` присутствуют все методы (промотка сработала) и
+      `window.go.main.App` не изменился.
+
 
 ### Фаза 2 — Встроенный бэкенд-сервер + gomobile-обёртка
 - [ ] Пакет `mobile` с bind-совместимой поверхностью:
@@ -319,12 +350,7 @@ cd android && ./gradlew assembleDebug
 - **Размер APK** — `.aar` тянет Go-рантайм (~несколько МБ на ABI); собирать под
   нужные ABI (`arm64-v8a`, при желании `armeabi-v7a`).
 
-## 12. Безопасность
 
-Ключ `sk-…P19T52a8` и токены `ANTHROPIC_AUTH_TOKEN` из прошлых сессий — считать
-скомпрометированными: **отозвать/перевыпустить, в код и коммиты не вносить.** В
-Android-сборке никакие ключи в APK не зашивать (легко извлекаются) — только
-пользовательский ввод в настройках, хранить в зашифрованном хранилище.
 
 ## 13. Статус
 
@@ -343,4 +369,314 @@ Android-сборке никакие ключи в APK не зашивать (л�
       Проверка **зелёная (2026-09-08, локальный прогон)**: tsc / vitest 46/46 /
       vite build + backend go build/vet/test — всё ok (нужен был `go mod tidy`).
 - [ ] Фаза 0 — упаковка фронта в дизайн-демо APK (Capacitor).
+- [~] **Автономный Android (§17) — АКТИВНЫЙ трек** (2026-09-10). Отвергнутая
+      LAN-схема (§15) заменена встроенным на устройстве сервером. **Готово и
+      сверено вычиткой:** абстракция Wails-рантайма (`platformHost`), общий
+      `rpcbridge`, seed встроенного сервера `mobileserver.go`, авто-активация
+      `httpBridge` по `__CRYON_BASE__`, полная проверка фронтенд-транспорта.
+      **Осталось (нужен компилятор/toolchain):** вынос `App`→`internal/core`
+      (обёртка-встраивание, сохраняет `window.go.main.App`), пакет `mobile`,
+      `gomobile bind`, Kotlin-оболочка, локальная музыка через MediaStore.
+      Runbook — §17.3.
 - [ ] Фазы 1–5 — встраивание Go-бэкенда, оболочка, полный порт.
+
+---
+
+## Догон (2026-09-09): баги адаптива APK + кнопка «Назад» + центровка ползунков
+
+По жалобам пользователя на debug-APK и десктоп (со скриншотами):
+
+1. **Горизонтальный «разъезд» страниц на телефоне (адаптив APK).**
+   Причина: полоса вкладок [TabBar.tsx](frontend/src/shared/ui/TabBar.tsx) была
+   обычным нескроллящимся `flex`-рядом — 4–5 вкладок (Поиск/Библиотека/Настройки)
+   не влезали по ширине и распирали всю страницу в горизонтальный скролл.
+   Исправлено:
+   - TabBar теперь `overflow-x-auto` + утилита `.no-scrollbar` (добавлена в
+     [styles.css](frontend/src/styles.css)); кнопки `shrink-0 whitespace-nowrap`
+     (в режиме `stretch` — по-прежнему `flex-1`). Лишние вкладки прокручиваются
+     ВНУТРИ полосы, страница остаётся по ширине экрана. На десктопе скролл не
+     появляется (вкладки влезают).
+   - Телефонный `<main>` в [AppLayout.tsx](frontend/src/widgets/AppLayout.tsx)
+     получил страховочный `overflow-x-hidden`.
+   - Длинная кнопка «Добавить папку с музыкой» в
+     [LibraryPage.tsx](frontend/src/pages/LibraryPage.tsx) на телефоне свёрнута до
+     иконки (`<span className="hidden sm:inline">`, + `aria-label`/`title`,
+     `shrink-0`).
+   - [PageHeader.tsx](frontend/src/shared/ui/PageHeader.tsx): `h1` получил
+     `truncate` — длинный заголовок не распирает шапку.
+
+2. **Свайп/кнопка «Назад» на Android сразу закрывали приложение.**
+   Причина: не было слушателя `backButton` — WebView уходил в дефолт (выход).
+   Исправлено:
+   - Новый хук [useAndroidBackButton.ts](frontend/src/shared/lib/useAndroidBackButton.ts),
+     смонтирован один раз в [AppLayout.tsx](frontend/src/widgets/AppLayout.tsx).
+     Порядок: закрыть открытый оверлей (полноэкранный плеер / эквалайзер /
+     «Поделиться») → шаг назад по истории (`navigate(-1)`) → на «Главную» → и
+     только на «Главной» без истории `App.exitApp()`.
+   - Плагин берётся через глобальный мост `window.Capacitor.Plugins.App` (без
+     статического импорта) — `tsc`/`vite build` не зависят от факта установки
+     пакета; вне нативной оболочки хук — no-op.
+   - В [package.json](frontend/package.json) добавлен `@capacitor/app` (^7.1.0).
+     **Требует действий пользователя** (см. ниже): `npm i` + `npx cap sync
+     android` + пересборка APK — иначе нативный плагин `backButton` в APK не
+     появится и жест «Назад» останется дефолтным.
+
+3. **Ползунок громкости на десктопе стоял ниже центра.**
+   Причина: [Slider.tsx](frontend/src/shared/ui/Slider.tsx) центрировал дорожку
+   через `flex items-center` на корне, а место вызова в
+   [PlayerBar.tsx](frontend/src/widgets/PlayerBar.tsx) передавало display-класс
+   `lg:block`, который перебивал `flex` → дорожка уезжала вверх, ползунок казался
+   ниже. Исправлено: центрирование сделано независимым от `display` — дорожка и
+   ползунок позиционируются абсолютно (`top-1/2 -translate-y-1/2`), корню оставлен
+   только `relative` + высота. Место вызова заодно переведено на `lg:flex`.
+
+4. **Эквалайзер («также»).** Полосы — нативные вертикальные `input[type=range]`
+   ([EqualizerModal.tsx](frontend/src/widgets/EqualizerModal.tsx)). Им задана
+   явная центрированная ширина (`mx-auto w-6`), чтобы ползунок гарантированно
+   стоял по центру колонки во всех движках. Если конкретная претензия к
+   эквалайзеру после этого сохранится — нужен точечный скриншот (в этой среде
+   визуальная проверка недоступна).
+
+**Что должен сделать пользователь для APK-фикса «Назад»** (среда без Android
+toolchain):
+```bash
+cd frontend
+npm i                       # подтянет @capacitor/app
+npx cap sync android        # прокинет плагин в нативный проект
+cd android && ./gradlew assembleDebug
+# → app/build/outputs/apk/debug/app-debug.apk
+```
+Правки адаптива и десктопных ползунков — чисто фронтендовые, попадут в APK при
+обычной пересборке (`npm run build` + `npx cap sync android`).
+
+## 14. Безопасность (повтор)
+
+Ключ `sk-…P19T52a8` и токены `ANTHROPIC_AUTH_TOKEN` — считать скомпрометированными:
+отозвать/перевыпустить, в код и коммиты не вносить. В APK ключи не зашивать.
+
+---
+
+## 15. Минимальный рабочий Android через LAN (2026-09-09) — ⛔ ОТКЛОНЁН пользователем, СМ. §17
+
+> **Устарело.** Пользователь отверг схему «телефон → ПК по локальной сети»
+> дословно: «Мне так не нужно, вдруг я захочу поделиться, либо уехать и по
+> мобильной сети чтобы работало. Это не рабочее, переделать.» Ей на смену пришёл
+> **автономный встроенный сервер на устройстве** — см. §17. LAN-код
+> ([lanserver.go](lanserver.go), тег `cryonlan`) оставлен только как
+> отладочный стенд в доверенной домашней сети и физически изолирован сборочным
+> тегом (в обычную сборку не попадает). Раздел ниже сохранён как история решения.
+
+Цель пользователя: «хотя бы минимально, чтобы уже работало, потестить». Выбран
+самый быстрый и наименее рискованный путь — **телефон как клиент десктопа по
+Wi-Fi**, без gomobile и без рискованного рефактора `internal/core`. Переиспользуем
+уже существующие `App` (чистый Go) и `localAssetHandler` (тот же прокси
+`/stream`, что и на десктопе).
+
+### Как это работает
+- На ПК приложение поднимает второй HTTP-сервер на `0.0.0.0:8899`
+  ([lanserver.go](lanserver.go), только сборка `-tags cryonlan`; иначе no-op
+  [lanserver_stub.go](lanserver_stub.go) — рабочий десктоп-билд не затрагивается).
+- `POST /api/call` `{method,args}` — рефлексивный RPC по экспортируемым методам
+  `App` (контракт совпадает с Wails: первое не-error значение = результат).
+  `/local/` и `/stream/` делегируются существующему `localAssetHandler`. На всё
+  повешен разрешающий CORS + preflight OPTIONS.
+- На телефоне [httpBridge.ts](frontend/src/shared/lib/httpBridge.ts) ставит на
+  `window.go`/`window.runtime` совместимые с Wails заглушки, гоняющие вызовы по
+  HTTP на адрес сервера. Благодаря этому **весь `client.ts` (60 функций) не
+  тронут** — `isWailsRuntime()` становится true. Мост включается ТОЛЬКО если в
+  настройках задан адрес сервера и это не настоящий Wails.
+- Мост ставится первым side-effect импортом
+  ([installBridge.ts](frontend/src/shared/lib/installBridge.ts)) до загрузки App,
+  т.к. `playerStore` читает `isWailsRuntime()` уже при импорте.
+- Звук: `getPlaybackUrlForHtml5` в LAN-режиме отдаёт абсолютный
+  `http://<IP>:8899/stream/...`; `<audio>` помечен `crossOrigin="anonymous"`,
+  сервер отдаёт CORS → перемотка (Range) и эквалайзер (Web Audio) работают.
+  Плеер mpv на телефоне выключен (мост гасит `Player*`) — звук идёт через HTML5.
+- Capacitor: `androidScheme:'http'` + `usesCleartextTraffic="true"` — чтобы
+  страница `http://localhost` могла обращаться к `http://<IP>:8899` (не mixed
+  content).
+
+### Затронутые файлы
+- Новые: [lanserver.go](lanserver.go), [lanserver_stub.go](lanserver_stub.go),
+  [httpBridge.ts](frontend/src/shared/lib/httpBridge.ts),
+  [installBridge.ts](frontend/src/shared/lib/installBridge.ts).
+- Правки: [app.go](app.go) (`startup` → `a.startLANServer()`),
+  [main.tsx](frontend/src/main.tsx) (первый импорт моста),
+  [client.ts](frontend/src/shared/api/client.ts) (`getPlaybackUrlForHtml5` —
+  префикс `__CRYON_BASE__`), [audioEngine.ts](frontend/src/store/audioEngine.ts)
+  (`crossOrigin`), [SettingsPage.tsx](frontend/src/pages/SettingsPage.tsx)
+  (поле «Сервер Cryon» в «Общее»),
+  [capacitor.config.ts](frontend/capacitor.config.ts) (http),
+  [AndroidManifest.xml](frontend/android/app/src/main/AndroidManifest.xml)
+  (cleartext).
+
+### Что должен сделать пользователь (среда без Android/Go toolchain)
+
+**1. На ПК — собрать и запустить десктоп С LAN-сервером:**
+```powershell
+# из корня проекта
+wails build -tags cryonlan          # или для разработки: wails dev -tags cryonlan
+# запустить собранный .exe (build/bin) — в логе будет:
+#   LAN-сервер Cryon запущен …
+#   LAN-адрес url=http://192.168.x.x:8899   ← запомнить этот адрес
+```
+- Если Windows Defender спросит про сеть — разрешить доступ в **частной** сети
+  (иначе телефон не достучится до порта 8899).
+- Обычный `wails build` (без `-tags cryonlan`) по-прежнему собирает чистый
+  десктоп без сервера — ничего не сломано.
+
+**2. На ПК — собрать APK:**
+```bash
+cd frontend
+npm i
+npm run build
+npx cap sync android
+cd android && ./gradlew assembleDebug
+# → app/build/outputs/apk/debug/app-debug.apk
+```
+
+**3. На телефоне:**
+- Телефон и ПК — в одной Wi-Fi-сети.
+- Установить `app-debug.apk`, открыть приложение.
+- Настройки → «Общее» → «Сервер Cryon (для телефона)» → ввести адрес из п.1
+  (`http://192.168.x.x:8899`) → «Подключиться и перезапустить».
+- После перезапуска поиск, библиотека и воспроизведение идут с ПК.
+
+### Ограничения v1 (осознанно)
+- Нет live-событий по сети (`/api/events` не реализован) → статусы источников и
+  «Яндекс подключён» не обновляются мгновенно; помогает переход между экранами
+  (react-query перезапрашивает). Не критично для теста.
+- Системные диалоги выбора папки/файла с телефона отключены (открылись бы на ПК).
+- Требуется, чтобы десктоп-приложение было запущено на ПК.
+- Это ступенька к встроенному gomobile-серверу (Фазы 1–2) — при переходе фронт и
+  RPC-контракт не меняются, меняется лишь адрес backend (localhost внутри APK).
+
+### Проверка (когда вернётся возможность компиляции)
+- Десктоп без изменений: `go build ./...`, `go vet ./...`, `wails build`.
+- LAN-сборка: `go build -tags cryonlan ./...`, `go vet -tags cryonlan ./...`.
+- Фронт: `tsc -b`, `vitest run`, `vite build`.
+- Могу оперативно поправить любые ошибки компиляции — код писался без доступного
+  компилятора (классификатор недоступен), проверен вычиткой.
+
+## 16. Безопасность (повтор)
+
+Секреты остаются на ПК: телефон хранит только введённый адрес сервера, по сети
+ключи не передаются, в APK ничего не зашито. Ключ `sk-…P19T52a8` и токены
+`ANTHROPIC_AUTH_TOKEN` — скомпрометированы: отозвать/перевыпустить, в код/коммиты
+не вносить.
+
+---
+
+## 17. АВТОНОМНЫЙ Android — встроенный сервер на устройстве (2026-09-10)
+
+Замена отвергнутой LAN-схемы (§15). Требование пользователя дословно: «вдруг я
+захочу поделиться, либо уехать и по мобильной сети чтобы работало». Значит Go-
+бэкенд поднимается **внутри телефона** (gomobile bind → HTTP-сервер на
+`127.0.0.1:<случайный порт>`), а WebView грузит этот адрес. Работает и по
+мобильной сети, и без включённого ПК, приложением можно поделиться. Фронтенд и
+RPC-контракт те же, что на десктопе.
+
+### 17.1. Сделано и проверено вычиткой (код, тег-изоляция — рабочий билд не задет)
+
+- [x] **Абстракция Wails-рантайма.** Введён интерфейс `platformHost`
+      (`Emit/OpenURL/PickFile/PickDirectory`) — [platform.go](platform.go).
+      Три реализации: `nullHost` (по умолчанию/тесты, no-op),
+      `wailsHost` (десктоп, [platform_wails.go](platform_wails.go), тег
+      `//go:build !android`), `sseHost` (устройство, события в SSE). Все 16
+      `runtime.EventsEmit`, `BrowserOpenURL` и два системных диалога в
+      [app.go](app.go)/[oauth.go](oauth.go) переведены на `a.platform.*`.
+      **Итог: Wails-рантайм импортируют ТОЛЬКО [main.go](main.go) и
+      [platform_wails.go](platform_wails.go)** — `app.go`/`oauth.go` больше не
+      зависят от Wails и станут пригодны для android/arm64 после выноса в `core`
+      (Фаза 1). Поведение десктопа байт-в-байт прежнее (те же вызовы через
+      интерфейс).
+- [x] **Общий рефлексивный RPC** вынесен в [rpcbridge.go](rpcbridge.go)
+      (тег `cryonlan || cryonmobile`): `serveRPC`/`writeJSON`/`writeRPCError` —
+      один код для LAN и мобильного серверов.
+- [x] **Встроенный сервер (seed)** — [mobileserver.go](mobileserver.go) (тег
+      `cryonmobile`): `sseHub`+`serveEvents` (SSE вместо Wails-событий), `sseHost`,
+      `injectBaseURL` (вставляет `window.__CRYON_BASE__=location.origin` в
+      `<head>`), `startMobileServer(spa fs.FS)` — mux (`/api/call`, `/api/events`,
+      `/local/`, `/stream/`, SPA-фолбэк), слушает `127.0.0.1:0`, отдаёт baseURL и
+      stop-функцию. Тег держит его вне десктоп-сборки.
+- [x] **Фронтенд-мост авто-активируется на устройстве.**
+      [httpBridge.ts](frontend/src/shared/lib/httpBridge.ts): `injectedBaseUrl()`
+      читает `window.__CRYON_BASE__` (приоритет над сохранённым вручную адресом),
+      ставит `window.go.main.App` + `window.runtime` до рендера React; подписка
+      `browser:open` открывает ссылки средствами WebView.
+- [x] **Транспорт фронтенда сверен по всей цепочке (вычитка):**
+      - `isWailsRuntime()` → true (мост ставит `window.go.main.App`).
+      - Биндинги резолвят `window.go.main.App[...]` **в момент вызова** →
+        порядок импортов не важен, все `App.*` уходят в `fetch(base+"/api/call")`.
+      - `runtime.EventsOn/BrowserOpenURL` — тоже call-time → события идут по SSE.
+      - Плеер: `PlayerBackendAvailable`→false ⇒ [audioEngine.ts](frontend/src/store/audioEngine.ts)
+        минует ветку mpv (строка ~282) и играет через HTML5 `<audio>` (строка ~306).
+      - URL потока: `getPlaybackUrlForHtml5` = `__CRYON_BASE__ + "/stream/…"` →
+        same-origin `http://127.0.0.1:<port>/stream/…`, CORS не нужен.
+      **Вывод: фронтенд к автономному режиму готов, правок не требует.**
+
+### 17.2. Осталось (требует компилятора Go и/или Android-toolchain — не в этой среде)
+
+1. **Фаза 1 — вынос `App` в `internal/core`** через обёртку-встраивание (см. §6,
+   Фаза 1). Единственный шаг, трогающий рабочий десктоп → делаем ТОЛЬКО с
+   компилятором. Сохраняет `window.go.main.App`.
+2. **Пакет `mobile`** (bind-совместимый, НЕ `main`):
+   ```go
+   package mobile
+   //go:embed all:dist            // сюда кладётся собранный frontend/dist
+   var assets embed.FS
+   func Start(dataDir string) (string, error) // core.NewApp→Startup→StartMobileServer(sub(dist))
+   func Stop()                                  // вызывает stop-функцию сервера
+   ```
+   `dataDir` = Android `context.getFilesDir()`. Embed каталог заполняется перед
+   bind (`vite build` → копия `frontend/dist` → `mobile/dist`).
+3. **gomobile bind:** `gomobile bind -target=android -androidapi 24 -o android/app/libs/cryonmobile.aar ./mobile`.
+4. **Kotlin-оболочка** (новый gradle-проект `android/`, БЕЗ Capacitor):
+   `MainActivity` (полноэкранный WebView: `javaScriptEnabled`,
+   `domStorageEnabled`, `mediaPlaybackRequiresUserGesture=false`; `Mobile.start(filesDir)`
+   → `loadUrl(base)`); `PlaybackService` (ForegroundService + `MediaSessionCompat`);
+   `AndroidManifest`: `INTERNET`, `FOREGROUND_SERVICE(+_MEDIA_PLAYBACK)`,
+   `POST_NOTIFICATIONS`, `READ_MEDIA_AUDIO`, `WAKE_LOCK`; кнопка «Назад» через
+   `WebView.canGoBack()`.
+5. **Локальная музыка на Android (замена «добавить папку»):** сканирование
+   `MediaStore.Audio` на стороне Kotlin (после запроса `READ_MEDIA_AUDIO`),
+   передача списка треков в backend новым методом `App.ImportAndroidTracks(json)`;
+   воспроизведение `content://`-URI обслуживает Kotlin-мост (Go не открывает
+   content-URI). Спроектировано, реализация — после Фаз 1–4 (нужен девайс/эмулятор).
+
+### 17.3. Runbook — выполнить на машине с toolchain (по порядку)
+
+```bash
+# 0) Предустановка (один раз): JDK 17, Android SDK+NDK, Go 1.26,
+#    go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init
+
+# 1) Фаза 1 (с компилятором): вынести App→internal/core обёрткой-встраиванием,
+#    затем регенерация и проверка ДЕСКТОПА:
+wails generate module
+go build ./...            # + go vet ./...  + go test ./...
+wails build              # десктоп цел, window.go.main.App на месте
+go build -tags cryonmobile ./...   # мобильный серверный код компилируется
+
+# 2) Собрать фронтенд и вложить в пакет mobile
+cd frontend && npm i && npm run build && cd ..
+#   скопировать frontend/dist → mobile/dist (для //go:embed)
+
+# 3) gomobile bind → .aar
+gomobile bind -target=android -androidapi 24 -o android/app/libs/cryonmobile.aar ./mobile
+
+# 4) Собрать APK автономной оболочки
+cd android && ./gradlew assembleDebug
+# → android/app/build/outputs/apk/debug/app-debug.apk  (работает без ПК, по любой сети)
+```
+
+**Проверки, которые прогнать при возврате гейта:** `go build/vet/test ./...`,
+`go build -tags cryonmobile ./...`, `go build -tags cryonlan ./...`, `tsc -b`,
+`vitest run`, `vite build`. Любые ошибки компиляции правлю сразу — код писался без
+доступного компилятора.
+
+### 17.4. Безопасность
+
+Сервер слушает ТОЛЬКО петлю `127.0.0.1` (из сети недоступен). Ключи/секреты в APK
+не зашиваются — только пользовательский ввод в зашифрованных настройках. Ключ
+`sk-…P19T52a8` и токены `ANTHROPIC_AUTH_TOKEN` считать скомпрометированными:
+отозвать/перевыпустить, в код/коммиты не вносить.

@@ -20,6 +20,17 @@ interface UiState {
   nowPlayingOpen: boolean;
   toggleNowPlaying: () => void;
   setNowPlayingOpen: (v: boolean) => void;
+  /**
+   * Ручное сворачивание встроенной панели «Сейчас играет» на ШИРОКОМ экране
+   * (аналог сворачивания сайдбара). Кнопка-очередь в плеере переключает его:
+   * на широком экране панель и так видна справа, поэтому кнопка теперь
+   * прячет/показывает её (раньше лишь скроллила к уже видимой очереди и
+   * выглядела «ничего не делающей»). На узких экранах панель скрыта из потока и
+   * открывается выдвижной (nowPlayingOpen) — этот флаг там не действует.
+   */
+  nowPlayingCollapsed: boolean;
+  toggleNowPlayingCollapsed: () => void;
+  setNowPlayingCollapsed: (v: boolean) => void;
   /** Открыто ли модальное окно эквалайзера. */
   equalizerOpen: boolean;
   toggleEqualizer: () => void;
@@ -43,6 +54,9 @@ export const useUiStore = create<UiState>((set) => ({
   nowPlayingOpen: false,
   toggleNowPlaying: () => set((s) => ({ nowPlayingOpen: !s.nowPlayingOpen })),
   setNowPlayingOpen: (v) => set({ nowPlayingOpen: v }),
+  nowPlayingCollapsed: false,
+  toggleNowPlayingCollapsed: () => set((s) => ({ nowPlayingCollapsed: !s.nowPlayingCollapsed })),
+  setNowPlayingCollapsed: (v) => set({ nowPlayingCollapsed: v }),
   equalizerOpen: false,
   toggleEqualizer: () => set((s) => ({ equalizerOpen: !s.equalizerOpen })),
   setEqualizerOpen: (v) => set({ equalizerOpen: v }),

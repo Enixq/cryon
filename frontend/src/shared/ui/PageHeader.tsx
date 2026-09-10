@@ -28,7 +28,7 @@ export function PageHeader({ title, subtitle, icon: Icon, actions }: PageHeaderP
           </div>
         )}
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-white sm:text-3xl">{title}</h1>
+          <h1 className="truncate text-2xl font-bold text-white sm:text-3xl">{title}</h1>
           {subtitle && <p className="mt-0.5 text-sm text-slate-400">{subtitle}</p>}
         </div>
       </div>

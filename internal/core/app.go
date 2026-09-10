@@ -1,5 +1,4 @@
-package main
-
+package core
 import (
 	"archive/zip"
 	"context"
@@ -34,7 +33,6 @@ import (
 	"Cryon2/internal/store"
 	storeSqlite "Cryon2/internal/store/sqlite"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -100,6 +98,11 @@ type App struct {
 	runtimeErrors map[domain.ServiceID]string
 	yaLogin       yandexLogin
 	oauth         *oauthCoordinator
+	// platform абстрагирует зависящие от среды вызовы (события, браузер,
+	// диалоги) за интерфейсом, чтобы логика App не зависела от Wails-рантайма
+	// напрямую. Десктоп внедряет wailsHost (в main), мобайл — SSE/no-op. По
+	// умолчанию nullHost, поэтому поле никогда не nil (тесты, ранний старт).
+	platform platformHost
 }
 
 func NewApp() *App {
@@ -112,6 +115,7 @@ func NewApp() *App {
 		player:           playback.New(cfg.MPVPath),
 		validationErrors: make(map[domain.ServiceID]string),
 		runtimeErrors:    make(map[domain.ServiceID]string),
+		platform:         nullHost{}, // десктоп заменит на wailsHost в main
 	}
 	app.lyrics = lyrics.New()
 	app.oauth = newOAuthCoordinator(app)
@@ -145,6 +149,9 @@ func (a *App) startup(ctx context.Context) {
 	logging.L().Info("Cryon2 запущен")
 	// Периодический live-контроль доступности источников (задача 38).
 	a.startHealthChecks(ctx)
+	// LAN-сервер для телефона (только сборка `wails build -tags cryonlan`;
+	// иначе no-op из lanserver_stub.go).
+	a.startLANServer()
 }
 
 func (a *App) CurrentAccount() (LocalAccount, bool, error) {
@@ -242,7 +249,7 @@ func (a *App) ImportFavorites(source string) (FavoritesImportResult, error) {
 			}
 			result.Imported++
 		}
-		runtime.EventsEmit(a.ctx, favoritesChangedEvent)
+		a.platform.Emit(favoritesChangedEvent)
 		a.pushNotification("success", "Импорт Spotify завершён", fmt.Sprintf("Обработано треков: %d из %d.", result.Imported, result.Found))
 		return result, nil
 	}
@@ -265,7 +272,7 @@ func (a *App) ImportFavorites(source string) (FavoritesImportResult, error) {
 		}
 		result.Imported++
 	}
-	runtime.EventsEmit(a.ctx, favoritesChangedEvent)
+	a.platform.Emit(favoritesChangedEvent)
 	a.pushNotification("success", "Импорт избранного завершён", fmt.Sprintf("Yandex Music: обработано треков: %d из %d; дубликаты пропущены.", result.Imported, result.Found))
 	return result, nil
 }
@@ -274,10 +281,11 @@ func (a *App) ImportFavorites(source string) (FavoritesImportResult, error) {
 // Такой импорт не требует OAuth Client ID: Spotify формирует архив на странице
 // Account privacy, а приложение читает только YourLibrary.json локально.
 func (a *App) PickSpotifyLibraryExport() (string, error) {
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title:   "Выберите выгрузку Spotify (ZIP или YourLibrary.json)",
-		Filters: []runtime.FileFilter{{DisplayName: "Spotify export", Pattern: "*.zip;*.json"}},
-	})
+	return a.platform.PickFile(
+		"Выберите выгрузку Spotify (ZIP или YourLibrary.json)",
+		"Spotify export",
+		"*.zip;*.json",
+	)
 }
 
 // ImportSpotifyLibraryExport импортирует liked songs из официальной выгрузки
@@ -298,7 +306,7 @@ func (a *App) ImportSpotifyLibraryExport(path string) (FavoritesImportResult, er
 		}
 		result.Imported++
 	}
-	runtime.EventsEmit(a.ctx, favoritesChangedEvent)
+	a.platform.Emit(favoritesChangedEvent)
 	a.pushNotification("success", "Импорт Spotify завершён", fmt.Sprintf("Из выгрузки добавлено треков: %d из %d.", result.Imported, result.Found))
 	return result, nil
 }
@@ -480,7 +488,7 @@ func (a *App) restoreServiceCredentials(ctx context.Context) {
 
 func (a *App) emitSourceStatusChanged() {
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, sourceStatusChangedEvent)
+		a.platform.Emit(sourceStatusChangedEvent)
 	}
 }
 
@@ -777,7 +785,7 @@ func (a *App) AddFavorite(t domain.Track) error {
 		return err
 	}
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, favoritesChangedEvent)
+		a.platform.Emit(favoritesChangedEvent)
 	}
 	return nil
 }
@@ -791,7 +799,7 @@ func (a *App) RemoveFavorite(service string, trackID string) error {
 		return err
 	}
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, favoritesChangedEvent)
+		a.platform.Emit(favoritesChangedEvent)
 	}
 	return nil
 }
@@ -828,7 +836,7 @@ func (a *App) pushNotification(kind, title, message string) {
 		return
 	}
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, notificationsChangedEvent)
+		a.platform.Emit(notificationsChangedEvent)
 	}
 }
 
@@ -868,7 +876,7 @@ func (a *App) MarkAllNotificationsRead() error {
 	if err := a.store.NotificationMarkAllRead(a.ctx); err != nil {
 		return err
 	}
-	runtime.EventsEmit(a.ctx, notificationsChangedEvent)
+	a.platform.Emit(notificationsChangedEvent)
 	return nil
 }
 
@@ -880,7 +888,7 @@ func (a *App) RemoveNotification(id string) error {
 	if err := a.store.NotificationRemove(a.ctx, id); err != nil {
 		return err
 	}
-	runtime.EventsEmit(a.ctx, notificationsChangedEvent)
+	a.platform.Emit(notificationsChangedEvent)
 	return nil
 }
 
@@ -892,7 +900,7 @@ func (a *App) ClearNotifications() error {
 	if err := a.store.NotificationClear(a.ctx); err != nil {
 		return err
 	}
-	runtime.EventsEmit(a.ctx, notificationsChangedEvent)
+	a.platform.Emit(notificationsChangedEvent)
 	return nil
 }
 
@@ -941,7 +949,7 @@ func (a *App) SetLastFMKey(apiKey string) error {
 	// Сообщаем фронтенду, чтобы экран настроек и Home обновили статус без
 	// перезагрузки.
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "lastfm:changed")
+		a.platform.Emit("lastfm:changed")
 	}
 	return nil
 }
@@ -1016,7 +1024,7 @@ func (a *App) SetRecoFeedback(artist, title string, score int) (map[string]int, 
 		return map[string]int{}, err
 	}
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, recoChangedEvent)
+		a.platform.Emit(recoChangedEvent)
 	}
 	return state, nil
 }
@@ -1285,7 +1293,7 @@ func (a *App) SetYandexToken(token string) error {
 	// Сообщаем фронтенду об успешном подключении, чтобы боковая панель и
 	// экран настроек обновили статус без перезагрузки.
 	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "yandex:connected")
+		a.platform.Emit("yandex:connected")
 		a.emitSourceStatusChanged()
 	}
 	if token != "" {
@@ -1306,7 +1314,7 @@ func (a *App) StartYandexLogin() error {
 	if a.ctx == nil {
 		return fmt.Errorf("приложение ещё не готово")
 	}
-	runtime.BrowserOpenURL(a.ctx, yandexTokenHelperURL)
+	a.platform.OpenURL(yandexTokenHelperURL)
 	return nil
 }
 
@@ -1532,9 +1540,9 @@ func (a *App) ResetAllData() error {
 	}
 	if a.ctx != nil {
 		a.emitSourceStatusChanged()
-		runtime.EventsEmit(a.ctx, favoritesChangedEvent)
-		runtime.EventsEmit(a.ctx, "lastfm:changed")
-		runtime.EventsEmit(a.ctx, "yandex:connected")
+		a.platform.Emit(favoritesChangedEvent)
+		a.platform.Emit("lastfm:changed")
+		a.platform.Emit("yandex:connected")
 	}
 	return nil
 }
@@ -1740,9 +1748,7 @@ func (a *App) clearSourceValidation(id domain.ServiceID) {
 // PickMusicFolder открывает системный диалог выбора папки и возвращает
 // выбранный путь. Пустая строка — пользователь отменил выбор.
 func (a *App) PickMusicFolder() (string, error) {
-	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Выберите папку с музыкой",
-	})
+	return a.platform.PickDirectory("Выберите папку с музыкой")
 }
 
 // AddLocalFolder добавляет папку в список источников локальной музыки

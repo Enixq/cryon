@@ -13,6 +13,7 @@ import { Cover } from "../shared/ui/Cover";
 import { GenreCard } from "../shared/ui/GenreCard";
 import { PageHeader } from "../shared/ui/PageHeader";
 import { TabBar, type TabItem } from "../shared/ui/TabBar";
+import { ArtistLink } from "../shared/ui/ArtistLink";
 import { cn } from "../shared/lib/cn";
 import { pluralWithCount } from "../shared/lib/format";
 import type { SourceId, Track } from "../shared/types";
@@ -448,7 +449,7 @@ export function SearchPage() {
                         <strong className="mt-3 truncate text-[15px] font-semibold text-white group-hover:text-[#c084fc]">{a.title}</strong>
                         <span className="flex items-center gap-1.5 truncate text-sm text-slate-400">
                           <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: SOURCES[primarySource(a.sources)].dot }} />
-                          <span className="truncate">{a.artist} · {SOURCES[primarySource(a.sources)].name}</span>
+                          <span className="truncate"><ArtistLink name={a.artist} /> · {SOURCES[primarySource(a.sources)].name}</span>
                         </span>
                       </button>
                     ))}

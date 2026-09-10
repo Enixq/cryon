@@ -17,6 +17,7 @@ import { useNotificationStore } from "../store/notificationStore";
 import { usePlaybackSettingsStore } from "../store/playbackSettingsStore";
 import { usePlayerPersistence } from "../shared/lib/usePlayerPersistence";
 import { useMediaSession } from "../shared/lib/useMediaSession";
+import { useAndroidBackButton } from "../shared/lib/useAndroidBackButton";
 import { useUiStore } from "../store/uiStore";
 import { useMediaQuery, LAYOUT_BREAKPOINTS } from "../shared/lib/useMediaQuery";
 import { OnboardingModal } from "./OnboardingModal";
@@ -51,6 +52,11 @@ export function AppLayout() {
 
   // Системные медиа-контролы (SMTC на Windows) + аппаратные медиа-клавиши.
   useMediaSession();
+
+  // Аппаратная кнопка / жест «Назад» на Android: закрыть оверлей → шаг назад по
+  // истории → на «Главную» → и только затем выход. Без этого WebView по
+  // умолчанию сразу закрывал приложение. Вне нативной оболочки — no-op.
+  useAndroidBackButton();
 
   // Гидратация настроек воспроизведения (нормализация, плавный переход) из
   // хранилища — один раз при старте. audioEngine подписан на этот стор и
@@ -113,6 +119,7 @@ export function AppLayout() {
   const isPhone = useMediaQuery(LAYOUT_BREAKPOINTS.phone);
   const nowPlayingOpen = useUiStore((s) => s.nowPlayingOpen);
   const setNowPlayingOpen = useUiStore((s) => s.setNowPlayingOpen);
+  const nowPlayingCollapsed = useUiStore((s) => s.nowPlayingCollapsed);
 
   // Когда экран снова расширяется, выдвижная панель больше не нужна: закрываем
   // её, чтобы при возврате на узкий экран она не всплывала сама собой.
@@ -120,9 +127,10 @@ export function AppLayout() {
     if (!isNarrow && nowPlayingOpen) setNowPlayingOpen(false);
   }, [isNarrow, nowPlayingOpen, setNowPlayingOpen]);
 
-  // Встроенная панель — только на широком экране. На узком показываем её как
-  // выдвижную поверх контента (по кнопке в топбаре / плеере).
-  const showInlineNowPlaying = !isNarrow;
+  // Встроенная панель — только на широком экране И если пользователь не свернул
+  // её кнопкой-очередью в плеере. На узком показываем её как выдвижную поверх
+  // контента (по кнопке в топбаре / плеере).
+  const showInlineNowPlaying = !isNarrow && !nowPlayingCollapsed;
   const showOverlayNowPlaying = isNarrow && nowPlayingOpen;
 
   return (
@@ -147,7 +155,7 @@ export function AppLayout() {
              Скролл-контент на всю высоту, под ним мини-плеер и нижняя
              навигация; полноэкранный «Сейчас играет» — оверлеем поверх. */
           <div className="flex min-w-0 flex-1 flex-col">
-            <main className="min-w-0 flex-1 overflow-y-auto px-4 pb-4 pt-[calc(8px+var(--safe-top))]">
+            <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 pt-[calc(8px+var(--safe-top))]">
               <Outlet />
             </main>
             <MobileMiniPlayer />

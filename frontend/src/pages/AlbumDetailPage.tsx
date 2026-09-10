@@ -8,6 +8,7 @@ import { formatDuration, pluralWithCount } from "../shared/lib/format";
 import { useTrackCover } from "../shared/lib/useTrackCover";
 import { listLocalTracks, listFavorites, getAlbumTracks, resolveAlbum, openExternal } from "../shared/api/client";
 import { SOURCES } from "../shared/sources";
+import { ArtistLink } from "../shared/ui/ArtistLink";
 import type { SourceId, Track } from "../shared/types";
 
 // Данные, которые страница-источник (поиск/исполнитель) передаёт через
@@ -140,7 +141,7 @@ export function AlbumDetailPage() {
           <span className="text-sm font-medium uppercase tracking-wider text-slate-400">{kindLabel}</span>
           <h1 className="max-w-full break-words text-3xl font-black text-white sm:text-5xl">{albumName}</h1>
           <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-slate-400 sm:justify-start">
-            {artistName && <span className="font-medium text-white">{artistName}</span>}
+            {artistName && <ArtistLink name={artistName} className="font-medium text-white" />}
             {nav?.year ? (
               <>
                 <span>•</span>

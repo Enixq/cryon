@@ -5,6 +5,7 @@ import { useTrackCover } from "../lib/useTrackCover";
 import { cn } from "../lib/cn";
 import { ServiceIcon } from "./ServiceIcon";
 import { sourceName } from "../sources";
+import { ArtistLink } from "./ArtistLink";
 
 interface RecoTrackCardProps {
   track: Track;
@@ -96,7 +97,7 @@ export function RecoTrackCard({ track, onPlay, score, onRate, disabled }: RecoTr
         </div>
       </div>
       <strong className="mt-3 truncate text-[15px] font-semibold text-white">{track.title}</strong>
-      <p className="truncate text-sm text-slate-400">{track.artist}</p>
+      <p className="truncate text-sm text-slate-400"><ArtistLink name={track.artist} /></p>
     </div>
   );
 }

@@ -5,7 +5,11 @@ const config: CapacitorConfig = {
   appName: 'Cryon',
   webDir: 'dist',
   server: {
-    androidScheme: 'https'
+    // http (а не https): страница приложения тогда имеет origin http://localhost,
+    // и обращение к серверу Cryon по http://<IP-ПК>:8899 не блокируется как
+    // "mixed content". Кросс-доменность закрывают заголовки CORS сервера.
+    // Требует android:usesCleartextTraffic="true" в AndroidManifest.xml.
+    androidScheme: 'http'
   }
 };
 

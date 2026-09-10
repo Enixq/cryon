@@ -1,5 +1,4 @@
-package main
-
+package core
 import (
 	"context"
 	"crypto/rand"
@@ -17,8 +16,6 @@ import (
 
 	"Cryon2/internal/domain"
 	"Cryon2/internal/store"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // oauthCoordinator owns the one active loopback OAuth callback server.
@@ -132,7 +129,7 @@ func (o *oauthCoordinator) startSpotify(clientID string) error {
 	query.Set("code_challenge_method", "S256")
 	query.Set("code_challenge", challenge)
 	u.RawQuery = query.Encode()
-	runtime.BrowserOpenURL(o.app.ctx, u.String())
+	o.app.platform.OpenURL(u.String())
 	return nil
 }
 

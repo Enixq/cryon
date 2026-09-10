@@ -1,5 +1,4 @@
-package main
-
+package core
 import "testing"
 
 // seedSignature: порядок затравок не влияет на подпись (их всё равно

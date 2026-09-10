@@ -9,6 +9,7 @@ frontend/android/build/
 frontend/dist/
 frontend/android/gradlew
 frontend/android/gradle/wrapper/gradle-wrapper.jar
+frontend/test-results/
 
 # IDE
 .vscode/

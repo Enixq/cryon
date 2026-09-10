@@ -29,7 +29,18 @@ interface TabBarProps<T extends string> {
  */
 export function TabBar<T extends string>({ tabs, active, onChange, className, stretch = false }: TabBarProps<T>) {
   return (
-    <div className={cn("flex gap-1 border-b border-white/8", className)} role="tablist">
+    <div
+      className={cn(
+        // overflow-x-auto + no-scrollbar: на телефоне 4–5 вкладок не влезают по
+        // ширине — раньше они распирали всю страницу в горизонтальный скролл
+        // (баг адаптива в APK). Теперь лишние вкладки прокручиваются ВНУТРИ
+        // полосы, а страница остаётся по ширине экрана. На десктопе вкладки
+        // влезают — скролл не появляется.
+        "flex gap-1 overflow-x-auto border-b border-white/8 no-scrollbar",
+        className,
+      )}
+      role="tablist"
+    >
       {tabs.map((t) => {
         const Icon = t.icon;
         const isActive = active === t.id;
@@ -40,8 +51,8 @@ export function TabBar<T extends string>({ tabs, active, onChange, className, st
             aria-selected={isActive}
             onClick={() => onChange(t.id)}
             className={cn(
-              "-mb-px flex items-center gap-2 border-b-2 px-4 pb-3 pt-1 text-sm font-medium transition-colors",
-              stretch && "flex-1 justify-center",
+              "-mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-4 pb-3 pt-1 text-sm font-medium transition-colors",
+              stretch ? "flex-1 justify-center" : "shrink-0",
               isActive
                 ? "border-[var(--app-accent)] text-white"
                 : "border-transparent text-slate-400 hover:text-white",

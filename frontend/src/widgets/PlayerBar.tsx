@@ -23,6 +23,7 @@ import { sourceName } from "../shared/sources";
 import { cn } from "../shared/lib/cn";
 import { useFavoriteIds } from "../shared/lib/useFavorites";
 import { TrackQuickActions } from "../shared/ui/TrackQuickActions";
+import { ArtistLink } from "../shared/ui/ArtistLink";
 import { useUiStore } from "../store/uiStore";
 import { useEqualizerStore } from "../store/equalizerStore";
 import { LAYOUT_BREAKPOINTS, useMediaQuery } from "../shared/lib/useMediaQuery";
@@ -63,6 +64,8 @@ export function PlayerBar() {
   const engineDuration = usePlayerStore((s) => s.engineDuration);
   const setNowPlayingOpen = useUiStore((s) => s.setNowPlayingOpen);
   const setEqualizerOpen = useUiStore((s) => s.setEqualizerOpen);
+  const nowPlayingCollapsed = useUiStore((s) => s.nowPlayingCollapsed);
+  const toggleNowPlayingCollapsed = useUiStore((s) => s.toggleNowPlayingCollapsed);
   const eqEnabled = useEqualizerStore((s) => s.enabled);
   const isNarrow = useMediaQuery(LAYOUT_BREAKPOINTS.hideNowPlaying);
 
@@ -71,8 +74,10 @@ export function PlayerBar() {
       setNowPlayingOpen(true);
       return;
     }
-
-    document.getElementById("now-playing-queue")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Широкий экран: панель «Сейчас играет» встроена справа, поэтому кнопка
+    // прячет/показывает её (а не скроллит к уже видимой очереди, как раньше —
+    // тогда казалось, что кнопка ничего не делает).
+    toggleNowPlayingCollapsed();
   };
 
   return (
@@ -86,7 +91,7 @@ export function PlayerBar() {
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-white">{track.title}</div>
               <div className="truncate text-xs text-slate-400">
-                {track.artist} · {sourceName(track.source)}
+                <ArtistLink name={track.artist} /> · {sourceName(track.source)}
               </div>
             </div>
             <button
@@ -178,7 +183,7 @@ export function PlayerBar() {
           onChange={setVolume}
           wheelStep={4}
           ariaLabel="Полоска громкости"
-          className="hidden w-28 lg:block"
+          className="hidden w-28 lg:flex"
           compact
         />
         <button
@@ -194,9 +199,12 @@ export function PlayerBar() {
         </button>
         <button
           onClick={openQueue}
-          className="hidden text-slate-400 transition-colors hover:text-white sm:block"
-          aria-label="Открыть очередь"
-          title="Открыть очередь"
+          className={cn(
+            "hidden transition-colors sm:block",
+            !isNarrow && !nowPlayingCollapsed ? "text-[var(--app-accent)]" : "text-slate-400 hover:text-white",
+          )}
+          aria-label={isNarrow ? "Открыть очередь" : nowPlayingCollapsed ? "Показать панель «Сейчас играет»" : "Скрыть панель «Сейчас играет»"}
+          title={isNarrow ? "Очередь" : nowPlayingCollapsed ? "Показать «Сейчас играет» и очередь" : "Скрыть «Сейчас играет» и очередь"}
         >
           <ListMusic size={18} />
         </button>

@@ -168,6 +168,11 @@ export function useAudioEngine() {
     if (!audioRef.current) {
       const el = new Audio();
       el.preload = "auto";
+      // Для LAN-режима (поток с http://IP:8899) звук кросс-доменный; без CORS
+      // createMediaElementSource выдал бы тишину. Сервер отдаёт заголовки CORS,
+      // а тут просим анонимный запрос. На десктопе поток same-origin — атрибут
+      // безвреден.
+      el.crossOrigin = "anonymous";
       audioRef.current = el;
     }
     return () => {

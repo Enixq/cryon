@@ -2,6 +2,7 @@ import { Play } from "lucide-react";
 import type { Track } from "../types";
 import { Cover } from "./Cover";
 import { useTrackCover } from "../lib/useTrackCover";
+import { ArtistLink } from "./ArtistLink";
 
 interface TrackCardProps {
   track: Track;
@@ -23,7 +24,7 @@ export function TrackCard({ track, onPlay }: TrackCardProps) {
         </span>
       </div>
       <strong className="mt-3 truncate text-[15px] font-semibold text-white">{track.title}</strong>
-      <p className="truncate text-sm text-slate-400">{track.artist}</p>
+      <p className="truncate text-sm text-slate-400"><ArtistLink name={track.artist} /></p>
     </button>
   );
 }

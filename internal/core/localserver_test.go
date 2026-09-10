@@ -1,5 +1,4 @@
-package main
-
+package core
 import "testing"
 
 func TestParseStreamPath(t *testing.T) {

@@ -187,11 +187,14 @@ export async function resolvePlayableTrack(track: Track): Promise<Track> {
  */
 export async function getPlaybackUrlForHtml5(compositeId: string): Promise<string | null> {
   if (!isWailsRuntime()) return null;
+  // В Android/LAN-режиме base — абсолютный адрес сервера (http://IP:8899); на
+  // десктопе он пуст → остаются относительные same-origin пути, как и раньше.
+  const base = (window as unknown as { __CRYON_BASE__?: string }).__CRYON_BASE__ ?? "";
   const { source, rawId } = splitTrackId(compositeId);
   if (source === "local") {
-    return "/local/" + encodeURIComponent(rawId);
+    return base + "/local/" + encodeURIComponent(rawId);
   }
-  return "/stream/" + encodeURIComponent(source) + "/" + encodeURIComponent(rawId);
+  return base + "/stream/" + encodeURIComponent(source) + "/" + encodeURIComponent(rawId);
 }
 
 /** Избранное: список. */

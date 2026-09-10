@@ -1,5 +1,4 @@
-package main
-
+package core
 import (
 	"net/http"
 	"sync"

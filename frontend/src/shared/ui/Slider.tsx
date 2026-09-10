@@ -127,15 +127,22 @@ export function Slider({
       onWheel={handleWheel}
       onKeyDown={handleKeyDown}
       className={cn(
-        "group relative flex cursor-pointer items-center",
+        // ВАЖНО: центрирование по вертикали делаем НЕ через `flex items-center`
+        // на корне, а абсолютным позиционированием дорожки/ползунка ниже. Иначе
+        // достаточно вызывающему передать display-класс (например, `lg:block`
+        // у громкости в PlayerBar), и он перебивает `flex` — дорожка уезжает
+        // вверх, а ползунок оказывается ниже центра. Теперь корню нужен только
+        // `relative` и высота как область попадания.
+        "group relative cursor-pointer",
         compact ? "h-3" : "h-4",
         className,
       )}
     >
-      {/* Дорожка */}
+      {/* Дорожка — абсолютно по центру корня, поэтому выравнивание не зависит
+          от display вызывающего блока. */}
       <div
         className={cn(
-          "w-full overflow-hidden rounded-full bg-white/12",
+          "absolute inset-x-0 top-1/2 -translate-y-1/2 overflow-hidden rounded-full bg-white/12",
           compact ? "h-1" : "h-1.5",
         )}
       >

@@ -152,6 +152,18 @@ input {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Скрытый скроллбар для горизонтальных лент (полоса вкладок, ряды чипсов).
+   Прокрутка остаётся рабочей, полоса не занимает место и не мелькает — важно
+   на телефоне, где вкладки прокручиваются внутри своей полосы. Работает и в
+   десктопном WebView2 (Chromium), и в мобильном WebView, и в Firefox. */
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE / старый Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chromium / WebKit / WebView2 */
+}
+
 /* Утилиты отступов под системные зоны (вырез, строка навигации, жесты). */
 .pt-safe {
   padding-top: var(--safe-top);

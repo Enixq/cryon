@@ -1,3 +1,6 @@
+// Мост Android/LAN — ПЕРВЫМ импортом (см. installBridge.ts): должен встать до
+// загрузки App, т.к. часть модулей читает isWailsRuntime() уже при импорте.
+import "./shared/lib/installBridge";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { HashRouter } from "react-router-dom";

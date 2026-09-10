@@ -8,6 +8,7 @@ import { useUiStore } from "../store/uiStore";
 import { usePlayerStore } from "../store/playerStore";
 import { Cover } from "../shared/ui/Cover";
 import { sourceName } from "../shared/sources";
+import { ArtistLink } from "../shared/ui/ArtistLink";
 import { encodeTrackShare, decodeTrackShare } from "../shared/lib/trackShare";
 import { addFavorite, openExternal } from "../shared/api/client";
 import { notify } from "../store/notificationStore";
@@ -120,7 +121,7 @@ export function ShareTrackModal() {
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold text-white">{shareTrack.title}</div>
                 <div className="truncate text-xs text-slate-400">
-                  {shareTrack.artist} · {sourceName(shareTrack.source)}
+                  <ArtistLink name={shareTrack.artist} onNavigate={close} /> · {sourceName(shareTrack.source)}
                 </div>
               </div>
             </div>
@@ -181,7 +182,7 @@ export function ShareTrackModal() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-white">{decoded.title}</div>
                   <div className="truncate text-xs text-slate-400">
-                    {decoded.artist} · {sourceName(decoded.source)}
+                    <ArtistLink name={decoded.artist} onNavigate={close} /> · {sourceName(decoded.source)}
                   </div>
                 </div>
               </div>

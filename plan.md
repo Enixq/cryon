@@ -2108,3 +2108,78 @@ DPI (TLS-таймаут), но `m.soundcloud.com`, `api-v2.soundcloud.com`, `i2.
   go build/vet/test — все пакеты ok (понадобился `go mod tidy` для go.sum).
   Capacitor-каркас `frontend/android/` создан (`cap add android` + `cap sync`);
   APK собирается у пользователя (`./gradlew assembleDebug`, нужен Android SDK+JDK).
+
+---
+
+## Догон (2026-09-09): минимальный Android через LAN + системные медиа-контролы
+
+### Android (LAN-мост) — СДЕЛАНО (код), детали в [plan-android.md](plan-android.md) §15
+
+Минимальная рабочая схема без gomobile: телефон ходит к запущенному десктоп-
+приложению по Wi-Fi. Переиспользованы `App` + `localAssetHandler`. LAN-сервер
+изолирован тегом сборки `//go:build cryonlan` (+ no-op заглушка), поэтому
+**обычный `wails build` не затронут**. На фронте — HTTP-мост
+([httpBridge.ts](frontend/src/shared/lib/httpBridge.ts)), ставится ПЕРВЫМ
+импортом; `client.ts` (60 функций) не тронут. Точные шаги сборки/запуска —
+в plan-android.md §15.
+
+### Системные медиа-контролы Windows (запрос «как в Spotify»)
+
+- **HTML5-путь** (когда mpv недоступен/выключен): SMTC уже работает —
+  [useMediaSession.ts](frontend/src/shared/lib/useMediaSession.ts) даёт
+  метаданные, обложку, состояние, позицию, обработчики и медиа-клавиши;
+  смонтирован в AppLayout.
+- **mpv-путь (десктоп по умолчанию):** звук идёт мимо WebView, поэтому системная
+  панель и всплывашка у часов НЕ появляются — это и есть то, чего не хватает
+  пользователю на скриншотах.
+
+### [ ] НИКАК СЕЙЧАС: нативный taskbar thumbnail toolbar (ITaskbarList3)
+
+Именно эта фича со скриншотов (кнопки ⏮ ▶ ⏭ при наведении на иконку в панели
+задач) не зависит от медиа в странице и работает и на mpv-пути. Требует нативного
+Windows-кода на Go без CGO:
+- поиск HWND нашего окна (EnumWindows + GetWindowThreadProcessId по своему PID);
+- COM: `CoCreateInstance(CLSID_TaskbarList, IID_ITaskbarList3)`, `HrInit`,
+  `ThumbBarAddButtons`/`ThumbBarUpdateButtons` (индексы vtable 15/16);
+- структура `THUMBBUTTON` с ручной раскладкой/выравниванием под ABI;
+- **HICON**-иконки для кнопок (самая хрупкая часть — рисовать через GDI);
+- **сабклассинг оконной процедуры** (`syscall.NewCallback`) для приёма
+  `WM_COMMAND`/`THBN_CLICKED` → проброс в плеер.
+
+**Почему не впихнул вслепую:** сбои такого кода — это OS-level access violation,
+который `recover()` НЕ ловит и который уронит рабочий десктоп; проверить нельзя
+(гейт классификатора блокирует любые `go build/run`). Делать «как положено» —
+значит скомпилировать и запустить. План: реализовать за тегом сборки
+`//go:build windows && thumbbar` (+ no-op заглушка, как у lanserver) и проверить,
+как только вернётся компилятор. Обычные сборки не затрагиваются.
+
+---
+
+## Автономный Android: абстракция Wails-рантайма (2026-09-10)
+
+Пользователь отверг LAN-схему («телефон → ПК по сети») дословно: «Это не рабочее,
+переделать» — нужен автономный режим (бэкенд на телефоне, работа по мобильной
+сети, без ПК, можно поделиться). Подготовлен фундамент под `gomobile bind`,
+полностью изолированный от рабочей десктоп-сборки. Подробности и runbook —
+[plan-android.md](plan-android.md) §17.
+
+- **Wails-рантайм спрятан за интерфейс** `platformHost` ([platform.go](platform.go)):
+  `nullHost` (по умолчанию), `wailsHost` (десктоп, [platform_wails.go](platform_wails.go),
+  `//go:build !android`), `sseHost` (устройство). Все `runtime.EventsEmit`/
+  `BrowserOpenURL`/диалоги в [app.go](app.go)/[oauth.go](oauth.go) переведены на
+  `a.platform.*` → **Wails импортируют только [main.go](main.go) и
+  platform_wails.go**. Десктоп ведёт себя байт-в-байт как раньше.
+- **Общий RPC** — [rpcbridge.go](rpcbridge.go) (тег `cryonlan || cryonmobile`);
+  **встроенный сервер-seed** — [mobileserver.go](mobileserver.go) (тег
+  `cryonmobile`): SSE вместо Wails-событий, инъекция `__CRYON_BASE__`, слушает
+  `127.0.0.1:0`. Оба вне десктоп-сборки по тегам.
+- **Фронтенд-транспорт сверен по всей цепочке** (вычитка): мост
+  ([httpBridge.ts](frontend/src/shared/lib/httpBridge.ts)) авто-активируется по
+  внедрённому `__CRYON_BASE__`; биндинги резолвят `window.go.main.App` в момент
+  вызова; события → SSE; плеер уходит на HTML5 `<audio>` с same-origin `/stream/`.
+  **Правок не требует.**
+- **Осталось (только с компилятором/toolchain):** вынос `App`→`internal/core`
+  через обёртку-встраивание (сохраняет пространство имён `window.go.main.App`),
+  пакет `mobile`, `gomobile bind`, Kotlin-оболочка, локальная музыка через
+  MediaStore. Вслепую не делаю: вынос трогает ядро рабочего десктопа, а гейт
+  компиляции недоступен (сбой классификатора).

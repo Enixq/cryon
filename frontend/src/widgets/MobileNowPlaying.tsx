@@ -25,6 +25,7 @@ import { useCoverPalette } from "../shared/lib/useCoverPalette";
 import { useFavoriteIds } from "../shared/lib/useFavorites";
 import { sourceName } from "../shared/sources";
 import { cn } from "../shared/lib/cn";
+import { ArtistLink } from "../shared/ui/ArtistLink";
 import type { Track } from "../shared/types";
 
 /**
@@ -195,7 +196,9 @@ export function MobileNowPlaying() {
           <div className="mt-5 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="truncate text-2xl font-bold text-white">{track.title}</h2>
-              <p className="truncate text-slate-400">{track.artist}</p>
+              <p className="truncate text-slate-400">
+                <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
+              </p>
             </div>
             <button
               type="button"
@@ -379,7 +382,7 @@ function QueueRow({
           <div className="min-w-0">
             <div className={cn("truncate text-sm font-medium", active ? "text-[var(--app-accent)]" : "text-white")}>{item.title}</div>
             <div className="truncate text-xs text-slate-400">
-              {item.artist} · {sourceName(item.source)}
+              <ArtistLink name={item.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} /> · {sourceName(item.source)}
             </div>
           </div>
         </button>

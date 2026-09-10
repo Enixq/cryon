@@ -1,5 +1,4 @@
-package main
-
+package core
 // Временная живая проверка прокси потоков: CRYON_PROXY_IT=1 go test . -run TestLiveStreamProxy -v
 // Гейт по переменной окружения — сеть в CI недоступна.
 

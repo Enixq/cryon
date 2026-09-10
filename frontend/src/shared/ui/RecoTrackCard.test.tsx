@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RecoTrackCard } from "./RecoTrackCard";
 import { useRecoFeedback } from "../lib/useRecoFeedback";
@@ -51,9 +52,12 @@ function renderCard() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <Harness />
-    </QueryClientProvider>,
+    // В карточке есть ArtistLink (useNavigate) — нужен Router вокруг.
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <Harness />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -101,9 +105,11 @@ describe("RecoTrackCard + useRecoFeedback", () => {
     const onPlay = vi.fn();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
-      <QueryClientProvider client={client}>
-        <RecoTrackCard track={track} onPlay={onPlay} score={0} onRate={() => {}} />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <RecoTrackCard track={track} onPlay={onPlay} score={0} onRate={() => {}} />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Воспроизвести Aurora — Nightfall" }));
