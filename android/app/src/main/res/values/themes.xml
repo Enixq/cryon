@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Тёмная тема без ActionBar: фон #08090D сразу при запуске, без белой
+         вспышки между запуском и первым кадром WebView. -->
+    <style name="Theme.Cryon" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/cryon_bg</item>
+        <item name="android:statusBarColor">@color/cryon_bg</item>
+        <item name="android:navigationBarColor">@color/cryon_bg</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

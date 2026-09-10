@@ -39,9 +39,14 @@ go.sum
 # Logs
 *.log
 
-# Android SDK
-Android/
-android/
+# Android-оболочка (сборка целиком в репо, кроме артефактов)
+android/app/build/
+android/.gradle/
+android/local.properties
+android/app/libs/*.aar
+
+# Мобильный пакет: dist вкладывается при сборке (копия frontend/dist)
+mobile/dist/
 
 # Temporary files
 *.tmp
