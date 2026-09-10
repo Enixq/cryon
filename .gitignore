@@ -30,6 +30,8 @@ frontend/android/local.properties
 .cryon/
 *.exe
 go.sum
+# mobile/go.sum нужен в CI (gomobile bind делает внутренний go mod tidy)
+!mobile/go.sum
 
 # Environment
 .env

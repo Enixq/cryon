@@ -103,8 +103,6 @@ jobs:
       - name: gomobile bind (arm64 only, меньший APK)
         working-directory: mobile
         run: |
-          go get golang.org/x/mobile@latest
-          go get -tool golang.org/x/mobile/cmd/gobind@latest
           go mod tidy
           gomobile bind -target=android/arm64 -androidapi 24 \
             -o ../android/app/libs/cryonmobile.aar -tags cryonmobile .
