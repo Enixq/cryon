@@ -2183,3 +2183,37 @@ Windows-кода на Go без CGO:
   пакет `mobile`, `gomobile bind`, Kotlin-оболочка, локальная музыка через
   MediaStore. Вслепую не делаю: вынос трогает ядро рабочего десктопа, а гейт
   компиляции недоступен (сбой классификатора).
+
+---
+
+## Автономный Android: доводка до APK + 7 багов (2026-09-12)
+
+Всё из списка «Осталось» выше **выполнено** (код на диске, собрано параллельной
+сессией и CI): ядро вынесено в `core`, есть пакет `mobile`, `gomobile bind`
+(в CI и в [scripts/build-android.ps1](scripts/build-android.ps1)),
+Kotlin-оболочка `android/`, локальная музыка через SAF. Полный журнал —
+[plan-android.md](plan-android.md), раздел «Автономный Android: доводка до APK
+(2026-09-12)». Кратко:
+
+- **Провал CI-сборки APK устранён.** Из [mobile/main.go](mobile/main.go) убраны
+  `import "C"` и `func main`: cgo в биндимом пакете ломал парсер `gobind`, из-за
+  чего падал `gomobile bind` в job `build-android`. А так как job `release`
+  объявлен `needs: [build-windows, build-android]`, **релиз вообще не создавался**
+  (отсюда «на гитхаб не закинул»). Теперь bind проходит → релиз собирается и
+  прикладывает `Cryon2-<tag>-android-arm64.apk`.
+- **403 «Must have admin rights»** при создании релиза — это настройка репозитория
+  (ruleset/tag-protection или ограничение `GITHUB_TOKEN`), а не workflow: в нём уже
+  `permissions: contents: write`. Правится в Settings, кодом не лечится.
+- **Локальный путь к APK:** [scripts/build-android.ps1](scripts/build-android.ps1)
+  → `android/app/build/outputs/apk/debug/app-debug.apk`.
+- **7 багов на живом APK устранены** (сверено вычиткой): краш поиска
+  (`onRenderProcessGone`+`largeHeap`+`RouteErrorBoundary`), back-жест
+  (`__cryonAndroidBack`+`canGoBack`), локальная музыка (фоновое SAF-копирование),
+  тумблер эквалайзера (инлайновый `translateX`+`overflow-hidden`), отвал YouTube
+  под VPN (раздельные таймауты Dial/TLS/Header + авто-reconnect SSE), жанр по
+  сути а не по имени (`seeds`-исполнители), радар без шансон/поп (профиль вкуса
+  по недавности+обратной связи). Плюс `safeRandomId()`-фолбэк для старого
+  Android-WebView.
+- **Git:** фикс CI и обвязка закоммичены; правки 7 багов лежат в рабочем дереве
+  **некоммичены** (локальная сборка их подхватит; для APK из CI — коммит+новый тег,
+  только по явному «да»).

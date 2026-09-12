@@ -23,6 +23,7 @@ import { useMediaQuery, LAYOUT_BREAKPOINTS } from "../shared/lib/useMediaQuery";
 import { OnboardingModal } from "./OnboardingModal";
 import { EqualizerModal } from "./EqualizerModal";
 import { ShareTrackModal } from "./ShareTrackModal";
+import { RouteErrorBoundary } from "./ErrorBoundary";
 import type { CSSProperties } from "react";
 
 // Ключи запросов, зависящих от подключённых источников: их выдача меняется
@@ -156,7 +157,9 @@ export function AppLayout() {
              навигация; полноэкранный «Сейчас играет» — оверлеем поверх. */
           <div className="flex min-w-0 flex-1 flex-col">
             <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 pt-[calc(8px+var(--safe-top))]">
-              <Outlet />
+              <RouteErrorBoundary>
+                <Outlet />
+              </RouteErrorBoundary>
             </main>
             <MobileMiniPlayer />
             <BottomNav />
@@ -170,7 +173,9 @@ export function AppLayout() {
               <Topbar />
               <div className="relative flex min-h-0 flex-1">
                 <main className="min-w-0 flex-1 overflow-y-auto px-4 pb-6 sm:px-6">
-                  <Outlet />
+                  <RouteErrorBoundary>
+                    <Outlet />
+                  </RouteErrorBoundary>
                 </main>
 
                 {showInlineNowPlaying ? <NowPlayingPanel /> : null}

@@ -152,6 +152,13 @@ type artistWeight struct {
 	name       string
 	weight     float64
 	lastPlayed int64
+	// plays — сколько РАЗ треки этого артиста реально проигрывались (по истории).
+	// deliberate — артист попал во вкус осознанно: избранное, свой плейлист или
+	// лайк рекомендации. Разделение нужно, чтобы единичное «проверил, играет ли»
+	// прослушивание не формировало вкус и не сеяло радар (жалоба пользователя:
+	// «в основном то, что я слушал когда-то»).
+	plays      int
+	deliberate bool
 }
 
 // taste — профиль вкусов, собранный из всех локальных сигналов сразу:
@@ -181,7 +188,7 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 	seenTrackKeys := map[string]bool{}
 	sources := sourcePrefs{}
 
-	add := func(name string, w float64, playedAt int64) {
+	add := func(name string, w float64, playedAt int64, plays int, deliberate bool) {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return
@@ -193,6 +200,10 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 			weights[key] = cur
 		}
 		cur.weight += w
+		cur.plays += plays
+		if deliberate {
+			cur.deliberate = true
+		}
 		if playedAt > cur.lastPlayed {
 			cur.lastPlayed = playedAt
 		}
@@ -205,7 +216,7 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 				seenTrackKeys[trackKey(t)] = true
 				sources[t.Service] += 3.0
 				for _, a := range t.Artists {
-					add(a, 3.0, 0)
+					add(a, 3.0, 0, 0, true)
 				}
 			}
 		}
@@ -232,7 +243,7 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 					seenTrackKeys[trackKey(t)] = true
 					sources[t.Service] += 2.0
 					for _, a := range t.Artists {
-						add(a, 2.0, 0)
+						add(a, 2.0, 0, 0, true)
 					}
 				}
 			}
@@ -241,19 +252,26 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 
 	// История — частота прослушивания + свежесть.
 	if e.histFn != nil {
-		if rows, err := e.histFn(ctx, 300); err == nil {
+		if rows, err := e.histFn(ctx, 120); err == nil {
 			now := time.Now().UnixMilli()
 			for _, r := range rows {
 				seenTrackKeys[trackKey(r.Track)] = true
-				// Свежие прослушивания весят больше (спад за ~30 дней).
+				// История ограничена свежим окном: давние прослушивания не должны
+				// перебивать текущие предпочтения и тянуть в радар случайные жанры.
+				if r.PlayedAtMs <= 0 {
+					continue
+				}
 				ageDays := float64(now-r.PlayedAtMs) / float64(24*3600*1000)
+				if ageDays > 90 {
+					continue
+				}
 				recency := 1.0
 				if ageDays > 0 {
-					recency = 1.0 / (1.0 + ageDays/30.0)
+					recency = 1.0 / (1.0 + ageDays/14.0)
 				}
 				sources[r.Track.Service] += recency
 				for _, a := range r.Track.Artists {
-					add(a, 1.0*recency, r.PlayedAtMs)
+					add(a, 1.0*recency, r.PlayedAtMs, 1, false)
 				}
 			}
 		}
@@ -284,12 +302,20 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 		case score > 0:
 			// Лайк рекомендации — самый прямой сигнал вкуса, сильнее избранного:
 			// пользователь одобрил именно предложенное, а не то, что уже знал.
-			add(display, 4.0*float64(score), 0)
+			add(display, 4.0*float64(score), 0, 0, true)
 		}
 	}
 
+	// Порог для «случайных» прослушиваний: артист, о котором мы знаем только по
+	// единичному проигрыванию (не в избранном/плейлистах/лайках и проигран < 2
+	// раз), в профиль НЕ попадает. Иначе радар и рекомендации наполняются тем,
+	// что человек послушал один раз «на пробу» — ровно на это и была жалоба.
+	const minIncidentalPlays = 2
 	out := make([]artistWeight, 0, len(weights))
 	for _, w := range weights {
+		if !w.deliberate && w.plays < minIncidentalPlays {
+			continue
+		}
 		out = append(out, *w)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -433,8 +459,17 @@ func (e *Engine) PersonalizeReleases(ctx context.Context, in []domain.Track) []d
 	// фильтрации нет — просто пересортировываем полный список (как раньше),
 	// иначе радар схлопнулся бы до горстки уже знакомых артистов. Пустой
 	// relevant при живом Last.fm — тоже повод не оставлять секцию пустой.
+	// Фильтруем радар до релевантных исполнителей, как только есть сигнал вкуса,
+	// НЕ дожидаясь Last.fm. Знакомых артистов (familiar) достаточно, чтобы
+	// отбросить редакционный мейнстрим — шансон/поп из ленты сервиса, который
+	// пользователь никогда не слушал (это и была жалоба). Similar (Last.fm)
+	// лишь расширяет набор «релевантных», но не является условием фильтрации.
+	//
+	// Защита от пустой секции сохраняется: фильтруем ТОЛЬКО когда после фильтра
+	// что-то остаётся; иначе (лента вообще не пересекается со вкусом) отдаём
+	// пересортированный полный список, чтобы радар не схлопнулся в ноль.
 	pick := reordered
-	if len(similar) > 0 && len(relevant) > 0 {
+	if len(relevant) > 0 {
 		pick = relevant
 	}
 	sort.SliceStable(pick, func(i, j int) bool { return pick[i].score > pick[j].score })

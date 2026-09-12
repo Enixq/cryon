@@ -110,7 +110,12 @@ export function useAudioEngine() {
   // «прозрачны» (компрессор почти не сжимает, усиления полос = 0), реальные
   // параметры проставляют эффекты нормализации и эквалайзера.
   const ensureAudioGraph = (): boolean => {
-    if (eqFiltersRef.current) return true;
+    if (eqFiltersRef.current && audioCtxRef.current?.state !== "closed") return true;
+    if (audioCtxRef.current?.state === "closed") {
+      audioCtxRef.current = null;
+      eqFiltersRef.current = null;
+      compressorRef.current = null;
+    }
     const el = audioRef.current;
     const Ctx =
       window.AudioContext ||
@@ -420,10 +425,15 @@ export function useAudioEngine() {
     const ctx = audioCtxRef.current;
     if (ctx && ctx.state === "suspended") void ctx.resume().catch(() => {});
     const filters = eqFiltersRef.current;
-    if (filters) {
-      filters.forEach((node, i) => {
-        node.gain.value = eqEnabled ? (eqGains[i] ?? 0) : 0;
-      });
+    if (filters && ctx?.state !== "closed") {
+      try {
+        filters.forEach((node, i) => {
+          node.gain.value = eqEnabled ? (eqGains[i] ?? 0) : 0;
+        });
+      } catch {
+        eqFiltersRef.current = null;
+        compressorRef.current = null;
+      }
     }
   }, [eqEnabled, eqGains]);
 

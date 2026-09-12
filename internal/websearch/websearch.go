@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,12 +24,28 @@ type Result struct {
 // httpClient переиспользуется между вызовами: адаптеры источников дергают
 // веб-поиск пачками (поиск, рекомендации, радио), а новый http.Client на каждый
 // вызов означал новый пул соединений и полный TLS-хендшейк каждый раз.
+//
+// Тайминги подобраны под «мобильный» интернет и VPN: под VPN (например,
+// KENT-инфраструктура с протухающим TLS-сертификатом) хендшейк — узкое место,
+// поэтому фазы соединения/TLS/заголовков имеют отдельные бюджеты, а общий
+// дедлайн увеличен с 15s до 30s. Прежний жёсткий Timeout: 15s на весь запрос
+// приводил к тому, что при включённом VPN поиск (в т.ч. YouTube через Bing)
+// регулярно обрывался по таймауту.
 var httpClient = &http.Client{
-	Timeout: 15 * time.Second,
+	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
-		MaxIdleConns:        16,
-		MaxIdleConnsPerHost: 8,
-		IdleConnTimeout:     60 * time.Second,
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   15 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   20 * time.Second,
+		ResponseHeaderTimeout: 25 * time.Second,
+		ExpectContinueTimeout: 2 * time.Second,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   8,
+		IdleConnTimeout:       90 * time.Second,
+		ForceAttemptHTTP2:     true,
 	},
 }
 

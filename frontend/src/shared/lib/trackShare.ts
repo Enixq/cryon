@@ -58,6 +58,25 @@ function fromBase64Url(input: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+// Уникальный id с деградацией по возможностям среды. crypto.randomUUID есть не
+// везде: на старом Android WebView (< 92) его нет вовсе, а вне защищённого
+// контекста он бросает исключение. Раньше это роняло весь разбор ссылки (и,
+// шире, экран). Пробуем randomUUID → getRandomValues → Math.random.
+function safeRandomId(): string {
+  try {
+    const c = globalThis.crypto as Crypto | undefined;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+    if (c && typeof c.getRandomValues === "function") {
+      const buf = new Uint8Array(16);
+      c.getRandomValues(buf);
+      return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {
+    // недоступно/бросило — уходим на Math.random ниже
+  }
+  return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+}
+
 /** Упаковывает трек в ссылку `cryon://track/…` для передачи другу. */
 export function encodeTrackShare(track: Track): string {
   const payload: SharePayload = {
@@ -102,7 +121,7 @@ export function decodeTrackShare(input: string): Track | null {
     const source: SourceId = data.s && SOURCES.includes(data.s) ? data.s : "youtube";
     const accent: AccentColor = data.ac && ACCENTS.includes(data.ac) ? data.ac : "violet";
     const track: Track = {
-      id: data.i && typeof data.i === "string" ? data.i : `shared:${crypto.randomUUID()}`,
+      id: data.i && typeof data.i === "string" ? data.i : `shared:${safeRandomId()}`,
       title: data.t,
       artist: data.a,
       album: typeof data.al === "string" ? data.al : undefined,

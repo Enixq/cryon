@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,7 +40,37 @@ var _ domain.MusicService = (*Service)(nil)
 func New(apiKey string) *Service {
 	return &Service{
 		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		httpClient: newHTTPClient(),
+	}
+}
+
+// newHTTPClient собирает HTTP-клиент, устойчивый к «мобильному» интернету и
+// VPN. Раньше стоял единый Timeout: 15s на весь запрос — под VPN (например,
+// KENT-инфраструктура с периодически протухающим TLS-сертификатом) медленный
+// TLS-хендшейк съедал весь бюджет, и YouTube «отваливался». Теперь бюджеты
+// разнесены по фазам: на установку соединения и хендшейк даём отдельное время,
+// а общий дедлайн увеличен и достаточен для медленной сети, но всё ещё
+// ограничен, чтобы зависший запрос не держал горутину вечно.
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		// Общий предел на запрос — с запасом под медленный VPN, но конечный.
+		Timeout: 45 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   15 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			// Отдельный бюджет на TLS: под VPN хендшейк — самое узкое место.
+			TLSHandshakeTimeout: 20 * time.Second,
+			// Ждём заголовки ответа дольше обычного: узел VPN может тормозить.
+			ResponseHeaderTimeout: 30 * time.Second,
+			ExpectContinueTimeout: 2 * time.Second,
+			MaxIdleConns:          16,
+			MaxIdleConnsPerHost:   8,
+			IdleConnTimeout:       90 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
 	}
 }
 
@@ -108,7 +139,7 @@ func (s *Service) Search(ctx context.Context, query string) ([]domain.Track, err
 		log.Warn("youtube: data api search failed", "err", err)
 	}
 
-	results, err := websearch.FetchBingSearch(ctx, "music.youtube.com", query, 20)
+	results, err := fetchBingSearchWithRetry(ctx, query)
 	if err == nil && len(results) > 0 {
 		tracks := tracksFromBing(results)
 		if len(tracks) > 0 {
@@ -423,14 +454,51 @@ func thumbnailURL(videoID string) string {
 	return "https://i.ytimg.com/vi/" + videoID + "/hqdefault.jpg"
 }
 
+func fetchBingSearchWithRetry(ctx context.Context, query string) ([]websearch.Result, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		results, err := websearch.FetchBingSearch(ctx, "music.youtube.com", query, 20)
+		if err == nil {
+			return results, nil
+		}
+		lastErr = err
+		if attempt == 0 {
+			timer := time.NewTimer(350 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return nil, lastErr
+}
+
 func (s *Service) searchByYtDlp(ctx context.Context, query string) ([]domain.Track, error) {
-	cmd := exec.CommandContext(ctx, "yt-dlp", "--no-warnings", "--skip-download", "--flat-playlist", "--encoding", "utf-8", "--print", "%(id)s|%(title)s|%(uploader)s|%(webpage_url)s|%(duration)s", "ytsearch10:"+query)
-	// На Windows Python по умолчанию пишет в пайп в кодировке локали (cp1251),
-	// из-за чего кириллица в названиях превращается в «ромбики». Форсируем UTF-8.
-	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
-	// Прячем консольное окно, иначе оно мигает при каждом поиске.
-	hideConsole(cmd)
-	out, err := cmd.CombinedOutput()
+	var out []byte
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		cmd := exec.CommandContext(ctx, "yt-dlp", "--no-warnings", "--skip-download", "--flat-playlist", "--encoding", "utf-8", "--socket-timeout", "15", "--retries", "2", "--fragment-retries", "2", "--extractor-retries", "2", "--print", "%(id)s|%(title)s|%(uploader)s|%(webpage_url)s|%(duration)s", "ytsearch10:"+query)
+		// На Windows Python по умолчанию пишет в пайп в кодировке локали (cp1251),
+		// из-за чего кириллица в названиях превращается в «ромбики». Форсируем UTF-8.
+		cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
+		// Прячем консольное окно, иначе оно мигает при каждом поиске.
+		hideConsole(cmd)
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		if attempt == 0 {
+			timer := time.NewTimer(500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("yt-dlp search failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}

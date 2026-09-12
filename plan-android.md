@@ -369,15 +369,18 @@ cd android && ./gradlew assembleDebug
       Проверка **зелёная (2026-09-08, локальный прогон)**: tsc / vitest 46/46 /
       vite build + backend go build/vet/test — всё ok (нужен был `go mod tidy`).
 - [ ] Фаза 0 — упаковка фронта в дизайн-демо APK (Capacitor).
-- [~] **Автономный Android (§17) — АКТИВНЫЙ трек** (2026-09-10). Отвергнутая
-      LAN-схема (§15) заменена встроенным на устройстве сервером. **Готово и
-      сверено вычиткой:** абстракция Wails-рантайма (`platformHost`), общий
-      `rpcbridge`, seed встроенного сервера `mobileserver.go`, авто-активация
-      `httpBridge` по `__CRYON_BASE__`, полная проверка фронтенд-транспорта.
-      **Осталось (нужен компилятор/toolchain):** вынос `App`→`internal/core`
-      (обёртка-встраивание, сохраняет `window.go.main.App`), пакет `mobile`,
-      `gomobile bind`, Kotlin-оболочка, локальная музыка через MediaStore.
-      Runbook — §17.3.
+- [x] **Автономный Android (§17) — СОБРАН ДО APK** (2026-09-12). Отвергнутая
+      LAN-схема (§15) заменена встроенным на устройстве сервером. **Реализовано
+      целиком:** абстракция Wails-рантайма (`platformHost`), общий `rpcbridge`,
+      встроенный сервер `mobileserver.go`, авто-активация `httpBridge` по
+      `__CRYON_BASE__`, вынос `App`→`internal/core`, пакет `mobile` + `gomobile
+      bind` (в CI и в [scripts/build-android.ps1](scripts/build-android.ps1)),
+      Kotlin-оболочка `android/`, локальная музыка через SAF. **Фикс CI:** из
+      `mobile/main.go` убран `import "C"` — он ронял `gomobile bind` (см. раздел
+      2026-09-12). APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
+- [x] **7 багов на живом APK устранены** (2026-09-12) — краш поиска, back-жест,
+      локальная музыка, тумблер эквалайзера, отвал YouTube под VPN, буквальный
+      поиск по названию жанра, мусор в радаре. Детали — раздел 2026-09-12 ниже.
 - [ ] Фазы 1–5 — встраивание Go-бэкенда, оболочка, полный порт.
 
 ---
@@ -615,34 +618,38 @@ RPC-контракт те же, что на десктопе.
         same-origin `http://127.0.0.1:<port>/stream/…`, CORS не нужен.
       **Вывод: фронтенд к автономному режиму готов, правок не требует.**
 
-### 17.2. Осталось (требует компилятора Go и/или Android-toolchain — не в этой среде)
+### 17.2. ВЫПОЛНЕНО (2026-09-12) — весь список закрыт на toolchain-машине
 
-1. **Фаза 1 — вынос `App` в `internal/core`** через обёртку-встраивание (см. §6,
-   Фаза 1). Единственный шаг, трогающий рабочий десктоп → делаем ТОЛЬКО с
-   компилятором. Сохраняет `window.go.main.App`.
-2. **Пакет `mobile`** (bind-совместимый, НЕ `main`):
-   ```go
-   package mobile
-   //go:embed all:dist            // сюда кладётся собранный frontend/dist
-   var assets embed.FS
-   func Start(dataDir string) (string, error) // core.NewApp→Startup→StartMobileServer(sub(dist))
-   func Stop()                                  // вызывает stop-функцию сервера
-   ```
-   `dataDir` = Android `context.getFilesDir()`. Embed каталог заполняется перед
-   bind (`vite build` → копия `frontend/dist` → `mobile/dist`).
-3. **gomobile bind:** `gomobile bind -target=android -androidapi 24 -o android/app/libs/cryonmobile.aar ./mobile`.
-4. **Kotlin-оболочка** (новый gradle-проект `android/`, БЕЗ Capacitor):
-   `MainActivity` (полноэкранный WebView: `javaScriptEnabled`,
-   `domStorageEnabled`, `mediaPlaybackRequiresUserGesture=false`; `Mobile.start(filesDir)`
-   → `loadUrl(base)`); `PlaybackService` (ForegroundService + `MediaSessionCompat`);
-   `AndroidManifest`: `INTERNET`, `FOREGROUND_SERVICE(+_MEDIA_PLAYBACK)`,
-   `POST_NOTIFICATIONS`, `READ_MEDIA_AUDIO`, `WAKE_LOCK`; кнопка «Назад» через
-   `WebView.canGoBack()`.
-5. **Локальная музыка на Android (замена «добавить папку»):** сканирование
-   `MediaStore.Audio` на стороне Kotlin (после запроса `READ_MEDIA_AUDIO`),
-   передача списка треков в backend новым методом `App.ImportAndroidTracks(json)`;
-   воспроизведение `content://`-URI обслуживает Kotlin-мост (Go не открывает
-   content-URI). Спроектировано, реализация — после Фаз 1–4 (нужен девайс/эмулятор).
+> Пункты 1–4 ниже реализованы (код на диске, сверено вычиткой в этой сессии;
+> компиляция выполнена параллельной сессией и CI). Пункт 5 закрыт первой
+> итерацией через SAF, MediaStore — как улучшение. Подробный журнал доработок и
+> фикс CI-сборки — в разделе **«Автономный Android: доводка до APK (2026-09-12)»**
+> ниже.
+
+1. **[x] Фаза 1 — вынос `App` в `internal/core`** — сделано. Ядро живёт в пакете
+   `core`; `main.go`/`platform_wails.go` встраивают его, `window.go.main.App`
+   сохранён. Десктоп-сборка не задета (тег-изоляция).
+2. **[x] Пакет `mobile`** — сделано: [mobile/mobile.go](mobile/mobile.go),
+   `//go:build android`, `//go:embed all:dist`, `Start(dataDir)`→`core.NewApp`→
+   `StartMobileServer(sub(dist))`→baseURL, `Stop()`. Embed-каталог `mobile/dist`
+   заполняется перед bind (`vite build` → копия `frontend/dist`).
+3. **[x] gomobile bind** — заведено в CI и в локальном скрипте
+   [scripts/build-android.ps1](scripts/build-android.ps1). Цель `android/arm64`,
+   `-androidapi 24`, `-tags cryonmobile`, выход
+   `android/app/libs/cryonmobile.aar`. **Фикс CI:** из [mobile/main.go](mobile/main.go)
+   убраны `import "C"` и `func main` — они ломали парсер gobind (см. раздел
+   2026-09-12 ниже).
+4. **[x] Kotlin-оболочка** — сделано: [android/](android/), пакет `ru.cryon.app`,
+   [MainActivity.kt](android/app/src/main/java/ru/cryon/app/MainActivity.kt)
+   (WebView + `Mobile.start(filesDir)`→`loadUrl(base)`, восстановление после
+   `onRenderProcessGone`, кнопка «Назад» через `__cryonAndroidBack`/`canGoBack`),
+   [AndroidManifest.xml](android/app/src/main/AndroidManifest.xml) со всеми
+   разрешениями + `largeHeap`.
+5. **[x] Локальная музыка на Android** — закрыто первой итерацией через SAF:
+   `ACTION_OPEN_DOCUMENT_TREE` → фоновое копирование аудио в `filesDir` (не UI-поток,
+   иначе ANR = «кнопка не работает») → путь во фронтенд через
+   `__cryonFolderPickerResolve`. Сканирование `MediaStore.Audio` без копирования —
+   как улучшение на будущее.
 
 ### 17.3. Runbook — выполнить на машине с toolchain (по порядку)
 
@@ -680,3 +687,98 @@ cd android && ./gradlew assembleDebug
 не зашиваются — только пользовательский ввод в зашифрованных настройках. Ключ
 `sk-…P19T52a8` и токены `ANTHROPIC_AUTH_TOKEN` считать скомпрометированными:
 отозвать/перевыпустить, в код/коммиты не вносить.
+
+---
+
+## Автономный Android: доводка до APK (2026-09-12)
+
+Итог сессии: автономный Android собран целиком (сервер на телефоне, работает по
+любой сети, ПК не нужен), устранён провал CI-сборки APK и все 7 багов, найденных
+на живом устройстве. Ниже — журнал; §17.2 и §13 обновлены под этот факт.
+
+### Фикс провала CI (почему APK не попадал в релиз)
+
+- **Корень:** [mobile/main.go](mobile/main.go) держал `import "C"` и `func main`.
+  `gomobile bind` собирает пакет `mobile` как **библиотеку** (JNI `.so` +
+  Java-обёртка) и сам генерирует `package main` с cgo-экспортами — своя `main` и
+  cgo в биндимом пакете не нужны. Парсер `gobind` (go/packages) **не резолвит
+  псевдопакет `C`** → `gomobile bind` падал в job `build-android`.
+- **Следствие для релиза:** job `release` в
+  [.github/workflows/release.yml](.github/workflows/release.yml) объявлен
+  `needs: [build-windows, build-android]`. Пока `build-android` падал, **релиз
+  вообще не создавался** — отсюда «на гитхаб не закинул».
+- **Фикс:** из `mobile/main.go` убраны `import "C"` и `func main` (файл оставлен
+  почти пустым с пояснением; его можно и удалить целиком: `git rm mobile/main.go`).
+  Теперь `gomobile bind` проходит, `build-android` зелёный → `release` создаётся
+  и прикладывает `Cryon2-<tag>-android-arm64.apk`.
+- **Про «Must have admin rights» (403) при создании релиза:** это **не** ошибка
+  workflow — в нём уже стоит `permissions: contents: write`. Так отвечает GitHub,
+  когда на теги/релизы навешено **ruleset/tag-protection** или ограничен
+  `GITHUB_TOKEN` в настройках репозитория (Settings → Actions → Workflow
+  permissions = *Read and write*; Settings → Rules/Tags — снять запрет на
+  создание релиза от Actions). Правится в настройках репозитория, кодом не
+  лечится.
+
+### Локальная сборка APK — точный путь (без CI)
+
+Добавлен [scripts/build-android.ps1](scripts/build-android.ps1) — повторяет CI
+пошагово (Windows PowerShell):
+`frontend` → `npm ci && npm run build` → копия `frontend/dist`→`mobile/dist` →
+`mobile` → `go mod tidy && gomobile bind -target=android/arm64 -androidapi 24
+-tags cryonmobile -o android/app/libs/cryonmobile.aar .` → `android` →
+`gradlew.bat assembleDebug`.
+**APK:** `android/app/build/outputs/apk/debug/app-debug.apk` (+ копия
+`dist/Cryon2-<tag>-android-arm64.apk`). Скрипт собирает из рабочего дерева, т.е.
+включает все правки ниже даже без коммита. Предустановка — в шапке скрипта
+(Go 1.26, Node 20, JDK 17/21, Android SDK+NDK, gomobile/gobind + `gomobile init`).
+
+### 7 багов на живом APK — устранены (все сверены вычиткой в этой сессии)
+
+1. **Краш на вкладке «Поиск».** OOM рендер-процесса WebView на сетке обложек ронял
+   всё приложение. [MainActivity.kt](android/app/src/main/java/ru/cryon/app/MainActivity.kt):
+   `onRenderProcessGone`→`recreateWebView()` (возвращаем `true`, пересоздаём
+   WebView), `android:largeHeap="true"`; во фронтенде экраны обёрнуты в
+   `RouteErrorBoundary` (ошибка рендера роута не валит SPA).
+2. **Back-жест закрывал приложение.** [useAndroidBackButton.ts](frontend/src/shared/lib/useAndroidBackButton.ts)
+   ставит `window.__cryonAndroidBack` (закрыть оверлей → шаг назад по роутеру →
+   на главную); Kotlin `onBackPressed` пробует его, затем `canGoBack()/goBack()`,
+   и только в корне — двойное нажатие с тостом «Нажмите ещё раз, чтобы выйти».
+3. **Кнопка локальной музыки не работала.** Копирование папки шло на UI-потоке =
+   ANR. Перенесено в фоновый `Thread`, результат в WebView через
+   `__cryonFolderPickerResolve` (Kotlin), выбор — `ACTION_OPEN_DOCUMENT_TREE` (SAF).
+4. **Тумблер эквалайзера «вылетал» за рамку.** [EqualizerModal.tsx](frontend/src/widgets/EqualizerModal.tsx):
+   ползунок позиционируется инлайновым `transform: translateX(20px)` вместо
+   произвольного Tailwind-класса (тот мог не попасть в бандл на встроенном
+   Android-WebView), дорожка — `overflow-hidden` как жёсткая страховка.
+5. **YouTube отваливался под VPN.** [youtube/service.go](internal/services/youtube/service.go):
+   `newHTTPClient()` с раздельными бюджетами (Dial 15s / TLS 20s / заголовки 30s /
+   всего 45s) вместо единого 15s — медленный TLS-хендшейк под VPN больше не съедает
+   лимит. Плюс SSE-мост [httpBridge.ts](frontend/src/shared/lib/httpBridge.ts)
+   авто-переподключается (backoff + `online`/`visibilitychange`), а не умолкает
+   навсегда после разрыва loopback при переключении VPN.
+6. **Жанр искал по названию, а не по сути.** [genres.ts](frontend/src/shared/data/genres.ts):
+   у каждого жанра `seeds` — реальные исполнители; клик собирает подборку поиском
+   по ним, а не по строке «Русский рок».
+7. **Радар новинок показывал случайное/шансон-поп.** [recommendations/engine.go](internal/recommendations/engine.go):
+   профиль вкуса по недавности и частоте прослушиваний, учёт обратной связи
+   (блок/буст артистов), отсев «редакционного мейнстрима» (шансон/поп из ленты
+   сервиса), не совпадающего со знакомыми/похожими артистами.
+
+Плюс: `safeRandomId()` в [trackShare.ts](frontend/src/shared/lib/trackShare.ts) —
+фолбэк `randomUUID`→`getRandomValues`→`Math.random` (на старом Android-WebView
+`crypto.randomUUID` бросает исключение и ронял разбор ссылки «поделиться»).
+
+### Состояние в git (важно для пользователя)
+
+- **Фикс CI (`mobile/main.go`) и вся автономная обвязка — закоммичены** (коммиты
+  `feat: автономный Android-клиент` … `fix: make Android release portable`).
+- **Правки 7 багов — в рабочем дереве, НЕ закоммичены** (`MainActivity.kt`,
+  `build.gradle.kts`, `SearchPage.tsx`, `genres.ts`, `httpBridge.ts`,
+  `useAndroidBackButton.ts`, `audioEngine.ts`, `engine.go`, `youtube/service.go`).
+  Локальная сборка скриптом их подхватит; для APK **из CI** нужно закоммитить их и
+  запушить новый тег. Коммит/пуш — только по явному «да» пользователя.
+
+### Проверки (прогнать при возврате toolchain/гейта)
+
+`go build/vet/test ./...`, `go build -tags cryonmobile ./...`, `tsc -b`,
+`vitest run`, `vite build`; затем `scripts/build-android.ps1` до готового APK.

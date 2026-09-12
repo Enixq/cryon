@@ -89,15 +89,19 @@ export function EqualizerModal() {
             aria-label="Включить эквалайзер"
             onClick={() => setEnabled(!enabled)}
             className={cn(
-              "relative h-6 w-11 rounded-full transition-colors",
+              "relative h-6 w-11 shrink-0 overflow-hidden rounded-full transition-colors",
               enabled ? "bg-[var(--app-accent)]" : "bg-white/15",
             )}
           >
+            {/* Ползунок позиционируем инлайновым transform, а не Tailwind-классом
+                translate-x-[22px]: на встроенном Android-WebView произвольный
+                класс мог не сгенерироваться в бандле, и ползунок «вылетал» за
+                рамку. overflow-hidden на дорожке — жёсткая страховка: ползунок
+                физически не выходит за пределы тумблера ни на каком DPI.
+                Путь: дорожка 44px − ползунок 20px − 2px слева − 2px справа = 20px. */}
             <span
-              className={cn(
-                "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
-                enabled ? "translate-x-[22px]" : "translate-x-0.5",
-              )}
+              className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+              style={{ transform: enabled ? "translateX(20px)" : "translateX(0)" }}
             />
           </button>
         </div>

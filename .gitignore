@@ -46,9 +46,14 @@ android/app/build/
 android/.gradle/
 android/local.properties
 android/app/libs/*.aar
+android/app/libs/*.jar
 
 # Мобильный пакет: dist вкладывается при сборке (копия frontend/dist)
 mobile/dist/
+
+# Локальная сборка (scripts/build-android.ps1): готовый APK и логи
+dist/
+android/build/
 
 # Temporary files
 *.tmp

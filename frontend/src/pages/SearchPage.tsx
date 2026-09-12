@@ -39,7 +39,7 @@ function normalizeText(s: string): string {
   return s
     .toLowerCase()
     .replace(/ё/g, "е")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/[^a-z0-9\u0400-\u04ff]+/gi, " ")
     .trim();
 }
 
@@ -100,7 +100,8 @@ export function SearchPage() {
   const trackQueries = useQueries({
     queries: activeSources.map((source) => ({
       queryKey: ["search", trimmed, source],
-      queryFn: () => search(source, trimmed),
+      queryFn: () => search(source, trimmed).catch(() => []),
+      retry: 0,
       enabled: trimmed.length > 0,
     })),
   });
@@ -109,7 +110,7 @@ export function SearchPage() {
   // бы новый массив на каждый рендер и агрегаты ниже считались бы вхолостую.
   const tracksSignature = trackQueries.map((qr) => qr.dataUpdatedAt).join("|");
   const foundTracks = useMemo(
-    () => trackQueries.flatMap((qr) => qr.data ?? []),
+    () => trackQueries.reduce<Track[]>((tracks, qr) => tracks.concat(qr.data ?? []), []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tracksSignature],
   );

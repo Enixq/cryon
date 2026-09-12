@@ -434,6 +434,35 @@ export async function listLocalFolders(): Promise<string[]> {
 
 /** Открыть системный диалог выбора папки. Пусто — отменено. */
 export async function pickMusicFolder(): Promise<string> {
+  // Нативная Android-оболочка сама открывает SAF-диалог (Kotlin), копирует
+  // выбранную папку в filesDir и возвращает путь через глобальный колбэк
+  // window.__cryonFolderPickerResolve. Без этого на Android кнопка была
+  // «мертва»: httpBridge глушит любые App.Pick* в "" (нет нативных диалогов у
+  // встроенного сервера), поэтому App.PickMusicFolder() всегда отдавал пустую
+  // строку.
+  const android = (window as unknown as { CryonAndroid?: { pickMusicFolder?: () => void } }).CryonAndroid;
+  if (android && typeof android.pickMusicFolder === "function") {
+    return new Promise<string>((resolve) => {
+      const w = window as unknown as { __cryonFolderPickerResolve?: (path: string) => void };
+      let settled = false;
+      w.__cryonFolderPickerResolve = (path: string) => {
+        if (settled) return;
+        settled = true;
+        delete w.__cryonFolderPickerResolve;
+        resolve(typeof path === "string" ? path : "");
+      };
+      try {
+        android.pickMusicFolder!();
+      } catch {
+        // Мост недоступен — не держим промис висящим.
+        if (!settled) {
+          settled = true;
+          delete w.__cryonFolderPickerResolve;
+          resolve("");
+        }
+      }
+    });
+  }
   if (!isWailsRuntime()) return "";
   return App.PickMusicFolder();
 }

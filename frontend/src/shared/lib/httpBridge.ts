@@ -14,10 +14,17 @@
 
 const BASE_URL_KEY = "cryon.server.baseUrl";
 
+declare global {
+  interface Window {
+    __cryonFolderPickerResolve?: (path: string) => void;
+  }
+}
+
 type WindowBridge = {
   go?: { main?: { App?: unknown } };
   runtime?: unknown;
   __CRYON_BASE__?: string;
+  __cryonFolderPickerResolve?: (path: string) => void;
 };
 
 function win(): WindowBridge | undefined {
@@ -124,12 +131,49 @@ export function installHttpBridge(): boolean {
   // --- Мост window.runtime.* ---
   const listeners = new Map<string, Set<EventHandler>>();
   let es: EventSource | null = null;
-  let esFailed = false;
-  const ensureEvents = () => {
-    if (es || esFailed || typeof EventSource === "undefined") return;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let attempts = 0;
+
+  const clearReconnect = () => {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  // Планирует переподключение с экспоненциальной задержкой (1с→2→4→…, потолок
+  // 30с) и джиттером. Раньше при ЛЮБОЙ ошибке SSE мост выставлял esFailed и
+  // умолкал навсегда: после переключения VPN loopback-сокет рвался, и живые
+  // события (статус источников, оповещения, browser:open) терялись до
+  // перезапуска приложения. Теперь поток восстанавливается сам.
+  const scheduleReconnect = () => {
+    if (reconnectTimer !== null || typeof EventSource === "undefined") return;
+    const delay = Math.min(30000, 1000 * 2 ** Math.min(attempts, 5)) + Math.floor(Math.random() * 500);
+    attempts += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      openEvents();
+    }, delay);
+  };
+
+  const openEvents = () => {
+    if (typeof EventSource === "undefined") return;
     try {
-      es = new EventSource(base + "/api/events");
-      es.onmessage = (ev: MessageEvent) => {
+      if (es) {
+        try {
+          es.close();
+        } catch {
+          // already closed
+        }
+        es = null;
+      }
+      const source = new EventSource(base + "/api/events");
+      es = source;
+      source.onopen = () => {
+        attempts = 0; // соединение живо — сбрасываем задержку
+      };
+      source.onmessage = (ev: MessageEvent) => {
+        attempts = 0; // идёт трафик — соединение здорово
         try {
           const msg = JSON.parse(ev.data as string) as { event?: string; data?: unknown[] };
           if (!msg || !msg.event) return;
@@ -139,20 +183,42 @@ export function installHttpBridge(): boolean {
           // некорректное событие игнорируем
         }
       };
-      es.onerror = () => {
-        // Сервер v1 может не отдавать события — не долбимся переподключением.
-        esFailed = true;
+      source.onerror = () => {
+        // Соединение упало — закрываем и планируем переподключение с backoff
+        // (НЕ отключаемся навсегда: встроенный сервер события отдаёт).
         try {
-          es?.close();
+          source.close();
         } catch {
           // already closed
         }
-        es = null;
+        if (es === source) es = null;
+        scheduleReconnect();
       };
     } catch {
-      esFailed = true;
+      scheduleReconnect();
     }
   };
+
+  const ensureEvents = () => {
+    if (es || reconnectTimer !== null) return;
+    openEvents();
+  };
+
+  // Переключение сети (VPN вкл/выкл) и возврат приложения на передний план —
+  // повод немедленно восстановить поток, не дожидаясь backoff.
+  const kick = () => {
+    attempts = 0;
+    clearReconnect();
+    if (!es) openEvents();
+  };
+  try {
+    window.addEventListener("online", kick);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") kick();
+    });
+  } catch {
+    // среда без window/document — мост работает по запросу через ensureEvents
+  }
 
   const eventsOnMultiple = (name: string, cb: EventHandler): (() => void) => {
     let set = listeners.get(name);
