@@ -136,12 +136,15 @@ $gradleTask = if ($Release) { "assembleRelease" } else { "assembleDebug" }
 Write-Step "Сборка APK (gradlew $gradleTask)"
 $gradlew = Join-Path $android "gradlew.bat"
 if (-not (Test-Path $gradlew)) { Fail "не найден $gradlew" }
-Invoke-Checked $gradlew @($gradleTask, "--no-daemon") $android
-
-# --- 5. Итоговый путь + копия в dist/ ---
+# Чистим прошлый APK: Gradle на Windows иногда переписывает файл по месту и
+# оставляет «хвост» из нулей — на выходе 150+ МБ вместо ~40 МБ.
 $apkKind = if ($Release) { "release" } else { "debug" }
 $apkName = if ($Release) { "app-release.apk" } else { "app-debug.apk" }
 $apkPath = Join-Path $android "app\build\outputs\apk\$apkKind\$apkName"
+if (Test-Path $apkPath) { Remove-Item -Force $apkPath }
+Invoke-Checked $gradlew @($gradleTask, "--no-daemon") $android
+
+# --- 5. Итоговый путь + копия в dist/ ---
 if (-not (Test-Path $apkPath)) { Fail "APK не найден по пути $apkPath" }
 
 $distDir = Join-Path $repoRoot "dist"
