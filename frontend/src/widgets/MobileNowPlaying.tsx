@@ -21,6 +21,8 @@ import { Slider } from "../shared/ui/Slider";
 import { Cover } from "../shared/ui/Cover";
 import { formatDuration, pluralWithCount } from "../shared/lib/format";
 import { useTrackCover } from "../shared/lib/useTrackCover";
+import { useLyrics } from "../shared/lib/useLyrics";
+import { activeLineIndex } from "../shared/lib/lyrics";
 import { useCoverPalette } from "../shared/lib/useCoverPalette";
 import { useFavoriteIds } from "../shared/lib/useFavorites";
 import { sourceName } from "../shared/sources";
@@ -64,6 +66,9 @@ export function MobileNowPlaying() {
   const favoriteIds = useFavoriteIds();
   const isFavorite = track ? favoriteIds.has(track.id) : false;
   const [showQueue, setShowQueue] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
+  const lyrics = useLyrics(track);
+  const activeLyric = activeLineIndex(lyrics.lines, progress);
 
   // Свайп вниз закрывает плеер (жест «смахнуть лист»). Активен только в режиме
   // обложки: когда открыта очередь, вертикальный свайп нужен для её прокрутки.
@@ -161,7 +166,11 @@ export function MobileNowPlaying() {
       {track ? (
         <div className="flex min-h-0 flex-1 flex-col px-6 pb-[calc(18px+var(--safe-bottom))] pt-2">
           {/* Середина: обложка ИЛИ очередь */}
-          {showQueue ? (
+          {showLyrics ? (
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl bg-white/[0.03] px-4 py-5">
+              {lyrics.loading ? <div className="grid min-h-[220px] place-items-center text-sm text-slate-500">Загрузка текста…</div> : lyrics.instrumental ? <div className="grid min-h-[220px] place-items-center text-sm text-slate-500">Инструментальная композиция</div> : lyrics.lines.length > 0 ? <div className="space-y-3">{lyrics.lines.map((line, index) => <button key={`${line.time}-${index}`} type="button" onClick={() => seek(line.time)} className={cn("block w-full text-left text-lg font-semibold transition-colors", index === activeLyric ? "text-white" : "text-slate-500")}>{line.text || "…"}</button>)}</div> : <div className="grid min-h-[220px] place-items-center text-center text-sm text-slate-500">{lyrics.found && lyrics.plain ? lyrics.plain : "Текст не найден"}</div>}
+            </div>
+          ) : showQueue ? (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-2">
                 {queue.map((item, index) => (
@@ -193,7 +202,7 @@ export function MobileNowPlaying() {
           )}
 
           {/* Название + исполнитель + лайк */}
-          <div className="mt-5 flex items-center justify-between gap-3">
+          <div className={cn("mt-5 flex items-center justify-between gap-3", (showQueue || showLyrics) && "hidden") }>
             <div className="min-w-0">
               <h2 className="truncate text-2xl font-bold text-white">{track.title}</h2>
               <p className="truncate text-slate-400">
@@ -211,7 +220,7 @@ export function MobileNowPlaying() {
           </div>
 
           {/* Перемотка */}
-          <div className="mt-4 flex flex-col gap-1.5" data-noswipe>
+          <div className={cn("mt-4 flex flex-col gap-1.5", (showQueue || showLyrics) && "hidden")} data-noswipe>
             <Slider value={progress} max={duration || 100} onChange={seek} ariaLabel="Перемотка воспроизведения" />
             <div className="flex justify-between text-xs tabular-nums text-slate-400">
               <span>{formatDuration(progress)}</span>
@@ -220,7 +229,7 @@ export function MobileNowPlaying() {
           </div>
 
           {/* Транспорт */}
-          <div className="mt-3 flex items-center justify-between" data-noswipe>
+          <div className={cn("mt-3 flex items-center justify-between", (showQueue || showLyrics) && "hidden")} data-noswipe>
             <button
               type="button"
               onClick={toggleShuffle}
@@ -261,7 +270,7 @@ export function MobileNowPlaying() {
           </div>
 
           {/* Второстепенные действия */}
-          <div className="mt-4 flex items-center justify-center gap-8 text-slate-400">
+          <div className={cn("mt-4 flex items-center justify-center gap-8 text-slate-400", (showQueue || showLyrics) && "hidden")}>
             <button
               type="button"
               onClick={() => setEqualizerOpen(true)}
@@ -279,6 +288,10 @@ export function MobileNowPlaying() {
             >
               <ListMusic size={20} />
               Очередь
+            </button>
+            <button type="button" onClick={() => setShowLyrics((value) => !value)} className={cn("flex flex-col items-center gap-1 text-[11px] transition-colors active:text-white", showLyrics && "text-[var(--app-accent)]")} aria-label="Текст песни">
+              <span className="text-base leading-none">Aa</span>
+              Текст
             </button>
           </div>
         </div>
@@ -367,7 +380,7 @@ function QueueRow({
         </div>
       )}
       <div
-        className={cn("flex items-center gap-3 rounded-xl px-2 py-2", active ? "bg-white/5" : "bg-[var(--bg-0)]")}
+        className={cn("flex items-center gap-3 rounded-xl px-2 py-2", active ? "bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--app-accent)_28%,transparent)]" : "bg-[var(--bg-0)]")}
         style={{
           transform: offset ? `translateX(${offset}px)` : undefined,
           transition: sliding ? "none" : "transform 0.24s ease",

@@ -175,12 +175,12 @@ export function HomePage() {
   const showDerived = visibleDailyMix.length === 0 && visibleWeekly.length === 0;
 
   return (
-    <div className="flex min-w-0 flex-col gap-6 py-1 sm:gap-8 sm:py-2">
+    <div className="flex min-w-0 flex-col gap-4 py-1 sm:gap-8 sm:py-2">
       {/* Приветствие */}
       <PageHeader title={greeting()} subtitle="Музыка для тебя, собранная со всех твоих сервисов" />
 
       {/* Быстрые миксы — витрина */}
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-4 xl:grid-cols-4">
         {quickMixes.map((mix) => {
           const mixTracks = quickMixTracks[mix.id];
           return (
@@ -201,7 +201,7 @@ export function HomePage() {
       <section>
         <SectionHeader title="Недавно прослушано" onAction={() => navigate("/history")} />
         {recent.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-5 xl:grid-cols-5">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-5">
             {recent.slice(0, 5).map((track) => (
               <TrackCard key={track.id} track={track} onPlay={handlePlayTrack} />
             ))}
@@ -221,7 +221,7 @@ export function HomePage() {
             subtitle="Похожее на то, что вы слушаете. Оцените — подборка станет точнее"
             onAction={() => navigate("/search")}
           />
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
             {recommended.slice(0, 6).map((track) => (
               <RecoTrackCard
                 key={track.id}
@@ -248,7 +248,7 @@ export function HomePage() {
       {visibleDailyMix.length > 0 ? (
         <section>
           <SectionHeader title="Микс дня" subtitle="Обновляется каждый день" />
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
             {visibleDailyMix.slice(0, 6).map((track) => (
               <RecoTrackCard
                 key={track.id}
@@ -272,7 +272,7 @@ export function HomePage() {
       {visibleWeekly.length > 0 ? (
         <section>
           <SectionHeader title="Открытия недели" subtitle="Обновляется каждую неделю" />
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
             {visibleWeekly.slice(0, 6).map((track) => (
               <RecoTrackCard
                 key={track.id}
@@ -295,7 +295,7 @@ export function HomePage() {
       {/* Умные плейлисты */}
       <section>
         <SectionHeader title="Умные плейлисты" onAction={() => navigate("/playlists")} />
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4 xl:grid-cols-4">
           {smartPlaylists.map((playlist) => (
             <SmartPlaylistCard
               key={playlist.id}
@@ -328,7 +328,7 @@ export function HomePage() {
       <section>
         <SectionHeader title="Ваши плейлисты" onAction={undefined} />
         {playlists.length > 0 ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4 xl:grid-cols-5">
             {playlists.slice(0, 5).map((p) => (
               <HomePlaylistCard
                 key={p.id}
@@ -356,7 +356,7 @@ export function HomePage() {
 // Плитки повторяют раскладку RecoTrackCard (квадратная обложка + две строки).
 function RecoCardSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="flex animate-pulse flex-col">
           <div className="aspect-square w-full rounded-2xl bg-white/10" />

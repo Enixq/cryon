@@ -9,6 +9,10 @@ import { TrackQuickActions } from "./TrackQuickActions";
 import { ServiceIcon } from "./ServiceIcon";
 import { ArtistLink } from "./ArtistLink";
 
+function formatPlayCount(count: number): string {
+  return new Intl.NumberFormat("ru", { notation: "compact", maximumFractionDigits: 1 }).format(count);
+}
+
 interface TrackRowProps {
   track: Track;
   index?: number;
@@ -51,7 +55,7 @@ export function TrackRow({
       onClick={() => onPlay(track)}
       className={cn(
         "group grid min-w-0 grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-xl px-2 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_12%,transparent)] active:bg-[color-mix(in_srgb,var(--app-accent)_16%,transparent)] sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:gap-4 sm:px-3",
-        active && "bg-white/8",
+        active && "bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--app-accent)_28%,transparent)]",
       )}
     >
       {/* Номер / кнопка воспроизведения */}
@@ -62,7 +66,7 @@ export function TrackRow({
           </span>
         )}
         <button
-          onClick={() => onPlay(track)}
+          onClick={(event) => { event.stopPropagation(); onPlay(track); }}
           className={cn(
             "hidden place-items-center text-white sm:group-hover:grid",
             active && "grid",
@@ -163,9 +167,10 @@ export function TrackRow({
           </span>
         )}
         {showAddToPlaylist && <TrackQuickActions track={track} />}
-        <span className="w-10 shrink-0 text-right text-sm tabular-nums text-slate-400">
-          {formatDuration(track.duration)}
-        </span>
+        <div className="flex shrink-0 flex-col items-end leading-tight">
+          {track.playCount ? <span className="text-[11px] tabular-nums text-slate-500">▶ {formatPlayCount(track.playCount)}</span> : null}
+          <span className="w-10 text-right text-sm tabular-nums text-slate-400">{formatDuration(track.duration)}</span>
+        </div>
       </div>
     </div>
   );

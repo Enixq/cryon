@@ -240,6 +240,13 @@ func (s *Service) searchByAPI(ctx context.Context, query string) ([]domain.Track
 				}
 			}
 		}
+		if playCounts := s.fetchVideoPlayCounts(ctx, apiKey, ids); len(playCounts) > 0 {
+			for i := range tracks {
+				if count, ok := playCounts[tracks[i].ID]; ok {
+					tracks[i].PlayCount = count
+				}
+			}
+		}
 	}
 	return tracks, nil
 }
@@ -291,6 +298,48 @@ func (s *Service) fetchVideoDurations(ctx context.Context, apiKey string, ids []
 			if ms := parseISO8601Duration(it.ContentDetails.Duration); ms > 0 {
 				out[it.ID] = ms
 			}
+		}
+	}
+	return out
+}
+
+func (s *Service) fetchVideoPlayCounts(ctx context.Context, apiKey string, ids []string) map[string]int {
+	out := make(map[string]int, len(ids))
+	u, err := url.Parse("https://www.googleapis.com/youtube/v3/videos")
+	if err != nil {
+		return out
+	}
+	q := u.Query()
+	q.Set("part", "statistics")
+	q.Set("id", strings.Join(ids, ","))
+	q.Set("key", apiKey)
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return out
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return out
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return out
+	}
+	var payload struct {
+		Items []struct {
+			ID         string `json:"id"`
+			Statistics struct {
+				ViewCount string `json:"viewCount"`
+			} `json:"statistics"`
+		} `json:"items"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&payload) != nil {
+		return out
+	}
+	for _, item := range payload.Items {
+		if count, err := strconv.ParseInt(item.Statistics.ViewCount, 10, 64); err == nil && count > 0 {
+			out[item.ID] = int(count)
 		}
 	}
 	return out
@@ -479,7 +528,7 @@ func (s *Service) searchByYtDlp(ctx context.Context, query string) ([]domain.Tra
 	var out []byte
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
-		cmd := exec.CommandContext(ctx, "yt-dlp", "--no-warnings", "--skip-download", "--flat-playlist", "--encoding", "utf-8", "--socket-timeout", "15", "--retries", "2", "--fragment-retries", "2", "--extractor-retries", "2", "--print", "%(id)s|%(title)s|%(uploader)s|%(webpage_url)s|%(duration)s", "ytsearch10:"+query)
+		cmd := exec.CommandContext(ctx, "yt-dlp", "--no-warnings", "--skip-download", "--flat-playlist", "--encoding", "utf-8", "--socket-timeout", "15", "--retries", "2", "--fragment-retries", "2", "--extractor-retries", "2", "--print", "%(id)s|%(title)s|%(uploader)s|%(webpage_url)s|%(duration)s|%(view_count)s", "ytsearch10:"+query)
 		// На Windows Python по умолчанию пишет в пайп в кодировке локали (cp1251),
 		// из-за чего кириллица в названиях превращается в «ромбики». Форсируем UTF-8.
 		cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8", "PYTHONUTF8=1")
@@ -538,12 +587,19 @@ func (s *Service) searchByYtDlp(ctx context.Context, query string) ([]domain.Tra
 				durationMs = int(sec * 1000)
 			}
 		}
+		playCount := 0
+		if len(parts) >= 6 {
+			if count, perr := strconv.ParseInt(strings.TrimSpace(parts[5]), 10, 64); perr == nil && count > 0 {
+				playCount = int(count)
+			}
+		}
 		tracks = append(tracks, domain.Track{
 			ID:           videoID,
 			Service:      domain.ServiceYouTube,
 			Title:        title,
 			Artists:      artists,
 			DurationMs:   durationMs,
+			PlayCount:    playCount,
 			ArtworkURL:   thumbnailURL(videoID),
 			ExternalURL:  externalURL,
 			PlayableKind: domain.PlayableStream,

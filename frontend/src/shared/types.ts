@@ -27,6 +27,7 @@ export interface Track {
   source: SourceId;
   /** Длительность трека в секундах. */
   duration: number;
+  playCount?: number;
   accent: AccentColor;
   liked?: boolean;
   /** URL обложки. Если пусто — показывается градиентная заглушка. */

@@ -1,12 +1,11 @@
 ﻿import { useRef } from "react";
 import type { TouchEvent } from "react";
-import { Pause, Play, SkipForward } from "lucide-react";
+import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import { usePlayerStore } from "../store/playerStore";
 import { useUiStore } from "../store/uiStore";
 import { Cover } from "../shared/ui/Cover";
 import { useTrackCover } from "../shared/lib/useTrackCover";
 import { sourceName } from "../shared/sources";
-import { ArtistLink } from "../shared/ui/ArtistLink";
 
 export function MobileMiniPlayer() {
   const queue = usePlayerStore((s) => s.queue);
@@ -16,6 +15,7 @@ export function MobileMiniPlayer() {
   const engineDuration = usePlayerStore((s) => s.engineDuration);
   const togglePlay = usePlayerStore((s) => s.togglePlay);
   const next = usePlayerStore((s) => s.next);
+  const previous = usePlayerStore((s) => s.previous);
   const setNowPlayingOpen = useUiStore((s) => s.setNowPlayingOpen);
   const touchStartY = useRef<number | null>(null);
   const track = queue[currentIndex];
@@ -30,16 +30,24 @@ export function MobileMiniPlayer() {
     touchStartY.current = event.touches[0]?.clientY ?? null;
   }
 
-  function onTouchEnd(event: TouchEvent<HTMLDivElement>) {
+  function onTouchMove(event: TouchEvent<HTMLDivElement>) {
     const start = touchStartY.current;
+    if (start === null) return;
+    const current = event.touches[0]?.clientY ?? start;
+    if (start - current > 48) {
+      touchStartY.current = null;
+      setNowPlayingOpen(true);
+    }
+  }
+
+  function onTouchEnd() {
     touchStartY.current = null;
-    const end = event.changedTouches[0]?.clientY ?? start ?? 0;
-    if (start !== null && start - end > 48) setNowPlayingOpen(true);
   }
 
   return (
     <div
       onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
       className="no-tap-highlight relative mx-2 mb-1 shrink-0 overflow-hidden rounded-2xl border border-white/8 bg-[var(--bg-2)]/95 shadow-lg backdrop-blur-xl"
     >
@@ -68,7 +76,7 @@ export function MobileMiniPlayer() {
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-white">{track.title}</div>
             <div className="truncate text-xs text-slate-400">
-              <ArtistLink name={track.artist} /> · {sourceName(track.source)}
+              {track.artist} · {sourceName(track.source)}
             </div>
           </div>
         </button>
@@ -89,11 +97,20 @@ export function MobileMiniPlayer() {
         <button
           type="button"
           data-noswipe
+          onClick={previous}
+          className="grid h-10 w-8 shrink-0 place-items-center rounded-full text-slate-300 transition-colors active:text-white"
+          aria-label="Предыдущий трек"
+        >
+          <SkipBack size={17} fill="currentColor" />
+        </button>
+        <button
+          type="button"
+          data-noswipe
           onClick={next}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-slate-300 transition-colors active:text-white"
+          className="grid h-10 w-8 shrink-0 place-items-center rounded-full text-slate-300 transition-colors active:text-white"
           aria-label="Следующий трек"
         >
-          <SkipForward size={18} fill="currentColor" />
+          <SkipForward size={17} fill="currentColor" />
         </button>
       </div>
     </div>

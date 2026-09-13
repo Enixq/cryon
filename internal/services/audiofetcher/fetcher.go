@@ -2,9 +2,13 @@ package audiofetcher
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/kkdai/youtube/v2"
 
@@ -31,7 +35,7 @@ const minimumAudioBitrate = 96000
 func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, error) {
 	video, err := ytClient.GetVideoContext(ctx, videoID)
 	if err != nil {
-		if fallback, fallbackErr := getYouTubeAudioStreamWithYtDlp(ctx, videoID); fallbackErr == nil {
+		if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
 			return fallback, nil
 		}
 		return nil, fmt.Errorf("?? ??????? ???????? ????? YouTube: %w", err)
@@ -39,7 +43,7 @@ func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, e
 
 	formats := video.Formats.WithAudioChannels()
 	if len(formats) == 0 {
-		if fallback, fallbackErr := getYouTubeAudioStreamWithYtDlp(ctx, videoID); fallbackErr == nil {
+		if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
 			return fallback, nil
 		}
 		return nil, fmt.Errorf("???????????? ?? ???????")
@@ -64,7 +68,7 @@ func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, e
 	if bestAudio != nil {
 		format = *bestAudio
 	} else if format.Bitrate < minimumAudioBitrate {
-		if fallback, fallbackErr := getYouTubeAudioStreamWithYtDlp(ctx, videoID); fallbackErr == nil {
+		if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
 			return fallback, nil
 		}
 		return nil, fmt.Errorf("YouTube audio stream quality is below 96 kbps")
@@ -72,7 +76,7 @@ func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, e
 
 	streamURL, err := ytClient.GetStreamURLContext(ctx, video, &format)
 	if err != nil {
-		if fallback, fallbackErr := getYouTubeAudioStreamWithYtDlp(ctx, videoID); fallbackErr == nil {
+		if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
 			return fallback, nil
 		}
 		return nil, fmt.Errorf("?? ??????? ???????? URL ??????: %w", err)
@@ -116,6 +120,76 @@ func ParseTrackFromURL(rawURL string) (domain.ServiceID, string, error) {
 	}
 
 	return "", "", fmt.Errorf("неподдерживаемая ссылка")
+}
+
+type pipedAudioStream struct {
+	URL      string `json:"url"`
+	Bitrate  int    `json:"bitrate"`
+	MimeType string `json:"mimeType"`
+}
+
+type pipedStreamsResponse struct {
+	AudioStreams []pipedAudioStream `json:"audioStreams"`
+	Duration     int64              `json:"duration"`
+}
+
+func getYouTubeAudioStreamFallback(ctx context.Context, videoID string) (*AudioStream, error) {
+	if stream, err := getYouTubeAudioStreamWithPiped(ctx, videoID); err == nil {
+		return stream, nil
+	}
+	return getYouTubeAudioStreamWithYtDlp(ctx, videoID)
+}
+
+func getYouTubeAudioStreamWithPiped(ctx context.Context, videoID string) (*AudioStream, error) {
+	client := &http.Client{Timeout: 12 * time.Second}
+	instances := []string{"https://pipedapi.kavin.rocks", "https://pipedapi.adminforge.de", "https://pipedapi.reallyaweso.me"}
+	var lastErr error
+	for _, instance := range instances {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, instance+"/streams/"+videoID, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		request.Header.Set("Accept", "application/json")
+		response, err := client.Do(request)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+		response.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			lastErr = fmt.Errorf("Piped returned HTTP %d", response.StatusCode)
+			continue
+		}
+		var payload pipedStreamsResponse
+		if err := json.Unmarshal(body, &payload); err != nil {
+			lastErr = err
+			continue
+		}
+		var best *pipedAudioStream
+		for i := range payload.AudioStreams {
+			stream := &payload.AudioStreams[i]
+			if stream.URL == "" || stream.Bitrate < minimumAudioBitrate || !strings.HasPrefix(stream.MimeType, "audio/") {
+				continue
+			}
+			if best == nil || stream.Bitrate > best.Bitrate {
+				best = stream
+			}
+		}
+		if best != nil {
+			return &AudioStream{URL: best.URL, Format: best.MimeType, Quality: fmt.Sprintf("%dbps", best.Bitrate), Duration: payload.Duration}, nil
+		}
+		lastErr = fmt.Errorf("Piped returned no audio stream")
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no Piped instances configured")
+	}
+	return nil, lastErr
 }
 
 func getYouTubeAudioStreamWithYtDlp(ctx context.Context, videoID string) (*AudioStream, error) {

@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -91,7 +93,8 @@ func readTrack(path string) (LocalTrack, error) {
 	defer f.Close()
 
 	id := trackID(path)
-	title := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	title := localFilenameTitle(path)
+	durationMs := mobileFilenameDuration(path)
 	var artists []string
 	var album string
 
@@ -113,6 +116,7 @@ func readTrack(path string) (LocalTrack, error) {
 			Title:        title,
 			Artists:      artists,
 			Album:        album,
+			DurationMs:   durationMs,
 			ArtworkURL:   "", // обложка отдаётся отдельным методом по требованию
 			PlayableKind: domain.PlayableStream,
 		},
@@ -138,4 +142,27 @@ func FileModTime(path string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return info.ModTime(), nil
+}
+
+var mobileFilenamePattern = regexp.MustCompile(`^\d+--(\d+)--(.+)$`)
+
+func localFilenameTitle(path string) string {
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if match := mobileFilenamePattern.FindStringSubmatch(base); len(match) == 3 {
+		return match[2]
+	}
+	return base
+}
+
+func mobileFilenameDuration(path string) int {
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	match := mobileFilenamePattern.FindStringSubmatch(base)
+	if len(match) != 3 {
+		return 0
+	}
+	value, err := strconv.Atoi(match[1])
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
 }

@@ -20,7 +20,8 @@ var _ domain.AlbumResolver = (*Service)(nil)
 type scFullTrack struct {
 	ID         int64  `json:"id"`
 	Title      string `json:"title"`
-	DurationMs int    `json:"duration"` // api-v2 отдаёт длительность в мс
+	DurationMs   int `json:"duration"` // api-v2 отдаёт длительность в мс
+	PlaybackCount int `json:"playback_count"`
 	ArtworkURL string `json:"artwork_url"`
 	Permalink  string `json:"permalink_url"`
 	User       struct {
@@ -68,6 +69,7 @@ func (t scFullTrack) toDomain(album, artworkHost string) domain.Track {
 		Artists:      artists,
 		Album:        album,
 		DurationMs:   t.DurationMs,
+		PlayCount:  t.PlaybackCount,
 		ArtworkURL:   normalizeArtwork(artwork, artworkHost),
 		ExternalURL:  t.Permalink,
 		PlayableKind: domain.PlayableStream,

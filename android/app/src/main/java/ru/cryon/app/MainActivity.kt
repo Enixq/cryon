@@ -20,6 +20,7 @@ import androidx.media.app.NotificationCompat.MediaStyle
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
+import androidx.media.session.MediaButtonReceiver
 import android.webkit.JavascriptInterface
 import org.json.JSONObject
 import java.io.File
@@ -49,7 +50,15 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        mediaSession = MediaSessionCompat(this, "Cryon").apply { isActive = true }
+        mediaSession = MediaSessionCompat(this, "Cryon").apply {
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() = dispatchPlayerCommand("play")
+                override fun onPause() = dispatchPlayerCommand("pause")
+                override fun onSkipToNext() = dispatchPlayerCommand("next")
+                override fun onSkipToPrevious() = dispatchPlayerCommand("previous")
+            })
+            isActive = true
+        }
 
         // 1) Go-бэкенд: SQLite в filesDir, HTTP-сервер на случайном порту петли.
         //    Повторный вход (singleTask + поворот экрана) — сервер уже поднят.
@@ -137,7 +146,11 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun clearNowPlaying() {
-            runOnUiThread { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(nowPlayingNotificationId) }
+            runOnUiThread {
+                (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(nowPlayingNotificationId)
+                mediaSession.setMetadata(null)
+                mediaSession.isActive = false
+            }
         }
 
         @JavascriptInterface
@@ -183,6 +196,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun dispatchPlayerCommand(command: String) {
+        runOnUiThread {
+            if (this::webView.isInitialized) {
+                webView.evaluateJavascript("window.__cryonNativeMediaCommand && window.__cryonNativeMediaCommand(" + JSONObject.quote(command) + ")", null)
+            }
+        }
+    }
+
     private fun showNowPlaying(title: String, artist: String, playing: Boolean) {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
             pendingNowPlaying = Triple(title, artist, playing)
@@ -194,12 +215,13 @@ class MainActivity : AppCompatActivity() {
             manager.createNotificationChannel(NotificationChannel(nowPlayingChannelId, "Cryon playback", NotificationManager.IMPORTANCE_LOW))
         }
         val state = if (playing) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        mediaSession.isActive = true
         mediaSession.setMetadata(MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title.ifBlank { "Cryon" })
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
             .build())
         mediaSession.setPlaybackState(PlaybackStateCompat.Builder()
-            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE)
+            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
             .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
             .build())
         val notification = NotificationCompat.Builder(this, nowPlayingChannelId)
@@ -211,7 +233,10 @@ class MainActivity : AppCompatActivity() {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setStyle(MediaStyle().setMediaSession(mediaSession.sessionToken))
+            .addAction(NotificationCompat.Action(android.R.drawable.ic_media_previous, "Previous", MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)))
+            .addAction(NotificationCompat.Action(if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play, if (playing) "Pause" else "Play", MediaButtonReceiver.buildMediaButtonPendingIntent(this, if (playing) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY)))
+            .addAction(NotificationCompat.Action(android.R.drawable.ic_media_next, "Next", MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_SKIP_TO_NEXT)))
+            .setStyle(MediaStyle().setMediaSession(mediaSession.sessionToken).setShowActionsInCompactView(1))
             .build()
         manager.notify(nowPlayingNotificationId, notification)
     }
@@ -222,16 +247,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun scanMediaStore(): String {
         val target = File(filesDir, "scanned_music").apply { mkdirs() }
-        val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.MIME_TYPE)
+        val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.MIME_TYPE, MediaStore.Audio.Media.DURATION)
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         var copied = 0
         contentResolver.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, selection, null, MediaStore.Audio.Media.TITLE + " COLLATE NOCASE ASC")?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+            val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idColumn)
                 val name = cursor.getString(nameColumn)?.takeIf { it.isNotBlank() } ?: "track-$id"
-                val safeName = "${id}-${name.replace(Regex("[^A-Za-z0-9._-]"), "_")}"
+                val duration = cursor.getLong(durationColumn).coerceAtLeast(0L)
+                val safeName = "${id}--${duration}--${name.replace(Regex("[^A-Za-z0-9._-]"), "_")}"
+                target.listFiles()?.filter { it.name.startsWith("$id-") && it.name != safeName }?.forEach { it.delete() }
                 val targetFile = File(target, safeName)
                 if (targetFile.exists()) { copied++; continue }
                 val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)

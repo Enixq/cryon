@@ -56,6 +56,7 @@ export function mapTrack(src: domain.Track): Track {
     album: src.album || undefined,
     source,
     duration: src.durationMs ? Math.round(src.durationMs / 1000) : 0,
+    playCount: src.playCount || undefined,
     accent: accentFor(src.id || src.title || source),
     coverUrl: src.artworkUrl || undefined,
     playableKind: normalizeKind(src.playableKind),

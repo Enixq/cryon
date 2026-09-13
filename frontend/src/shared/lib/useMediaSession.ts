@@ -63,6 +63,18 @@ export function useMediaSession(): void {
     };
   }, []);
 
+  useEffect(() => {
+    const target = window as Window & { __cryonNativeMediaCommand?: (command: string) => void };
+    target.__cryonNativeMediaCommand = (command) => {
+      const store = usePlayerStore.getState();
+      if (command === "play") store.play();
+      else if (command === "pause") store.pause();
+      else if (command === "next") store.next();
+      else if (command === "previous") store.previous();
+    };
+    return () => { delete target.__cryonNativeMediaCommand; };
+  }, []);
+
   // Метаданные текущего трека (название, артист, альбом, обложка).
   useEffect(() => {
     const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;

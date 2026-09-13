@@ -151,6 +151,7 @@ export namespace domain {
 	    artists: string[];
 	    album?: string;
 	    durationMs?: number;
+    playCount?: number;
 	    artworkUrl?: string;
 	    externalUrl?: string;
 	    playableKind: string;
@@ -167,6 +168,7 @@ export namespace domain {
 	        this.artists = source["artists"];
 	        this.album = source["album"];
 	        this.durationMs = source["durationMs"];
+        this.playCount = source["playCount"];
 	        this.artworkUrl = source["artworkUrl"];
 	        this.externalUrl = source["externalUrl"];
 	        this.playableKind = source["playableKind"];

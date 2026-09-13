@@ -1836,12 +1836,11 @@ func (a *App) RescanLocalLibrary() ([]domain.Track, error) {
 			metadataKey := strings.Join([]string{
 				strings.ToLower(strings.TrimSpace(track.Title)),
 				strings.ToLower(strings.TrimSpace(strings.Join(track.Artists, ","))),
-				strings.ToLower(strings.TrimSpace(track.Album)),
 			}, "\x00")
 			if _, duplicate := seenPaths[pathKey]; duplicate {
 				continue
 			}
-			if strings.TrimSpace(track.Title) != "" && len(track.Artists) > 0 && strings.TrimSpace(track.Album) != "" {
+			if strings.TrimSpace(track.Title) != "" && len(track.Artists) > 0 {
 				if _, duplicate := seenMetadata[metadataKey]; duplicate {
 					continue
 				}
