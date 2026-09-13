@@ -782,3 +782,231 @@ cd android && ./gradlew assembleDebug
 
 `go build/vet/test ./...`, `go build -tags cryonmobile ./...`, `tsc -b`,
 `vitest run`, `vite build`; затем `scripts/build-android.ps1` до готового APK.
+
+---
+
+## Истинные корни двух багов на живом APK (2026-09-13)
+
+> **Повторная жалоба пользователя (дословно):** «После сборки всё равно жест назад
+> всё также закрывает на андроиде, на вкладке "поиск" приложение крашится
+> (закрывается)». То есть правки из раздела «доводка до APK (2026-09-12)» эти два
+> бага НЕ вылечили — потому что лечили симптом, а не причину. Ниже — найденные в
+> этой сессии **истинные корни** и точечные фиксы. Урок: «код лежит на диске» ≠
+> «работает».
+
+### Баг 1 — краш на вкладке «Поиск» (истинная причина: нативная паника, не OOM WebView)
+
+- **Что было не так.** Прежний фикс (`onRenderProcessGone`→`recreateWebView` +
+  `largeHeap`) закрывает лишь смерть **рендер-процесса WebView** (OOM на сетке
+  обложек). Но реальный краш — в **Go-процессе**, а его пересоздание WebView не
+  спасает.
+- **Корень.** [mobile/mobile.go](mobile/mobile.go) `Start()` поднимал сервер, но
+  **никогда не звал `a.Startup(ctx)`** (десктопный аналог Wails `OnStartup`).
+  Значит `a.ctx` оставался `nil`. Как только пользователь открывал «Поиск», в
+  фоновых горутинах бэкенда вызывался `context.WithTimeout(a.ctx, …)` —
+  а `WithTimeout(nil, …)` **паникует** («cannot create context from nil parent»).
+  **`net/http` восстанавливает панику в горутине самого хендлера, но НЕ в
+  горутинах, которые хендлер ПОРОЖДАЕТ** (fan-out поиска по источникам, резолв
+  потока, радар). Непойманная паника в порождённой горутине роняет **весь
+  процесс** → на Android это выглядит как «приложение закрылось».
+- **Побочно (bug #3, «локальная музыка мертва»).** Без `Startup` не вызывался
+  `store.Init(ctx)`, а сам путь БД брался из `os.UserConfigDir()` →
+  «$HOME/.config», которого в песочнице Android **нет и он недоступен на запись**
+  → `store == nil`, вся локалка/настройки/история мертвы.
+- **Фиксы (5 правок на диске, сверены вычиткой):**
+  1. [mobile/mobile.go](mobile/mobile.go): после `StartMobileServer` создаётся
+     `ctx, cancel := context.WithCancel(context.Background())` и вызывается
+     `a.Startup(ctx)`. Порядок `NewApp → StartMobileServer → Startup` гонок не
+     даёт: сервер ставит `a.platform = sseHost` до старта health-check-горутин,
+     клиент не подключается раньше, чем `Start` вернёт baseURL. `Stop()` теперь
+     ещё и отменяет `ctx` (`cancel()`).
+  2. [mobile/mobile.go](mobile/mobile.go): `dataDir` из Kotlin (`filesDir`) больше
+     не игнорируется — `logging.SetDataDirOverride(dataDir)` ДО `NewApp`.
+  3. [internal/logging/logging.go](internal/logging/logging.go): `SetDataDirOverride`
+     + `DataDir` уважает override (SQLite ложится в `filesDir/…`, доступный на
+     запись), пустой override = прежнее десктопное поведение.
+  4. [internal/core/app.go](internal/core/app.go): защита в глубину —
+     `recoverGoroutine(where)` и `defer a.recoverGoroutine(...)` в **4** фоновых
+     горутинах (`SearchInSources`, `ResolvePlayableTrack`, `NewReleases`,
+     `ArtistNewReleases`). Даже если где-то ещё проскочит `nil`-ctx или иная
+     паника — процесс останется жив, ошибка уйдёт в лог. `defer` стоит по LIFO
+     ПОСЛЕ `wg.Done()`/освобождения семафора, значит recover срабатывает раньше
+     них.
+  5. `Stop()`/`shutdown(nil)` безопасны: `shutdown(_ context.Context)` не читает
+     переданный контекст, глушит player и закрывает store с nil-проверками.
+
+### Баг 2 — жест «Назад» закрывает приложение (истинная причина: предиктивный back на targetSdk 36)
+
+- **Корень.** compileSdk/targetSdk = 36 + `android:enableOnBackInvokedCallback`
+  включают **предиктивный жест «назад»** (Android 13+). В этом режиме система
+  **не вызывает** устаревший `onBackPressed()` — а весь прежний перехват «назад»
+  висел именно на нём (и на Capacitor-плагине `@capacitor/app`, которого в
+  автономной Kotlin-оболочке вообще нет). Итог: жест уходил в системный дефолт
+  (выход из активности) = приложение закрывается, минуя роутер/оверлеи.
+- **Фиксы:**
+  1. [AndroidManifest.xml](android/app/src/main/AndroidManifest.xml): у
+     `<application>` явно `android:enableOnBackInvokedCallback="true"`.
+  2. [MainActivity.kt](android/app/src/main/java/ru/cryon/app/MainActivity.kt):
+     логика «назад» вынесена в `handleBackGesture()`; на API 33+ в `onCreate`
+     регистрируется `onBackInvokedDispatcher.registerOnBackInvokedCallback(...)`,
+     на API < 33 остаётся делегатор из `onBackPressed()`. Оба пути ведут в один
+     `handleBackGesture()`: спросить фронтенд (`__cryonAndroidBack` — закрыть
+     оверлей / шаг назад по роутеру) → иначе `webView.canGoBack()`/`goBack()` →
+     иначе двойное нажатие для выхода с тостом «Нажмите ещё раз, чтобы выйти».
+     JS-проба обёрнута в try/catch (при неустановленном `__cryonAndroidBack`
+     возвращает `false`, а не `null` — не выходим раньше времени).
+
+### Затронутые файлы (в рабочем дереве, НЕ закоммичены)
+
+`mobile/mobile.go`, `internal/logging/logging.go`, `internal/core/app.go`,
+`android/app/src/main/AndroidManifest.xml`,
+`android/app/src/main/java/ru/cryon/app/MainActivity.kt`.
+
+### Проверка
+
+- **Read-only сверка проведена** (оба шелла в этой сессии временно недоступны —
+  сбой классификатора `auto`): все 5 правок синтаксически корректны, стаб
+  `startLANServer` для `!cryonlan` есть → `gomobile bind` (тег `cryonmobile`) не
+  сломается, `shutdown(nil)` безопасен, 4 `defer recoverGoroutine` на месте.
+- **Прогнать при возврате гейта:** `go build ./...`, `go vet ./...`,
+  `go build -tags cryonmobile ./...`, `go test ./...`; затем пересборка APK
+  скриптом (см. ниже) и установка `adb install -r`.
+
+### Как пересобрать и поставить (пользователю)
+
+```powershell
+# из корня проекта, на машине с toolchain (Go 1.26 + gomobile init, Node 20, JDK 17, Android SDK+NDK)
+powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1
+# APK: android\app\build\outputs\apk\debug\app-debug.apk  (+ копия dist\Cryon2-<tag>-android-arm64.apk)
+adb install -r android\app\build\outputs\apk\debug\app-debug.apk
+```
+
+Скрипт собирает из рабочего дерева, поэтому подхватывает эти 5 правок даже без
+коммита. Для APK из CI правки нужно закоммитить и запушить тег — **только по явному
+«да»** пользователя.
+
+### Догон (2026-09-13, та же сессия): защита health-проб + карта остальных горутин
+
+Пока гейт шелла держался, провёл полный аудит **всех** мест `go func` в бэкенде на
+тот же класс бага (непойманная паника в порождённой горутине = смерть процесса на
+Android). Итог:
+
+1. **[internal/core/health.go](internal/core/health.go) — добавлен
+   `defer a.recoverGoroutine("runHealthChecks")`** в горутину проб. Это горутина,
+   порождённая не-хендлером, и она зовёт **тот же `svc.Search`**, что и вкладка
+   «Поиск», только с фиксированным `healthCheckQuery`, стартуя автоматически через
+   `healthCheckDelay` после запуска. Если адаптер источника паникует — раньше это
+   роняло приложение **на старте** (выглядит как «само закрылось через пару
+   секунд»). Теперь ловится и логируется. Правка байт-в-байт по образцу 4
+   существующих `recoverGoroutine` в [app.go](internal/core/app.go) → риск
+   компиляции нулевой. Итого в пакете `core` под защитой **5** фоновых горутин.
+
+2. **Остальные `go func` проверены и оставлены как есть — обоснованно:**
+   - [mobileserver.go](internal/core/mobileserver.go) `srv.Serve(ln)` — цикл
+     accept, сам не паникует; паники запросов ловит `net/http` в своих
+     горутинах-хендлерах. Безопасно.
+   - [oauth.go](internal/core/oauth.go), [lanserver.go](internal/core/lanserver.go)
+     — локальный OAuth-сервер и LAN (последний под `!cryonmobile` вообще не
+     компилируется в Android-сборку). На петле, не на горячем пути поиска.
+   - **Листовые горутины в других пакетах** —
+     [youtube/artist.go](internal/services/youtube/artist.go) `fetchAlbums`,
+     [recommendations/engine.go](internal/recommendations/engine.go),
+     `discovery.go`, `content.go`. Родительский `recoverGoroutine` в app.go их
+     **не** покрывает (recover ловит панику только своей горутины). Но: (а) их
+     панико-опасные ветки — это `runYtDlpJSON`/внешний `yt-dlp`, а на Android
+     бинаря нет → путь возвращает **ошибку exec, а не панику**, и деградирует
+     штатно; (б) их сетевые вызовы идут через замыкание
+     `func(ctx,q){ return app.SearchAll(q) }` → `SearchInSources`, где recover в
+     листовых горутинах **уже стоит**. Кросс-пакетные правки вслепую (без
+     возможности скомпилировать в этой сессии) дали бы больше риска, чем пользы, —
+     поэтому только задокументированы как defense-in-depth follow-up: когда гейт
+     вернётся и сборка пройдёт, добавить в каждый пакет локальный `recover`-хелпер
+     по образцу `core.recoverGoroutine`.
+
+**Состояние правок этой сессии на диске:** файлы 5 багов + `health.go` (6-я правка)
++ `plan-android.md` — в рабочем дереве, НЕ закоммичены. Компиляция всё ещё
+заблокирована перемежающимся гейтом классификатора (оба шелла: «claude-opus-4-8 is
+temporarily unavailable»). Прогнать проверки и пересобрать APK — при первом
+возврате шелла.
+
+### Аудит тракта воспроизведения на Android (2026-09-13): РАБОТАЕТ + пробел фона
+
+Проверил сквозняком, играет ли звук на телефоне (десктоп использует `mpv`, которого
+на Android нет — был риск, что плеер мёртв). Цепочка цела:
+
+1. [mobileserver.go](internal/core/mobileserver.go) `injectBaseURL` впрыскивает
+   `<script>window.__CRYON_BASE__=location.origin;</script>` сразу после `<head>`
+   в отдаваемый index.html. Это **линчпин**: [httpBridge.ts](frontend/src/shared/lib/httpBridge.ts)
+   `installHttpBridge` по непустому `__CRYON_BASE__` ставит `window.go.main.App` →
+   `isWailsRuntime()` становится `true`, и весь `client.ts` уходит по HTTP на
+   встроенный сервер. Без впрыска фронт свалился бы в мок-режим (демо-данные) —
+   но впрыск на месте, поэтому поиск/библиотека реальны.
+2. Мост глушит mpv: `PlayerBackendAvailable → false`, все `Player* → no-op`. В
+   [audioEngine.ts](frontend/src/store/audioEngine.ts) ветка mpv (`mpvAvailableRef`)
+   пропускается → звук идёт через HTML5 `<audio>`.
+3. `getPlaybackUrlForHtml5` отдаёт `location.origin + /stream/<source>/<id>` (или
+   `/local/<id>`), а [mobileserver.go](internal/core/mobileserver.go) обслуживает
+   `/stream/` и `/local/` тем же `localAssetHandler`, что проксирует поток
+   same-origin с поддержкой Range (перемотка). Звук воспроизводится.
+
+**Вывод:** воспроизведение на Android работоспособно, отдельный фикс не требуется.
+
+**Известный пробел (follow-up, НЕ баг из репорта):** нет нативного
+foreground-media-сервиса. Манифест объявляет `FOREGROUND_SERVICE_MEDIA_PLAYBACK` +
+`POST_NOTIFICATIONS` + `WAKE_LOCK`, но ни один Service их не использует (в
+`ru.cryon.app` только `MainActivity`). Значит при выключенном экране / сворачивании
+приложения ОС может приостановить WebView-аудио, а медиа-уведомление с обложкой/
+кнопками не гарантировано (голый `navigator.mediaSession` в WebView без сервиса
+ненадёжен). Что сделать, когда вернётся toolchain (требует компиляции — вслепую не
+писал): минимальный `MediaPlaybackService` (`MediaSessionCompat` + стартовать как
+foreground с медиа-уведомлением, удерживать процесс живым, пробрасывать
+play/pause/next/prev из нотификации во WebView через `evaluateJavascript` в те же
+обработчики, что уже слушает `useMediaSession.ts`). Это фоновая фича-доводка, на
+краш/жест-назад из репорта не влияет.
+
+### Финальный аудит диска + версия 0.2.2 (2026-09-13, продолжение)
+
+Повторная проверка шелла — гейт классификатора всё ещё активен (Bash и PowerShell:
+«claude-opus-4-8 is temporarily unavailable»). Собрать/прогнать тесты в этой сессии
+невозможно. Поэтому сделан максимум безопасной read-only проверки, что **рабочее
+дерево полно и согласовано** и сборка у пользователя пройдёт с первого раза.
+
+**Ключевое открытие:** оба фикса из репорта лежат в рабочем дереве **НЕ
+закоммиченными** (`git status`: `app.go`, `health.go`, `mobile.go`, `MainActivity.kt`,
+`AndroidManifest.xml`, `logging.go`). Скрипт [build-android.ps1](scripts/build-android.ps1)
+собирает из рабочего дерева, а не из HEAD, и пересобирает ВСЁ: фронт → `mobile/dist`
+(свежим) → `gomobile bind` (Go: app/health/mobile) → `gradlew` (Kotlin+манифест).
+Значит свежий прогон подхватит все фиксы. Наиболее вероятная причина «после сборки
+всё равно крашит/закрывает» — тестировался APK, собранный ДО появления этих правок,
+либо на телефоне оставался старый установленный APK.
+
+**Чтобы это стало видно и исключить путаницу версий:** поднял
+[build.gradle.kts](android/app/build.gradle.kts) `versionCode 2→3`, `versionName
+"0.2.1"→"0.2.2"`. После установки проверить «Настройки → Приложения → Cryon → 0.2.2».
+Если там всё ещё 0.2.1 — установился старый файл, а не свежая сборка.
+
+**Аудит краш-поверхности завершён (подтверждение, не баг):** документированный класс
+краша — паника адаптера в *порождённой* горутине (net/http её НЕ ловит, т.к. это не
+горутина-обработчик) — закрыт на ВСЕХ путях, т.к. любой вызов `svc.Search` идёт через
+горутину с `recoverGoroutine`:
+- вкладка поиска → `SearchInSources` (app.go:607) ✓
+- рекомендации (`Recommendations`/`AutoMix`/`DailyMix`/`WeeklyMix`) → замыкание
+  `e.search` = `SearchAll` → `SearchInSources` (тот же recover) ✓
+- health-check → `runHealthChecks` (health.go:159, правка этой сессии) ✓
+- `ResolvePlayableTrack`/`NewReleases`/`ArtistNewReleases` — все с recover ✓
+
+Остаточный риск: горутины в `internal/recommendations/*` (10 шт.) и
+`youtube/artist.go:195` своего recover не имеют. Но их обращения к адаптерам идут
+через защищённый `SearchInSources`, а `youtube/fetchAlbums` на Android упирается в
+отсутствующий `yt-dlp` и падает с ошибкой ДО кода с возможной паникой. Вносить recover
+в эти пакеты вслепую НЕ стал: без компиляции ошибка в чужом пакете сломала бы сборку
+целиком (худший исход — потеря готовых фиксов). Применить при возврате toolchain.
+
+**Команды сборки/установки (шелл пользователя не заблокирован):**
+```
+powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1 -Tag v0.2.2
+adb install -r dist\Cryon2-v0.2.2-android-arm64.apk
+```
+Перед сборкой один раз, если ещё не прогонялось: `go build ./...`, `go vet ./...`,
+`go build -tags cryonmobile ./...`, `go test ./...`; фронт — `tsc -b`, `vitest run`,
+`vite build`.

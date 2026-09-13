@@ -12,9 +12,12 @@ package mobile
 
 import (
 	"Cryon2/internal/core"
+	"Cryon2/internal/logging"
+	"context"
 	"embed"
 	"errors"
 	"io/fs"
+	"strings"
 	"sync"
 )
 
@@ -25,6 +28,7 @@ var (
 	mu      sync.Mutex
 	app     *core.App
 	stopSrv func()
+	cancel  context.CancelFunc
 )
 
 // Start инициализирует бэкенд и поднимает встроенный сервер на петле.
@@ -40,18 +44,38 @@ func Start(dataDir string) (string, error) {
 		return "", errAlreadyStarted
 	}
 
+	// КЛЮЧЕВОЕ для Android: перенаправляем каталог данных в filesDir приложения
+	// ДО NewApp. Иначе store.New через os.UserConfigDir() целится в недоступный
+	// «$HOME/.config», SQLite не открывается, и весь бэкенд остаётся без БД.
+	if strings.TrimSpace(dataDir) != "" {
+		logging.SetDataDirOverride(dataDir)
+	}
+
 	a := core.NewApp()
 	spa, err := fs.Sub(assets, "dist")
 	if err != nil {
 		return "", err
 	}
+
+	// Сначала поднимаем сервер — он назначает a.platform = sseHost (события
+	// backend начинают уходить в WebView). Только потом Startup стартует
+	// health-check, чтобы его горутина читала уже установленный platform.
 	baseURL, stop, err := a.StartMobileServer(spa)
 	if err != nil {
 		return "", err
 	}
 
+	// РАВНОЗНАЧНО Wails OnStartup на десктопе. Без этого a.ctx == nil, и
+	// context.WithTimeout(a.ctx, …) в горутинах поиска/подбора потока паникует
+	// — а паника в отдельной горутине net/http не перехватывается и роняет весь
+	// процесс (это и был «краш на вкладке поиск»). Здесь же создаётся схема
+	// SQLite и восстанавливаются токены/настройки.
+	ctx, cancelFn := context.WithCancel(context.Background())
+	a.Startup(ctx)
+
 	app = a
 	stopSrv = stop
+	cancel = cancelFn
 	return baseURL, nil
 }
 
@@ -63,6 +87,10 @@ func Stop() {
 	if stopSrv != nil {
 		stopSrv()
 		stopSrv = nil
+	}
+	if cancel != nil {
+		cancel()
+		cancel = nil
 	}
 	if app != nil {
 		app.Shutdown(nil)

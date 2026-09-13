@@ -2,9 +2,11 @@ package ru.cryon.app
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Toast
+import android.window.OnBackInvokedDispatcher
 import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
 import android.webkit.JavascriptInterface
@@ -47,6 +49,18 @@ class MainActivity : AppCompatActivity() {
         webView = buildWebView()
         setContentView(webView)
         webView.loadUrl(baseURL)
+
+        // 3) «Назад». На Android 13+ (API 33+) при включённом предиктивном жесте
+        //    (enableOnBackInvokedCallback=true в манифесте) устаревший
+        //    onBackPressed() системой НЕ вызывается — из-за этого «назад»
+        //    закрывал приложение вместо шага по роутеру. Регистрируем
+        //    OnBackInvokedCallback; на API < 33 остаётся onBackPressed().
+        //    Оба ведут в общий handleBackGesture().
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            ) { handleBackGesture() }
+        }
     }
 
     // Создаёт и настраивает WebView. Вынесено из onCreate, потому что при смерти
@@ -144,9 +158,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (!this::webView.isInitialized) return super.onBackPressed()
+    // Единая обработка «Назад» (регистрируется в onCreate). Спрашиваем фронтенд
+    // (__cryonAndroidBack — закрыть оверлей / шаг назад по роутеру), иначе идём
+    // по истории WebView, иначе двойное нажатие для выхода. Вызывается из
+    // OnBackInvokedCallback (API 33+) и из onBackPressed() (API < 33).
+    private fun handleBackGesture() {
+        if (!this::webView.isInitialized) { finish(); return }
         // \u041e\u0431\u043e\u0440\u0430\u0447\u0438\u0432\u0430\u0435\u043c \u0432 try/catch \u043d\u0430 \u0441\u0442\u043e\u0440\u043e\u043d\u0435 JS: \u0435\u0441\u043b\u0438 __cryonAndroidBack \u0435\u0449\u0451 \u043d\u0435
         // \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d \u0438\u043b\u0438 \u0431\u0440\u043e\u0441\u0438\u043b \u2014 \u043f\u043e\u043b\u0443\u0447\u0430\u0435\u043c "false", \u0430 \u043d\u0435 "null", \u0438 \u043f\u0435\u0440\u0435\u0445\u043e\u0434\u0438\u043c \u043a
         // \u043d\u0430\u0442\u0438\u0432\u043d\u043e\u043c\u0443 \u0444\u043e\u043b\u0431\u044d\u043a\u0443, \u0430 \u043d\u0435 \u043a \u043d\u0435\u043c\u0435\u0434\u043b\u0435\u043d\u043d\u043e\u043c\u0443 \u0432\u044b\u0445\u043e\u0434\u0443.
@@ -175,6 +192,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        // На API 33+ «назад» приходит через OnBackInvokedCallback (onCreate), и
+        // этот устаревший метод системой не вызывается. Оставлен для API < 33.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
+        handleBackGesture()
+    }
+
     override fun onDestroy() {
         // Останавливаем Go-сервер и освобождаем SQLite.
         Mobile.stop()

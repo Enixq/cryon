@@ -158,6 +158,12 @@ func (a *App) runHealthChecks(ctx context.Context) {
 		wg.Add(1)
 		go func(id domain.ServiceID, svc domain.MusicService) {
 			defer wg.Done()
+			// Та же защита, что и в SearchInSources: health-проба зовёт svc.Search
+			// в порождённой горутине. Непойманная паника адаптера здесь не
+			// перехватывается net/http (это не горутина-обработчик) и уронила бы
+			// весь процесс — на Android это выглядит как «приложение закрылось»
+			// через пару секунд после запуска. Ловим и логируем.
+			defer a.recoverGoroutine("runHealthChecks")
 			probeCtx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 			defer cancel()
 			_, err := svc.Search(probeCtx, healthCheckQuery)

@@ -23,6 +23,7 @@
         android:largeHeap="true"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
+        android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.Cryon">
         <activity
             android:name=".MainActivity"

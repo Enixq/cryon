@@ -526,6 +526,18 @@ func (a *App) shutdown(_ context.Context) {
 	}
 }
 
+// recoverGoroutine перехватывает панику в ФОНОВОЙ горутине backend, чтобы она
+// не уронила весь процесс. net/http перехватывает панику только в горутине
+// самого хендлера, но НЕ в горутинах, которые тот порождает (фан-аут поиска,
+// подбор потока, радар новинок). На Android процесс один на всё приложение,
+// поэтому непойманная паника в такой горутине = мгновенное закрытие приложения.
+// where — метка места вызова для лога.
+func (a *App) recoverGoroutine(where string) {
+	if r := recover(); r != nil {
+		logging.L().Error("перехвачена паника в фоновой горутине", "where", where, "panic", r)
+	}
+}
+
 // Search ищет треки в одном источнике по его идентификатору.
 func (a *App) Search(service string, query string) ([]domain.Track, error) {
 	svc, ok := a.registry[domain.ServiceID(service)]
@@ -592,6 +604,7 @@ func (a *App) SearchInSources(query string, sourceIDs []string) ([]domain.Track,
 		wg.Add(1)
 		go func(id domain.ServiceID, svc domain.MusicService) {
 			defer wg.Done()
+			defer a.recoverGoroutine("SearchInSources")
 			ctx, cancel := context.WithTimeout(a.ctx, searchSourceTimeout)
 			defer cancel()
 			tracks, err := svc.Search(ctx, query)
@@ -677,6 +690,7 @@ func (a *App) ResolvePlayableTrack(track domain.Track) (domain.Track, error) {
 		wg.Add(1)
 		go func(i int, source domain.ServiceID, svc domain.MusicService) {
 			defer wg.Done()
+			defer a.recoverGoroutine("ResolvePlayableTrack")
 			ctx, cancel := context.WithTimeout(a.ctx, searchSourceTimeout)
 			defer cancel()
 			candidates, err := svc.Search(ctx, query)
@@ -1133,6 +1147,7 @@ func (a *App) ListNewReleases(limit int) ([]domain.Track, error) {
 		wg.Add(1)
 		go func(id domain.ServiceID, svc domain.NewReleaser) {
 			defer wg.Done()
+			defer a.recoverGoroutine("NewReleases")
 			tracks, err := svc.NewReleases(a.ctx, limit)
 			if err != nil {
 				logging.L().Warn("новинки источника не удалось получить", "service", id, "err", err)
@@ -1163,6 +1178,7 @@ func (a *App) ListNewReleases(limit int) ([]domain.Track, error) {
 				go func(id domain.ServiceID, svc domain.ArtistReleaser, artist string) {
 					defer sg.Done()
 					defer func() { <-sem }()
+					defer a.recoverGoroutine("ArtistNewReleases")
 					tracks, err := svc.ArtistNewReleases(a.ctx, artist, perArtist)
 					if err != nil {
 						logging.L().Debug("засев радара: релизы артиста не удались", "service", id, "artist", artist, "err", err)
