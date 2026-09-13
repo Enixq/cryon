@@ -199,7 +199,7 @@ export function MobileNowPlaying() {
                 accent={track.accent}
                 src={coverUrl}
                 alt={track.title}
-                className="aspect-square w-full max-w-[340px] shadow-2xl"
+                className="aspect-square w-full max-w-[300px] shadow-2xl sm:max-w-[340px]"
                 rounded="rounded-[28px]"
                 iconSize={80}
               />
@@ -207,10 +207,10 @@ export function MobileNowPlaying() {
           )}
 
           {/* Название + исполнитель + лайк */}
-          <div className={cn("mt-5 flex items-center justify-between gap-3", (showQueue || showLyrics) && "hidden") }>
+          <div className={cn("mt-3 flex items-center justify-between gap-3 sm:mt-5", (showQueue || showLyrics) && "hidden") }>
             <div className="min-w-0">
-              <h2 className="truncate text-2xl font-bold text-white">{track.title}</h2>
-              <p className="flex flex-wrap items-center gap-2 text-slate-400">
+              <h2 className="truncate text-xl font-bold text-white sm:text-2xl">{track.title}</h2>
+              <p className="flex flex-wrap items-center gap-1.5 text-sm text-slate-400">
                 <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
                 {track.quality && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">{track.quality}</span>}
               </p>
@@ -226,7 +226,7 @@ export function MobileNowPlaying() {
           </div>
 
           {/* Перемотка */}
-          <div className={cn("mt-4 flex flex-col gap-1.5", (showQueue || showLyrics) && "hidden")} data-noswipe>
+          <div className={cn("mt-3 flex flex-col gap-1.5 sm:mt-4", (showQueue || showLyrics) && "hidden")} data-noswipe>
             <Slider value={progress} max={duration || 100} onChange={seek} ariaLabel="Перемотка воспроизведения" />
             <div className="flex justify-between text-xs tabular-nums text-slate-400">
               <span>{formatDuration(progress)}</span>

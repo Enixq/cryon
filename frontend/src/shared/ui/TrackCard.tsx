@@ -33,9 +33,9 @@ export function TrackCard({ track, onPlay }: TrackCardProps) {
             <Play size={18} className="ml-0.5" fill="currentColor" />
           </span>
         </div>
-        <strong className="mt-2 line-clamp-2 whitespace-normal text-[15px] font-semibold text-white">{track.title}</strong>
+        <strong className="mt-1.5 line-clamp-2 whitespace-normal text-[13px] font-semibold leading-tight text-white sm:mt-2 sm:text-[15px]">{track.title}</strong>
       </div>
-      <p className="line-clamp-2 whitespace-normal text-sm text-slate-400"><ArtistLink name={track.artist} /></p>
+      <p className="line-clamp-2 whitespace-normal text-[12px] leading-tight text-slate-400 sm:text-sm"><ArtistLink name={track.artist} /></p>
     </div>
   );
 }

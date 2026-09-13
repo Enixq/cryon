@@ -87,20 +87,20 @@ export function TrackRow({
           accent={track.accent}
           src={coverUrl}
           alt={track.title}
-          className="h-10 w-10 shrink-0"
+          className="h-9 w-9 shrink-0 sm:h-10 sm:w-10"
           rounded="rounded-lg"
           iconSize={16}
         />
         <div className="min-w-0">
           <div
             className={cn(
-              "truncate text-[15px] font-medium text-white",
+              "truncate text-[14px] font-medium text-white sm:text-[15px]",
               active && "bg-[color-mix(in_srgb,var(--app-accent)_12%,transparent)] text-[#c084fc]",
             )}
           >
             {track.title}
           </div>
-          <div className="truncate text-sm text-slate-400">
+          <div className="truncate text-[13px] text-slate-400 sm:text-sm">
             <ArtistLink name={track.artist} />
             {showAlbum && track.album ? ` · ${track.album}` : ""}
           </div>
@@ -169,7 +169,7 @@ export function TrackRow({
         {showAddToPlaylist && <TrackQuickActions track={track} />}
         <div className="flex shrink-0 flex-col items-end leading-tight">
           {track.playCount ? <span className="text-[11px] tabular-nums text-slate-500">▶ {formatPlayCount(track.playCount)}</span> : null}
-          <span className="w-10 text-right text-sm tabular-nums text-slate-400">{formatDuration(track.duration)}</span>
+          <span className="w-9 text-right text-[13px] tabular-nums text-slate-400 sm:w-10 sm:text-sm">{formatDuration(track.duration)}</span>
         </div>
       </div>
     </div>

@@ -492,7 +492,14 @@ func parseYouTubeSearchPage(page string) ([]domain.Track, error) {
 	if start < 0 {
 		return nil, fmt.Errorf("youtube initial data was not found")
 	}
-	jsonData, err := extractJSONObject(page[start+len(marker):])
+	source := strings.TrimSpace(page[start+len(marker):])
+	var jsonData string
+	var err error
+	if len(source) > 0 && (source[0] == '\'' || source[0] == '"') {
+		jsonData, err = extractJavaScriptString(source)
+	} else {
+		jsonData, err = extractJSONObject(source)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -504,6 +511,71 @@ func parseYouTubeSearchPage(page string) ([]domain.Track, error) {
 	seen := make(map[string]bool)
 	collectYouTubeVideoRenderers(data, &tracks, seen)
 	return tracks, nil
+}
+
+func extractJavaScriptString(source string) (string, error) {
+	if len(source) == 0 || (source[0] != '\'' && source[0] != '"') {
+		return "", fmt.Errorf("youtube initial data is not a JavaScript string")
+	}
+
+	quote := source[0]
+	var out strings.Builder
+	for index := 1; index < len(source); index++ {
+		char := source[index]
+		if char == quote {
+			return out.String(), nil
+		}
+		if char != '\\' {
+			out.WriteByte(char)
+			continue
+		}
+		if index+1 >= len(source) {
+			break
+		}
+
+		index++
+		switch source[index] {
+		case 'x':
+			if index+2 >= len(source) {
+				return "", fmt.Errorf("youtube JavaScript string has an invalid hex escape")
+			}
+			value, err := strconv.ParseUint(source[index+1:index+3], 16, 8)
+			if err != nil {
+				return "", fmt.Errorf("youtube JavaScript string has an invalid hex escape: %w", err)
+			}
+			out.WriteByte(byte(value))
+			index += 2
+		case 'u':
+			if index+4 >= len(source) {
+				return "", fmt.Errorf("youtube JavaScript string has an invalid unicode escape")
+			}
+			value, err := strconv.ParseUint(source[index+1:index+5], 16, 16)
+			if err != nil {
+				return "", fmt.Errorf("youtube JavaScript string has an invalid unicode escape: %w", err)
+			}
+			out.WriteRune(rune(value))
+			index += 4
+		case 'n':
+			out.WriteByte('\n')
+		case 'r':
+			out.WriteByte('\r')
+		case 't':
+			out.WriteByte('\t')
+		case 'b':
+			out.WriteByte('\b')
+		case 'f':
+			out.WriteByte('\f')
+		case 'v':
+			out.WriteByte('\v')
+		case '\\', '\'', '"', '/':
+			out.WriteByte(source[index])
+		default:
+			out.WriteByte('\\')
+			out.WriteByte(source[index])
+		}
+	}
+
+	return "", fmt.Errorf("youtube JavaScript string has an unclosed quote")
 }
 
 func extractJSONObject(source string) (string, error) {
@@ -544,10 +616,12 @@ func extractJSONObject(source string) (string, error) {
 func collectYouTubeVideoRenderers(value any, tracks *[]domain.Track, seen map[string]bool) {
 	switch item := value.(type) {
 	case map[string]any:
-		if renderer, ok := item["videoRenderer"].(map[string]any); ok {
-			if track, ok := trackFromYouTubeRenderer(renderer); ok && !seen[track.ID] {
-				seen[track.ID] = true
-				*tracks = append(*tracks, track)
+		for _, key := range []string{"videoRenderer", "videoWithContextRenderer", "compactVideoRenderer"} {
+			if renderer, ok := item[key].(map[string]any); ok {
+				if track, ok := trackFromYouTubeRenderer(renderer); ok && !seen[track.ID] {
+					seen[track.ID] = true
+					*tracks = append(*tracks, track)
+				}
 			}
 		}
 		for _, nested := range item {
@@ -563,12 +637,18 @@ func collectYouTubeVideoRenderers(value any, tracks *[]domain.Track, seen map[st
 func trackFromYouTubeRenderer(renderer map[string]any) (domain.Track, bool) {
 	videoID, _ := renderer["videoId"].(string)
 	title := youtubeText(renderer["title"])
+	if title == "" {
+		title = youtubeText(renderer["headline"])
+	}
 	if videoID == "" || title == "" {
 		return domain.Track{}, false
 	}
 	channel := youtubeText(renderer["ownerText"])
 	if channel == "" {
 		channel = youtubeText(renderer["longBylineText"])
+	}
+	if channel == "" {
+		channel = youtubeText(renderer["shortBylineText"])
 	}
 	artist, title := resolveArtistTitle(channel, title)
 	artists := []string(nil)

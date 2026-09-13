@@ -52,6 +52,9 @@ class MainActivity : AppCompatActivity() {
     private var pendingNowPlaying: Array<Any?>? = null
     private lateinit var mediaSession: MediaSessionCompat
     private var baseURL: String = ""
+    private var currentArtworkUrl: String = ""
+    private var currentArtwork: Bitmap? = null
+    private var artworkRequestId = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -232,12 +235,31 @@ class MainActivity : AppCompatActivity() {
             requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), notificationPermissionRequestCode)
             return
         }
-        if (!artworkLoaded && artworkUrl.isNotBlank()) {
-            Thread {
-                val loaded = loadArtwork(artworkUrl)
-                runOnUiThread { showNowPlaying(title, artist, playing, artworkUrl, duration, position, quality, liked, radio, loaded, true) }
-            }.start()
+
+        val requestedArtworkUrl = artworkUrl.trim()
+        if (artworkLoaded) {
+            if (requestedArtworkUrl != currentArtworkUrl) return
+            currentArtwork = artwork
+        } else if (requestedArtworkUrl != currentArtworkUrl) {
+            currentArtworkUrl = requestedArtworkUrl
+            currentArtwork = null
+            artworkRequestId += 1
+            val requestId = artworkRequestId
+            if (requestedArtworkUrl.isNotBlank()) {
+                Thread {
+                    val loaded = loadArtwork(requestedArtworkUrl)
+                    runOnUiThread {
+                        if (requestId == artworkRequestId && requestedArtworkUrl == currentArtworkUrl) {
+                            showNowPlaying(title, artist, playing, requestedArtworkUrl, duration, position, quality, liked, radio, loaded, true)
+                        }
+                    }
+                }.start()
+                return
+            }
+        } else if (requestedArtworkUrl.isNotBlank() && currentArtwork == null) {
+            return
         }
+
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
             manager.createNotificationChannel(NotificationChannel(nowPlayingChannelId, "Cryon playback", NotificationManager.IMPORTANCE_LOW))
@@ -251,7 +273,7 @@ class MainActivity : AppCompatActivity() {
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, quality)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, progressMax.toLong())
-            .apply { artwork?.let { putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it) } }
+            .apply { currentArtwork?.let { putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it) } }
             .build())
         mediaSession.setPlaybackState(PlaybackStateCompat.Builder()
             .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_SEEK_TO)
@@ -266,7 +288,7 @@ class MainActivity : AppCompatActivity() {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setLargeIcon(artwork)
+            .apply { currentArtwork?.let { setLargeIcon(it) } }
             .setProgress(progressMax, progressValue, false)
             .addAction(NotificationCompat.Action(android.R.drawable.ic_media_previous, "Previous", MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)))
             .addAction(NotificationCompat.Action(if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play, if (playing) "Pause" else "Play", MediaButtonReceiver.buildMediaButtonPendingIntent(this, if (playing) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY)))

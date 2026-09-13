@@ -128,6 +128,21 @@ func TestParseISO8601Duration(t *testing.T) {
 	}
 }
 
+func TestParseYouTubeSearchPageEscapedVideoWithContextRenderer(t *testing.T) {
+	page := `<script>var ytInitialData = '\x7b\x22contents\x22:\x7b\x22videoWithContextRenderer\x22:\x7b\x22videoId\x22:\x22abc123\x22,\x22headline\x22:\x7b\x22runs\x22:[\x7b\x22text\x22:\x22Artist - Song\x22\x7d]\x7d,\x22shortBylineText\x22:\x7b\x22runs\x22:[\x7b\x22text\x22:\x22Artist\x22\x7d]\x7d,\x22lengthText\x22:\x7b\x22simpleText\x22:\x223:21\x22\x7d\x7d\x7d\x7d';</script>`
+	tracks, err := parseYouTubeSearchPage(page)
+	if err != nil {
+		t.Fatalf("parseYouTubeSearchPage() error = %v", err)
+	}
+	if len(tracks) != 1 {
+		t.Fatalf("len(tracks) = %d, want 1", len(tracks))
+	}
+	track := tracks[0]
+	if track.ID != "abc123" || track.Title != "Song" || len(track.Artists) != 1 || track.Artists[0] != "Artist" || track.DurationMs != 201000 {
+		t.Fatalf("unexpected track: %#v", track)
+	}
+}
+
 func TestParseYouTubeSearchPage(t *testing.T) {
 	page := `<script>var ytInitialData = {"contents":{"videoRenderer":{"videoId":"dQw4w9WgXcQ","title":{"runs":[{"text":"Rick Astley - Never Gonna Give You Up"}]},"ownerText":{"runs":[{"text":"Rick Astley"}]},"lengthText":{"simpleText":"3:33"}}}};</script>`
 	tracks, err := parseYouTubeSearchPage(page)
