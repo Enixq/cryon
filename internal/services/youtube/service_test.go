@@ -127,3 +127,18 @@ func TestParseISO8601Duration(t *testing.T) {
 		}
 	}
 }
+
+func TestParseYouTubeSearchPage(t *testing.T) {
+	page := `<script>var ytInitialData = {"contents":{"videoRenderer":{"videoId":"dQw4w9WgXcQ","title":{"runs":[{"text":"Rick Astley - Never Gonna Give You Up"}]},"ownerText":{"runs":[{"text":"Rick Astley"}]},"lengthText":{"simpleText":"3:33"}}}};</script>`
+	tracks, err := parseYouTubeSearchPage(page)
+	if err != nil {
+		t.Fatalf("parseYouTubeSearchPage() error = %v", err)
+	}
+	if len(tracks) != 1 {
+		t.Fatalf("len(tracks) = %d, want 1", len(tracks))
+	}
+	track := tracks[0]
+	if track.ID != "dQw4w9WgXcQ" || track.Title != "Never Gonna Give You Up" || len(track.Artists) != 1 || track.Artists[0] != "Rick Astley" || track.DurationMs != 213000 {
+		t.Fatalf("unexpected track: %#v", track)
+	}
+}

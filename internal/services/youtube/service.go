@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -139,6 +140,13 @@ func (s *Service) Search(ctx context.Context, query string) ([]domain.Track, err
 		log.Warn("youtube: data api search failed", "err", err)
 	}
 
+	if tracks, err := s.searchByPage(ctx, query); err == nil && len(tracks) > 0 {
+		log.Debug("youtube: found via search page", "count", len(tracks))
+		return tracks, nil
+	} else if err != nil {
+		log.Warn("youtube: page search failed", "err", err)
+	}
+
 	results, err := fetchBingSearchWithRetry(ctx, query)
 	if err == nil && len(results) > 0 {
 		tracks := tracksFromBing(results)
@@ -147,7 +155,6 @@ func (s *Service) Search(ctx context.Context, query string) ([]domain.Track, err
 			return tracks, nil
 		}
 	}
-
 	if err != nil {
 		log.Warn("youtube: bing search failed", "err", err)
 	}
@@ -449,6 +456,174 @@ func resolveArtistTitle(channel, rawTitle string) (artist, title string) {
 // Реализация общая с SoundCloud — см. internal/trackmeta.
 func cleanTrackTitle(raw string) string {
 	return trackmeta.CleanTitle(raw)
+}
+
+func (s *Service) searchByPage(ctx context.Context, query string) ([]domain.Track, error) {
+	u := &url.URL{Scheme: "https", Host: "www.youtube.com", Path: "/results"}
+	params := u.Query()
+	params.Set("search_query", query)
+	params.Set("sp", "EgIQAQ==")
+	u.RawQuery = params.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "ru,en-US;q=0.9,en;q=0.8")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("youtube search page returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, err
+	}
+	return parseYouTubeSearchPage(string(body))
+}
+
+func parseYouTubeSearchPage(page string) ([]domain.Track, error) {
+	const marker = "var ytInitialData = "
+	start := strings.Index(page, marker)
+	if start < 0 {
+		return nil, fmt.Errorf("youtube initial data was not found")
+	}
+	jsonData, err := extractJSONObject(page[start+len(marker):])
+	if err != nil {
+		return nil, err
+	}
+	var data any
+	if err := json.Unmarshal([]byte(jsonData), &data); err != nil {
+		return nil, fmt.Errorf("decode youtube initial data: %w", err)
+	}
+	tracks := make([]domain.Track, 0, 10)
+	seen := make(map[string]bool)
+	collectYouTubeVideoRenderers(data, &tracks, seen)
+	return tracks, nil
+}
+
+func extractJSONObject(source string) (string, error) {
+	start := strings.IndexByte(source, '{')
+	if start < 0 {
+		return "", fmt.Errorf("youtube initial data does not contain an object")
+	}
+	depth := 0
+	inString := false
+	escaped := false
+	for index := start; index < len(source); index++ {
+		ch := source[index]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return source[start : index+1], nil
+			}
+		}
+	}
+	return "", fmt.Errorf("youtube initial data has an unclosed object")
+}
+
+func collectYouTubeVideoRenderers(value any, tracks *[]domain.Track, seen map[string]bool) {
+	switch item := value.(type) {
+	case map[string]any:
+		if renderer, ok := item["videoRenderer"].(map[string]any); ok {
+			if track, ok := trackFromYouTubeRenderer(renderer); ok && !seen[track.ID] {
+				seen[track.ID] = true
+				*tracks = append(*tracks, track)
+			}
+		}
+		for _, nested := range item {
+			collectYouTubeVideoRenderers(nested, tracks, seen)
+		}
+	case []any:
+		for _, nested := range item {
+			collectYouTubeVideoRenderers(nested, tracks, seen)
+		}
+	}
+}
+
+func trackFromYouTubeRenderer(renderer map[string]any) (domain.Track, bool) {
+	videoID, _ := renderer["videoId"].(string)
+	title := youtubeText(renderer["title"])
+	if videoID == "" || title == "" {
+		return domain.Track{}, false
+	}
+	channel := youtubeText(renderer["ownerText"])
+	if channel == "" {
+		channel = youtubeText(renderer["longBylineText"])
+	}
+	artist, title := resolveArtistTitle(channel, title)
+	artists := []string(nil)
+	if artist != "" {
+		artists = []string{artist}
+	}
+	return domain.Track{
+		ID:           videoID,
+		Service:      domain.ServiceYouTube,
+		Title:        title,
+		Artists:      artists,
+		DurationMs:   parseYouTubeDisplayDuration(youtubeText(renderer["lengthText"])),
+		ArtworkURL:   thumbnailURL(videoID),
+		ExternalURL:  "https://music.youtube.com/watch?v=" + videoID,
+		PlayableKind: domain.PlayableStream,
+	}, true
+}
+
+func youtubeText(value any) string {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	if text, ok := item["simpleText"].(string); ok {
+		return strings.TrimSpace(text)
+	}
+	runs, ok := item["runs"].([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(runs))
+	for _, run := range runs {
+		if runMap, ok := run.(map[string]any); ok {
+			if text, ok := runMap["text"].(string); ok {
+				parts = append(parts, text)
+			}
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, ""))
+}
+
+func parseYouTubeDisplayDuration(value string) int {
+	parts := strings.Split(strings.TrimSpace(value), ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0
+	}
+	seconds := 0
+	for _, part := range parts {
+		number, err := strconv.Atoi(part)
+		if err != nil || number < 0 {
+			return 0
+		}
+		seconds = seconds*60 + number
+	}
+	return seconds * 1000
 }
 
 func tracksFromBing(results []websearch.Result) []domain.Track {

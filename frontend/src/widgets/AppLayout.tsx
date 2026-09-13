@@ -129,14 +129,14 @@ export function AppLayout() {
   // Когда экран снова расширяется, выдвижная панель больше не нужна: закрываем
   // её, чтобы при возврате на узкий экран она не всплывала сама собой.
   useEffect(() => {
-    if (!isNarrow && nowPlayingOpen) setNowPlayingOpen(false);
-  }, [isNarrow, nowPlayingOpen, setNowPlayingOpen]);
+    if (nowPlayingOpen && (!isNarrow || !currentTrack)) setNowPlayingOpen(false);
+  }, [currentTrack, isNarrow, nowPlayingOpen, setNowPlayingOpen]);
 
   // Встроенная панель — только на широком экране И если пользователь не свернул
   // её кнопкой-очередью в плеере. На узком показываем её как выдвижную поверх
   // контента (по кнопке в топбаре / плеере).
   const showInlineNowPlaying = !isNarrow && !nowPlayingCollapsed;
-  const showOverlayNowPlaying = isNarrow && nowPlayingOpen;
+  const showOverlayNowPlaying = isNarrow && nowPlayingOpen && Boolean(currentTrack);
 
   return (
     <div
@@ -209,7 +209,7 @@ export function AppLayout() {
       </div>
 
       {/* Полноэкранный мобильный плеер поверх каркаса (z-40 < модалок z-50). */}
-      {isPhone && nowPlayingOpen ? <MobileNowPlaying /> : null}
+      {isPhone && nowPlayingOpen && currentTrack ? <MobileNowPlaying /> : null}
 
       <OnboardingModal />
       <EqualizerModal />

@@ -73,6 +73,8 @@ export function MobileNowPlaying() {
   const lyrics = useLyrics(track);
   const activeLyric = activeLineIndex(lyrics.lines, progress);
 
+  if (!track) return null;
+
   // Свайп вниз закрывает плеер (жест «смахнуть лист»). Активен только в режиме
   // обложки: когда открыта очередь, вертикальный свайп нужен для её прокрутки.
   // Слайдер перемотки и транспорт помечены data-noswipe — горизонтальная
