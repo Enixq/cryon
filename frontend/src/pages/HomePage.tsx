@@ -10,7 +10,20 @@ import { RecoTrackCard } from "../shared/ui/RecoTrackCard";
 import { SmartPlaylistCard } from "../shared/ui/SmartPlaylistCard";
 import { Cover } from "../shared/ui/Cover";
 import { useTrackCover } from "../shared/lib/useTrackCover";
-import { listDailyMix, listFavorites, listHistory, listLocalTracks, listNewReleases, listPlaylists, listRecommendations, listWeeklyDiscoveries, onFavoritesChanged, onLastFMChanged, onRecoChanged, type UserPlaylistDto } from "../shared/api/client";
+import {
+  listDailyMix,
+  listFavorites,
+  listHistory,
+  listLocalTracks,
+  listNewReleases,
+  listPlaylists,
+  listRecommendations,
+  listWeeklyDiscoveries,
+  onFavoritesChanged,
+  onLastFMChanged,
+  onRecoChanged,
+  type UserPlaylistDto,
+} from "../shared/api/client";
 import { quickMixes } from "../mocks/data";
 import type { QuickMix, Track } from "../shared/types";
 import { pluralWithCount } from "../shared/lib/format";
@@ -162,12 +175,12 @@ export function HomePage() {
   const showDerived = visibleDailyMix.length === 0 && visibleWeekly.length === 0;
 
   return (
-    <div className="flex flex-col gap-8 py-2">
+    <div className="flex min-w-0 flex-col gap-6 py-1 sm:gap-8 sm:py-2">
       {/* Приветствие */}
       <PageHeader title={greeting()} subtitle="Музыка для тебя, собранная со всех твоих сервисов" />
 
       {/* Быстрые миксы — витрина */}
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         {quickMixes.map((mix) => {
           const mixTracks = quickMixTracks[mix.id];
           return (
@@ -188,7 +201,7 @@ export function HomePage() {
       <section>
         <SectionHeader title="Недавно прослушано" onAction={() => navigate("/history")} />
         {recent.length > 0 ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-5 xl:grid-cols-5">
             {recent.slice(0, 5).map((track) => (
               <TrackCard key={track.id} track={track} onPlay={handlePlayTrack} />
             ))}
@@ -355,13 +368,7 @@ function RecoCardSkeleton() {
   );
 }
 
-function HomePlaylistCard({
-  playlist,
-  onOpen,
-}: {
-  playlist: UserPlaylistDto;
-  onOpen: () => void;
-}) {
+function HomePlaylistCard({ playlist, onOpen }: { playlist: UserPlaylistDto; onOpen: () => void }) {
   return (
     <button onClick={onOpen} className="group flex flex-col text-left">
       <div
@@ -370,7 +377,9 @@ function HomePlaylistCard({
       >
         <Music2 size={44} className="text-white/80" />
       </div>
-      <strong className="mt-3 truncate text-[15px] font-semibold text-white">{playlist.title}</strong>
+      <strong className="mt-3 truncate text-[15px] font-semibold text-white">
+        {playlist.title}
+      </strong>
       <span className="mt-0.5 truncate text-xs text-slate-500">
         {pluralWithCount(playlist.trackCount, "трек", "трека", "треков")}
       </span>
@@ -397,12 +406,15 @@ function QuickMixCard({
   const coverUrl = useTrackCover(coverTrack);
   return (
     <div className="neon-card group relative flex items-center overflow-hidden rounded-2xl">
-      <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-4 p-3 text-left">
+      <button
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 items-center gap-2 p-2 sm:gap-4 sm:p-3 text-left"
+      >
         <Cover
           accent={mix.accent}
           src={coverUrl}
           alt={mix.title}
-          className="h-16 w-16 shrink-0"
+          className="h-12 w-12 shrink-0 sm:h-16 sm:w-16"
           rounded="rounded-xl"
           iconSize={24}
         />

@@ -44,8 +44,7 @@ export function TrackQuickActions({ track }: Props) {
             }}
             className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/8"
           >
-            <ListMusic size={15} />
-            В очередь
+            <ListMusic size={15} />В очередь
           </button>
           <button
             onClick={(e) => {
@@ -75,7 +74,10 @@ export function TrackQuickActions({ track }: Props) {
               toggleLikeWithTrack({ ...track, liked: isFavorite });
               setOpen(false);
             }}
-            className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors hover:bg-white/8", isFavorite ? "text-[#a855f7]" : "text-slate-200")}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors hover:bg-white/8",
+              isFavorite ? "text-[#a855f7]" : "text-slate-200",
+            )}
           >
             <Heart size={15} fill={isFavorite ? "currentColor" : "none"} />
             {isFavorite ? "Убрать из избранного" : "В избранное"}

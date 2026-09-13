@@ -12,7 +12,11 @@ import { useAudioEngine } from "../store/audioEngine";
 import { usePlayerStore } from "../store/playerStore";
 import { useTrackCover } from "../shared/lib/useTrackCover";
 import { useCoverPalette } from "../shared/lib/useCoverPalette";
-import { onYandexConnected, onSourceStatusChanged, onNotificationsChanged } from "../shared/api/client";
+import {
+  onYandexConnected,
+  onSourceStatusChanged,
+  onNotificationsChanged,
+} from "../shared/api/client";
 import { useNotificationStore } from "../store/notificationStore";
 import { usePlaybackSettingsStore } from "../store/playbackSettingsStore";
 import { usePlayerPersistence } from "../shared/lib/usePlayerPersistence";
@@ -135,7 +139,10 @@ export function AppLayout() {
   const showOverlayNowPlaying = isNarrow && nowPlayingOpen;
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-[#07080f] text-slate-200" style={appAccentStyle}>
+    <div
+      className="relative flex h-screen w-screen overflow-hidden bg-[#07080f] text-slate-200"
+      style={appAccentStyle}
+    >
       {/* Амбиентный фон, окрашенный текущей палитрой обложки (var(--app-accent)).
           Два мягких радиальных пятна сверху — как в макете Unify Music: цвет
           интерфейса «дышит» вместе с играющим треком. Слой неинтерактивный и
@@ -156,7 +163,7 @@ export function AppLayout() {
              Скролл-контент на всю высоту, под ним мини-плеер и нижняя
              навигация; полноэкранный «Сейчас играет» — оверлеем поверх. */
           <div className="flex min-w-0 flex-1 flex-col">
-            <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 pt-[calc(8px+var(--safe-top))]">
+            <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4 pt-[calc(8px+var(--safe-top))] sm:px-4">
               <RouteErrorBoundary>
                 <Outlet />
               </RouteErrorBoundary>
