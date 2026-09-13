@@ -201,7 +201,7 @@ export function HomePage() {
       <section>
         <SectionHeader title="Недавно прослушано" onAction={() => navigate("/history")} />
         {recent.length > 0 ? (
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-5 xl:grid-cols-5">
             {recent.slice(0, 5).map((track) => (
               <TrackCard key={track.id} track={track} onPlay={handlePlayTrack} />
             ))}
@@ -221,7 +221,7 @@ export function HomePage() {
             subtitle="Похожее на то, что вы слушаете. Оцените — подборка станет точнее"
             onAction={() => navigate("/search")}
           />
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
             {recommended.slice(0, 6).map((track) => (
               <RecoTrackCard
                 key={track.id}
@@ -248,7 +248,7 @@ export function HomePage() {
       {visibleDailyMix.length > 0 ? (
         <section>
           <SectionHeader title="Микс дня" subtitle="Обновляется каждый день" />
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
             {visibleDailyMix.slice(0, 6).map((track) => (
               <RecoTrackCard
                 key={track.id}
@@ -272,7 +272,7 @@ export function HomePage() {
       {visibleWeekly.length > 0 ? (
         <section>
           <SectionHeader title="Открытия недели" subtitle="Обновляется каждую неделю" />
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
             {visibleWeekly.slice(0, 6).map((track) => (
               <RecoTrackCard
                 key={track.id}
@@ -356,7 +356,7 @@ export function HomePage() {
 // Плитки повторяют раскладку RecoTrackCard (квадратная обложка + две строки).
 function RecoCardSkeleton() {
   return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-5 xl:grid-cols-6">
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="flex animate-pulse flex-col">
           <div className="aspect-square w-full rounded-2xl bg-white/10" />
@@ -377,10 +377,10 @@ function HomePlaylistCard({ playlist, onOpen }: { playlist: UserPlaylistDto; onO
       >
         <Music2 size={44} className="text-white/80" />
       </div>
-      <strong className="mt-3 truncate text-[15px] font-semibold text-white">
+      <strong className="mt-3 line-clamp-2 whitespace-normal text-[15px] font-semibold text-white">
         {playlist.title}
       </strong>
-      <span className="mt-0.5 truncate text-xs text-slate-500">
+      <span className="mt-0.5 line-clamp-2 whitespace-normal text-xs text-slate-500">
         {pluralWithCount(playlist.trackCount, "трек", "трека", "треков")}
       </span>
     </button>
@@ -419,8 +419,8 @@ function QuickMixCard({
           iconSize={24}
         />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold text-white">{mix.title}</div>
-          <div className="truncate text-sm text-slate-400">{mix.subtitle}</div>
+          <div className="line-clamp-2 whitespace-normal font-semibold text-white">{mix.title}</div>
+          <div className="line-clamp-2 whitespace-normal text-sm text-slate-400">{mix.subtitle}</div>
         </div>
       </button>
       <button

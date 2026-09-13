@@ -153,10 +153,14 @@ export async function listSources(): Promise<string[]> {
 }
 
 /** Прямой аудиопоток трека. */
-export async function getAudioStreamUrl(compositeId: string): Promise<string | null> {
+export async function getAudioStreamInfo(compositeId: string) {
   if (!isWailsRuntime()) return null;
   const { source, rawId } = splitTrackId(compositeId);
-  const stream = await App.GetAudioStream(source, rawId);
+  return App.GetAudioStream(source, rawId);
+}
+
+export async function getAudioStreamUrl(compositeId: string): Promise<string | null> {
+  const stream = await getAudioStreamInfo(compositeId);
   return stream?.url || null;
 }
 

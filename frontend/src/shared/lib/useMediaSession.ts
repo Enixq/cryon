@@ -21,6 +21,9 @@ const SEEK_STEP = 10;
 export function useMediaSession(): void {
   const track = usePlayerStore((s) => s.queue[s.currentIndex]);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const radio = usePlayerStore((s) => s.radio);
+  const progress = usePlayerStore((s) => s.progress);
+  const duration = usePlayerStore((s) => s.effectiveDuration());
   const coverUrl = useTrackCover(track);
 
   // Обработчики действий ОС — регистрируем один раз. Внутри читаем актуальный
@@ -71,19 +74,22 @@ export function useMediaSession(): void {
       else if (command === "pause") store.pause();
       else if (command === "next") store.next();
       else if (command === "previous") store.previous();
+      else if (command === "favorite") { const current = store.currentTrack(); if (current) store.toggleLikeWithTrack(current); }
+      else if (command === "radio") store.toggleRadio();
+      else if (command.startsWith("seek:")) store.seek(Number(command.slice(5)) / 1000);
     };
     return () => { delete target.__cryonNativeMediaCommand; };
   }, []);
 
   // Метаданные текущего трека (название, артист, альбом, обложка).
   useEffect(() => {
-    const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
+    const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean, artworkUrl: string, duration: number, position: number, quality: string, liked: boolean, radio: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
     if (!track) {
       nativeBridge?.clearNowPlaying?.();
       if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
       return;
     }
-    nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying);
+    nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying, coverUrl ?? "", duration, progress, track.quality ?? "", Boolean(track.liked), radio);
     if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title,
@@ -91,15 +97,15 @@ export function useMediaSession(): void {
       album: track.album ?? "",
       artwork: coverUrl ? [{ src: coverUrl }] : [],
     });
-  }, [track?.id, track?.title, track?.artist, track?.album, coverUrl, isPlaying]);
+  }, [track?.id, track?.title, track?.artist, track?.album, track?.quality, track?.liked, coverUrl, isPlaying, radio, progress, duration]);
 
   useEffect(() => {
-    const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
-    if (track) nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying);
+    const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean, artworkUrl: string, duration: number, position: number, quality: string, liked: boolean, radio: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
+    if (track) nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying, coverUrl ?? "", duration, progress, track.quality ?? "", Boolean(track.liked), radio);
     else nativeBridge?.clearNowPlaying?.();
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.playbackState = track ? (isPlaying ? "playing" : "paused") : "none";
-  }, [isPlaying, track]);
+  }, [isPlaying, track, coverUrl, radio, progress, duration]);
   useEffect(() => {
     if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
     const update = () => {

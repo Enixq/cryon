@@ -96,8 +96,8 @@ export function RecoTrackCard({ track, onPlay, score, onRate, disabled }: RecoTr
           </button>
         </div>
       </div>
-      <strong className="mt-3 truncate text-[15px] font-semibold text-white">{track.title}</strong>
-      <p className="truncate text-sm text-slate-400"><ArtistLink name={track.artist} /></p>
+      <strong className="mt-3 line-clamp-2 whitespace-normal text-[15px] font-semibold text-white">{track.title}</strong>
+      <p className="line-clamp-2 whitespace-normal text-sm text-slate-400"><ArtistLink name={track.artist} /></p>
     </div>
   );
 }

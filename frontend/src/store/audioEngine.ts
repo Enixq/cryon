@@ -11,6 +11,7 @@
 import { useEffect, useRef } from "react";
 import { usePlayerStore } from "./playerStore";
 import {
+  getAudioStreamInfo,
   getAudioStreamUrl,
   resolvePlayableTrack,
   playerBackendAvailable,
@@ -285,7 +286,9 @@ export function useAudioEngine() {
 
       // mpv играет по абсолютному пути/прямому URL (getAudioStreamUrl).
       if (mpvAvailableRef.current) {
-        const mpvUrl = await getAudioStreamUrl(track.id).catch(() => null);
+        const mpvStream = await getAudioStreamInfo(track.id).catch(() => null);
+        const mpvUrl = mpvStream?.url || null;
+        if (mpvStream?.quality) usePlayerStore.getState().replaceCurrentTrack({ ...track, quality: mpvStream.quality });
         if (cancelled) return;
         if (mpvUrl) {
           try {

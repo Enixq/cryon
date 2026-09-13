@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.app.Notification
+import android.app.PendingIntent
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.provider.MediaStore
@@ -22,8 +23,12 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.media.session.MediaButtonReceiver
 import android.webkit.JavascriptInterface
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -44,7 +49,7 @@ class MainActivity : AppCompatActivity() {
     private val nowPlayingNotificationId = 77
     private val nowPlayingChannelId = "cryon_now_playing"
     private var lastBackPressedAt = 0L
-    private var pendingNowPlaying: Triple<String, String, Boolean>? = null
+    private var pendingNowPlaying: Array<Any?>? = null
     private lateinit var mediaSession: MediaSessionCompat
     private var baseURL: String = ""
 
@@ -56,6 +61,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onPause() = dispatchPlayerCommand("pause")
                 override fun onSkipToNext() = dispatchPlayerCommand("next")
                 override fun onSkipToPrevious() = dispatchPlayerCommand("previous")
+                override fun onSeekTo(pos: Long) = dispatchPlayerCommand("seek:$pos")
             })
             isActive = true
         }
@@ -140,8 +146,8 @@ class MainActivity : AppCompatActivity() {
         fun pickMusicFolder() { runOnUiThread { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), folderRequestCode) } }
 
         @JavascriptInterface
-        fun updateNowPlaying(title: String, artist: String, playing: Boolean) {
-            runOnUiThread { showNowPlaying(title, artist, playing) }
+        fun updateNowPlaying(title: String, artist: String, playing: Boolean, artworkUrl: String, duration: Double, position: Double, quality: String, liked: Boolean, radio: Boolean) {
+            runOnUiThread { showNowPlaying(title, artist, playing, artworkUrl, duration, position, quality, liked, radio) }
         }
 
         @JavascriptInterface
@@ -204,41 +210,88 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showNowPlaying(title: String, artist: String, playing: Boolean) {
+    private fun commandPendingIntent(command: String): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).setAction("ru.cryon.app.$command")
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
+        return PendingIntent.getActivity(this, command.hashCode(), intent, flags)
+    }
+
+    private fun loadArtwork(url: String): Bitmap? = try {
+        if (url.isBlank()) null else (URL(url).openConnection() as HttpURLConnection).run {
+            connectTimeout = 5000
+            readTimeout = 5000
+            doInput = true
+            connect()
+            inputStream.use { BitmapFactory.decodeStream(it) }
+        }
+    } catch (_: Exception) { null }
+
+    private fun showNowPlaying(title: String, artist: String, playing: Boolean, artworkUrl: String = "", duration: Double = 0.0, position: Double = 0.0, quality: String = "", liked: Boolean = false, radio: Boolean = false, artwork: Bitmap? = null, artworkLoaded: Boolean = false) {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
-            pendingNowPlaying = Triple(title, artist, playing)
+            pendingNowPlaying = arrayOf(title, artist, playing, artworkUrl, duration, position, quality, liked, radio)
             requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), notificationPermissionRequestCode)
             return
+        }
+        if (!artworkLoaded && artworkUrl.isNotBlank()) {
+            Thread {
+                val loaded = loadArtwork(artworkUrl)
+                runOnUiThread { showNowPlaying(title, artist, playing, artworkUrl, duration, position, quality, liked, radio, loaded, true) }
+            }.start()
         }
         val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
             manager.createNotificationChannel(NotificationChannel(nowPlayingChannelId, "Cryon playback", NotificationManager.IMPORTANCE_LOW))
         }
         val state = if (playing) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        val progressMax = (duration * 1000).toInt().coerceAtLeast(0)
+        val progressValue = (position * 1000).toInt().coerceIn(0, progressMax)
         mediaSession.isActive = true
         mediaSession.setMetadata(MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title.ifBlank { "Cryon" })
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, quality)
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, progressMax.toLong())
+            .apply { artwork?.let { putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it) } }
             .build())
         mediaSession.setPlaybackState(PlaybackStateCompat.Builder()
-            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
-            .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
+            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_SEEK_TO)
+            .setState(state, (position * 1000).toLong().coerceAtLeast(0L), 1f)
             .build())
         val notification = NotificationCompat.Builder(this, nowPlayingChannelId)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(title.ifBlank { "Cryon" })
-            .setContentText(artist)
+            .setContentText(if (quality.isBlank()) artist else "$artist • $quality")
             .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setOngoing(playing)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setLargeIcon(artwork)
+            .setProgress(progressMax, progressValue, false)
             .addAction(NotificationCompat.Action(android.R.drawable.ic_media_previous, "Previous", MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)))
             .addAction(NotificationCompat.Action(if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play, if (playing) "Pause" else "Play", MediaButtonReceiver.buildMediaButtonPendingIntent(this, if (playing) PlaybackStateCompat.ACTION_PAUSE else PlaybackStateCompat.ACTION_PLAY)))
             .addAction(NotificationCompat.Action(android.R.drawable.ic_media_next, "Next", MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_SKIP_TO_NEXT)))
-            .setStyle(MediaStyle().setMediaSession(mediaSession.sessionToken).setShowActionsInCompactView(1))
+            .addAction(NotificationCompat.Action(android.R.drawable.btn_star_big_on, if (liked) "Unlike" else "Favorite", commandPendingIntent("favorite")))
+            .addAction(NotificationCompat.Action(android.R.drawable.ic_menu_compass, if (radio) "Radio off" else "Radio by track", commandPendingIntent("radio")))
+            .setStyle(MediaStyle().setMediaSession(mediaSession.sessionToken).setShowActionsInCompactView(0, 1, 2))
             .build()
         manager.notify(nowPlayingNotificationId, notification)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        intent?.action?.removePrefix("ru.cryon.app.")?.let { command ->
+            if (command == "favorite" || command == "radio") dispatchPlayerCommand(command)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == notificationPermissionRequestCode && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            val pending = pendingNowPlaying ?: return
+            pendingNowPlaying = null
+            showNowPlaying(pending[0] as String, pending[1] as String, pending[2] as Boolean, pending[3] as String, pending[4] as Double, pending[5] as Double, pending[6] as String, pending[7] as Boolean, pending[8] as Boolean)
+        }
     }
 
     private fun mediaPermission(): String = if (Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_AUDIO" else "android.permission.READ_EXTERNAL_STORAGE"

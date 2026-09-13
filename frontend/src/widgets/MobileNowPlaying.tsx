@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Heart,
   ListMusic,
+  Radio,
   Pause,
   Play,
   Repeat,
@@ -45,6 +46,7 @@ export function MobileNowPlaying() {
     progress,
     shuffle,
     repeat,
+    radio,
     togglePlay,
     next,
     previous,
@@ -53,6 +55,7 @@ export function MobileNowPlaying() {
     removeFromQueue,
     toggleShuffle,
     cycleRepeat,
+    toggleRadio,
     toggleLikeWithTrack,
     engineDuration,
   } = usePlayerStore();
@@ -172,7 +175,7 @@ export function MobileNowPlaying() {
             </div>
           ) : showQueue ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-2">
+              <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain pr-2">
                 {queue.map((item, index) => (
                   <QueueRow
                     key={item.id}
@@ -205,8 +208,9 @@ export function MobileNowPlaying() {
           <div className={cn("mt-5 flex items-center justify-between gap-3", (showQueue || showLyrics) && "hidden") }>
             <div className="min-w-0">
               <h2 className="truncate text-2xl font-bold text-white">{track.title}</h2>
-              <p className="truncate text-slate-400">
+              <p className="flex flex-wrap items-center gap-2 text-slate-400">
                 <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
+                {track.quality && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">{track.quality}</span>}
               </p>
             </div>
             <button
@@ -270,7 +274,7 @@ export function MobileNowPlaying() {
           </div>
 
           {/* Второстепенные действия */}
-          <div className={cn("mt-4 flex items-center justify-center gap-8 text-slate-400", (showQueue || showLyrics) && "hidden")}>
+          <div className={cn("mt-4 flex items-center justify-center gap-6 text-slate-400", (showQueue || showLyrics) && "hidden")}>
             <button
               type="button"
               onClick={() => setEqualizerOpen(true)}
@@ -279,6 +283,15 @@ export function MobileNowPlaying() {
             >
               <SlidersHorizontal size={20} />
               Эквалайзер
+            </button>
+            <button
+              type="button"
+              onClick={toggleRadio}
+              className={cn("flex flex-col items-center gap-1 text-[11px] transition-colors active:text-white", radio && "text-[var(--app-accent)]")}
+              aria-label="Радио по треку"
+            >
+              <Radio size={20} />
+              Радио
             </button>
             <button
               type="button"
@@ -371,7 +384,7 @@ function QueueRow({
   }
 
   return (
-    <div className="relative overflow-hidden rounded-xl">
+    <div className="relative h-[60px] min-h-[60px] shrink-0 overflow-hidden rounded-xl">
       {/* Красная подложка-подсказка проступает по мере свайпа. */}
       {offset < 0 && (
         <div className="absolute inset-y-0 right-0 flex items-center gap-1.5 pr-4 text-red-300" aria-hidden>
@@ -380,7 +393,7 @@ function QueueRow({
         </div>
       )}
       <div
-        className={cn("flex items-center gap-3 rounded-xl px-2 py-2", active ? "bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--app-accent)_28%,transparent)]" : "bg-[var(--bg-0)]")}
+        className={cn("flex h-[60px] min-h-[60px] items-center gap-3 rounded-xl px-2 py-2", active ? "bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--app-accent)_28%,transparent)]" : "bg-[var(--bg-0)]")}
         style={{
           transform: offset ? `translateX(${offset}px)` : undefined,
           transition: sliding ? "none" : "transform 0.24s ease",
@@ -393,8 +406,8 @@ function QueueRow({
         <button type="button" onClick={onPlay} className="flex min-w-0 flex-1 items-center gap-3 text-left" aria-label="Воспроизвести">
           <Cover accent={item.accent} src={coverUrl} alt={item.title} className="h-11 w-11 shrink-0" rounded="rounded-lg" iconSize={16} />
           <div className="min-w-0">
-            <div className={cn("truncate text-sm font-medium", active ? "text-[var(--app-accent)]" : "text-white")}>{item.title}</div>
-            <div className="truncate text-xs text-slate-400">
+            <div className={cn("line-clamp-2 whitespace-normal text-sm font-medium", active ? "text-[var(--app-accent)]" : "text-white")}>{item.title}</div>
+            <div className="line-clamp-2 whitespace-normal text-xs text-slate-400">
               <ArtistLink name={item.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} /> · {sourceName(item.source)}
             </div>
           </div>
