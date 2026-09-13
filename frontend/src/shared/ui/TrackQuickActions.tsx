@@ -28,7 +28,7 @@ export function TrackQuickActions({ track }: Props) {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="grid h-7 w-7 place-items-center rounded-full text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+        className="grid h-9 w-9 place-items-center rounded-full text-slate-400 transition-colors hover:bg-white/10 hover:text-white active:scale-95"
         aria-label="Быстрые действия"
       >
         <PlusCircle size={16} />

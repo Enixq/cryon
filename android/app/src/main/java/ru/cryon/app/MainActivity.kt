@@ -1,14 +1,25 @@
 package ru.cryon.app
 
 import android.annotation.SuppressLint
+import android.content.ContentUris
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.provider.MediaStore
 import android.view.ViewGroup
 import android.widget.Toast
+import android.content.pm.PackageManager
 import android.window.OnBackInvokedDispatcher
 import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
+import androidx.core.app.NotificationCompat
+import androidx.media.app.NotificationCompat.MediaStyle
+import android.support.v4.media.MediaMetadataCompat
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import android.webkit.JavascriptInterface
 import org.json.JSONObject
 import java.io.File
@@ -27,11 +38,18 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private val folderRequestCode = 1001
+    private val mediaPermissionRequestCode = 1002
+    private val notificationPermissionRequestCode = 1003
+    private val nowPlayingNotificationId = 77
+    private val nowPlayingChannelId = "cryon_now_playing"
     private var lastBackPressedAt = 0L
+    private var pendingNowPlaying: Triple<String, String, Boolean>? = null
+    private lateinit var mediaSession: MediaSessionCompat
     private var baseURL: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        mediaSession = MediaSessionCompat(this, "Cryon").apply { isActive = true }
 
         // 1) Go-бэкенд: SQLite в filesDir, HTTP-сервер на случайном порту петли.
         //    Повторный вход (singleTask + поворот экрана) — сервер уже поднят.
@@ -111,6 +129,28 @@ class MainActivity : AppCompatActivity() {
     private inner class AndroidBridge {
         @JavascriptInterface
         fun pickMusicFolder() { runOnUiThread { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), folderRequestCode) } }
+
+        @JavascriptInterface
+        fun updateNowPlaying(title: String, artist: String, playing: Boolean) {
+            runOnUiThread { showNowPlaying(title, artist, playing) }
+        }
+
+        @JavascriptInterface
+        fun clearNowPlaying() {
+            runOnUiThread { (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(nowPlayingNotificationId) }
+        }
+
+        @JavascriptInterface
+        fun scanDeviceMusic(): String {
+            if (!hasMediaPermission()) {
+                runOnUiThread {
+                    requestPermissions(arrayOf(mediaPermission()), mediaPermissionRequestCode)
+                    Toast.makeText(this@MainActivity, "\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u0435 \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u043c\u0443\u0437\u044b\u043a\u0435 \u0438 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 \u0435\u0449\u0451 \u0440\u0430\u0437", Toast.LENGTH_LONG).show()
+                }
+                return ""
+            }
+            return scanMediaStore()
+        }
     }
 
     @Deprecated("Deprecated in Java")
@@ -141,6 +181,66 @@ class MainActivity : AppCompatActivity() {
                 null,
             )
         }
+    }
+
+    private fun showNowPlaying(title: String, artist: String, playing: Boolean) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+            pendingNowPlaying = Triple(title, artist, playing)
+            requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), notificationPermissionRequestCode)
+            return
+        }
+        val manager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(NotificationChannel(nowPlayingChannelId, "Cryon playback", NotificationManager.IMPORTANCE_LOW))
+        }
+        val state = if (playing) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        mediaSession.setMetadata(MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title.ifBlank { "Cryon" })
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+            .build())
+        mediaSession.setPlaybackState(PlaybackStateCompat.Builder()
+            .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE)
+            .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
+            .build())
+        val notification = NotificationCompat.Builder(this, nowPlayingChannelId)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(title.ifBlank { "Cryon" })
+            .setContentText(artist)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setOngoing(playing)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setStyle(MediaStyle().setMediaSession(mediaSession.sessionToken))
+            .build()
+        manager.notify(nowPlayingNotificationId, notification)
+    }
+
+    private fun mediaPermission(): String = if (Build.VERSION.SDK_INT >= 33) "android.permission.READ_MEDIA_AUDIO" else "android.permission.READ_EXTERNAL_STORAGE"
+
+    private fun hasMediaPermission(): Boolean = Build.VERSION.SDK_INT < 23 || checkSelfPermission(mediaPermission()) == PackageManager.PERMISSION_GRANTED
+
+    private fun scanMediaStore(): String {
+        val target = File(filesDir, "scanned_music").apply { mkdirs() }
+        val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.DISPLAY_NAME, MediaStore.Audio.Media.MIME_TYPE)
+        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        var copied = 0
+        contentResolver.query(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection, selection, null, MediaStore.Audio.Media.TITLE + " COLLATE NOCASE ASC")?.use { cursor ->
+            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(idColumn)
+                val name = cursor.getString(nameColumn)?.takeIf { it.isNotBlank() } ?: "track-$id"
+                val safeName = "${id}-${name.replace(Regex("[^A-Za-z0-9._-]"), "_")}"
+                val targetFile = File(target, safeName)
+                if (targetFile.exists()) { copied++; continue }
+                val uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
+                try { contentResolver.openInputStream(uri)?.use { input -> targetFile.outputStream().use(input::copyTo) }; if (targetFile.length() > 0) copied++ } catch (_: Exception) { targetFile.delete() }
+            }
+        }
+        if (copied == 0) { Toast.makeText(this, "No music files found", Toast.LENGTH_SHORT).show(); return "" }
+        Toast.makeText(this, "Music files scanned: $copied", Toast.LENGTH_SHORT).show()
+        return target.absolutePath
     }
 
     private fun importMusicFolder(uri: android.net.Uri): String {
@@ -201,6 +301,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (this::mediaSession.isInitialized) mediaSession.release()
         // Останавливаем Go-сервер и освобождаем SQLite.
         Mobile.stop()
         if (this::webView.isInitialized) {

@@ -3,6 +3,8 @@
 
     <!-- Бэкенд ходит в интернет (поиск, стримы источников) — только из Go-кода. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <!-- Фоновое воспроизведение: foreground-сервис типа mediaPlayback. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
@@ -10,11 +12,7 @@
     <!-- Уведомления (Android 13+): плеер показывает медиа-уведомление. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Локальная музыка (Android 13+): сканирование MediaStore.Audio. -->
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- Android 12 и ниже: чтение аудио через старое разрешение. -->
-    <uses-permission
-        android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="true"

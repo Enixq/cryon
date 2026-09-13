@@ -50,7 +50,14 @@ body {
     radial-gradient(ellipse at top left, rgba(34, 211, 238, 0.08), transparent 40%),
     #07080f;
   color: #e2e8f0;
+  overflow-x: hidden;
 }
+
+@media (max-width: 639px) {
+  body { font-size: 15px; }
+  button, a { -webkit-tap-highlight-color: transparent; }
+}
+
 
 button,
 input {

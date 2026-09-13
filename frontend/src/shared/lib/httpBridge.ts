@@ -122,6 +122,7 @@ export function installHttpBridge(): boolean {
           if (prop.startsWith("Player")) return Promise.resolve(undefined);
           // Системные диалоги открылись бы на ПК и подвесили бы вызов с телефона.
           if (prop.startsWith("Pick")) return Promise.resolve("");
+          if (prop === "ScanDeviceMusic") return Promise.resolve((window as WindowBridge & { CryonAndroid?: { scanDeviceMusic?: () => string } }).CryonAndroid?.scanDeviceMusic?.() ?? "");
           return rpc(base, prop, args);
         };
       },

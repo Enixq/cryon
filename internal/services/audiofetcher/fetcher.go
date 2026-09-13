@@ -3,6 +3,7 @@ package audiofetcher
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/kkdai/youtube/v2"
@@ -23,17 +24,25 @@ type AudioStream struct {
 // каждый трек (а также переиспользует внутреннее состояние библиотеки).
 var ytClient = youtube.Client{}
 
+const minimumAudioBitrate = 96000
+
 // GetYouTubeAudioStream извлекает прямой аудиопоток видео YouTube
 // по его ID. Работает без API-ключа через библиотеку kkdai/youtube.
 func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, error) {
 	video, err := ytClient.GetVideoContext(ctx, videoID)
 	if err != nil {
-		return nil, fmt.Errorf("не удалось получить видео YouTube: %w", err)
+		if fallback, fallbackErr := getYouTubeAudioStreamWithYtDlp(ctx, videoID); fallbackErr == nil {
+			return fallback, nil
+		}
+		return nil, fmt.Errorf("?? ??????? ???????? ????? YouTube: %w", err)
 	}
 
 	formats := video.Formats.WithAudioChannels()
 	if len(formats) == 0 {
-		return nil, fmt.Errorf("аудиоформаты не найдены")
+		if fallback, fallbackErr := getYouTubeAudioStreamWithYtDlp(ctx, videoID); fallbackErr == nil {
+			return fallback, nil
+		}
+		return nil, fmt.Errorf("???????????? ?? ???????")
 	}
 
 	// Предпочитаем аудио-only поток (mimeType "audio/..."): он в разы легче
@@ -45,17 +54,28 @@ func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, e
 		if !strings.HasPrefix(formats[i].MimeType, "audio/") {
 			continue
 		}
+		if formats[i].Bitrate < minimumAudioBitrate {
+			continue
+		}
 		if bestAudio == nil || formats[i].Bitrate > bestAudio.Bitrate {
 			bestAudio = &formats[i]
 		}
 	}
 	if bestAudio != nil {
 		format = *bestAudio
+	} else if format.Bitrate < minimumAudioBitrate {
+		if fallback, fallbackErr := getYouTubeAudioStreamWithYtDlp(ctx, videoID); fallbackErr == nil {
+			return fallback, nil
+		}
+		return nil, fmt.Errorf("YouTube audio stream quality is below 96 kbps")
 	}
 
 	streamURL, err := ytClient.GetStreamURLContext(ctx, video, &format)
 	if err != nil {
-		return nil, fmt.Errorf("не удалось получить URL потока: %w", err)
+		if fallback, fallbackErr := getYouTubeAudioStreamWithYtDlp(ctx, videoID); fallbackErr == nil {
+			return fallback, nil
+		}
+		return nil, fmt.Errorf("?? ??????? ???????? URL ??????: %w", err)
 	}
 
 	return &AudioStream{
@@ -96,4 +116,17 @@ func ParseTrackFromURL(rawURL string) (domain.ServiceID, string, error) {
 	}
 
 	return "", "", fmt.Errorf("неподдерживаемая ссылка")
+}
+
+func getYouTubeAudioStreamWithYtDlp(ctx context.Context, videoID string) (*AudioStream, error) {
+	cmd := exec.CommandContext(ctx, "yt-dlp", "--no-warnings", "--no-playlist", "--socket-timeout", "15", "--retries", "2", "-f", "bestaudio[abr>=96]/bestaudio", "--get-url", "https://www.youtube.com/watch?v="+videoID)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	streamURL := strings.TrimSpace(string(out))
+	if streamURL == "" {
+		return nil, fmt.Errorf("yt-dlp returned an empty stream URL")
+	}
+	return &AudioStream{URL: streamURL, Format: "audio", Quality: "best available (>=96 kbps)"}, nil
 }

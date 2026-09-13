@@ -48,23 +48,23 @@ export function TrackRow({
   const disliked = (score ?? 0) < 0;
   return (
     <div
-      onDoubleClick={() => onPlay(track)}
+      onClick={() => onPlay(track)}
       className={cn(
-        "group grid grid-cols-[40px_1fr_auto] items-center gap-4 rounded-xl px-3 py-2 transition-colors hover:bg-white/5",
+        "group grid min-w-0 grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-xl px-2 py-2 transition-colors hover:bg-white/5 sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:gap-4 sm:px-3",
         active && "bg-white/8",
       )}
     >
       {/* Номер / кнопка воспроизведения */}
       <div className="grid h-10 w-10 place-items-center">
         {index !== undefined && (
-          <span className={cn("text-sm text-slate-500 group-hover:hidden", active && "hidden text-[#a855f7]")}>
-            {active && playing ? "" : index + 1}
+          <span className={cn("text-sm tabular-nums text-slate-500", active && "text-[#a855f7]")}>
+            {index + 1}
           </span>
         )}
         <button
           onClick={() => onPlay(track)}
           className={cn(
-            "hidden place-items-center text-white group-hover:grid",
+            "hidden place-items-center text-white sm:group-hover:grid",
             active && "grid",
           )}
           aria-label={active && playing ? "Пауза" : "Воспроизвести"}
@@ -88,7 +88,7 @@ export function TrackRow({
       </div>
 
       {/* Правая часть */}
-      <div className="flex items-center gap-4">
+      <div className="flex min-w-0 items-center gap-1 sm:gap-4">
         {/* Оценка рекомендации. Видна по наведению, но остаётся видимой, если
             оценка уже стоит — иначе непонятно, что было нажато. «Нравится» ещё и
             кладёт трек в избранное (см. useRecoFeedback). */}
@@ -100,7 +100,7 @@ export function TrackRow({
             )}
           >
             <button
-              onClick={() => onRate(track, 1)}
+              onClick={(event) => { event.stopPropagation(); onRate(track, 1); }}
               disabled={rateDisabled}
               aria-pressed={liked}
               aria-label={liked ? "Убрать «нравится»" : "Нравится — больше такого"}
@@ -113,7 +113,7 @@ export function TrackRow({
               <ThumbsUp size={15} fill={liked ? "currentColor" : "none"} />
             </button>
             <button
-              onClick={() => onRate(track, -1)}
+              onClick={(event) => { event.stopPropagation(); onRate(track, -1); }}
               disabled={rateDisabled}
               aria-pressed={disliked}
               aria-label={disliked ? "Убрать «не нравится»" : "Не нравится — меньше такого"}
@@ -137,7 +137,7 @@ export function TrackRow({
           </span>
         )}
         {showAddToPlaylist && <TrackQuickActions track={track} />}
-        <span className="w-10 text-right text-sm tabular-nums text-slate-400">
+        <span className="w-10 shrink-0 text-right text-sm tabular-nums text-slate-400">
           {formatDuration(track.duration)}
         </span>
       </div>

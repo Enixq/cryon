@@ -65,29 +65,29 @@ export function useMediaSession(): void {
 
   // Метаданные текущего трека (название, артист, альбом, обложка).
   useEffect(() => {
-    if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
+    const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
     if (!track) {
-      navigator.mediaSession.metadata = null;
+      nativeBridge?.clearNowPlaying?.();
+      if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
       return;
     }
+    nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying);
+    if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title,
       artist: track.artist,
       album: track.album ?? "",
       artwork: coverUrl ? [{ src: coverUrl }] : [],
     });
-  }, [track?.id, track?.title, track?.artist, track?.album, coverUrl]);
+  }, [track?.id, track?.title, track?.artist, track?.album, coverUrl, isPlaying]);
 
-  // Состояние воспроизведения — чтобы кнопка в системной панели показывала
-  // верную иконку (play/pause).
   useEffect(() => {
+    const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
+    if (track) nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying);
+    else nativeBridge?.clearNowPlaying?.();
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.playbackState = track ? (isPlaying ? "playing" : "paused") : "none";
   }, [isPlaying, track]);
-
-  // Позиция и длительность для системного ползунка. Обновляем императивно по
-  // подписке на стор (без ре-рендера каркаса): тикер пишет прогресс каждые
-  // 500 мс, и подписка транслирует его в ОС.
   useEffect(() => {
     if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
     const update = () => {

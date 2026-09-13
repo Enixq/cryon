@@ -1,4 +1,5 @@
 package core
+
 import (
 	"archive/zip"
 	"context"
@@ -1731,7 +1732,9 @@ func (a *App) ValidateSource(id string) error {
 		}
 	case domain.ServiceYouTube:
 		if s, ok := a.registry[domain.ServiceYouTube].(*youtube.Service); ok {
-			err = s.ValidateAPIKey(ctx)
+			if s.HasAPIKey() {
+				err = s.ValidateAPIKey(ctx)
+			}
 		} else {
 			err = fmt.Errorf("адаптер YouTube Music недоступен")
 		}

@@ -26,6 +26,7 @@ import {
   listSourceStatus,
   onSourceStatusChanged,
   pickMusicFolder,
+  scanDeviceMusic,
   removeLocalFolder,
   setSetting,
   setYandexToken,
@@ -179,6 +180,15 @@ export function SettingsPage() {
     queryClient.invalidateQueries({ queryKey: ["localTracks"] });
   };
 
+  const scanDeviceMutation = useMutation({
+    mutationFn: async () => {
+      const path = await scanDeviceMusic();
+      if (!path) return null;
+      return addLocalFolder(path);
+    },
+    onSuccess: refreshLocal,
+  });
+
   const addFolderMutation = useMutation({
     mutationFn: async () => {
       const path = await pickMusicFolder();
@@ -226,6 +236,14 @@ export function SettingsPage() {
                   </button>
                 </div>
               ))}
+              <button
+                onClick={() => scanDeviceMutation.mutate()}
+                disabled={scanDeviceMutation.isPending}
+                className="flex items-center justify-center gap-2 rounded-xl border border-[#a855f7]/40 bg-[#a855f7]/10 py-3 text-sm text-[#d8b4fe] transition-colors hover:bg-[#a855f7]/20 disabled:opacity-50"
+              >
+                <RefreshCw size={16} />
+                {scanDeviceMutation.isPending ? "\u0421\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435\u2026" : "\u0421\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043c\u0443\u0437\u044b\u043a\u0443 \u043d\u0430 \u0442\u0435\u043b\u0435\u0444\u043e\u043d\u0435"}
+              </button>
               <button
                 onClick={() => addFolderMutation.mutate()}
                 disabled={addFolderMutation.isPending}

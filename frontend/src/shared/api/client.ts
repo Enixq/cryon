@@ -433,6 +433,12 @@ export async function listLocalFolders(): Promise<string[]> {
 }
 
 /** Открыть системный диалог выбора папки. Пусто — отменено. */
+export async function scanDeviceMusic(): Promise<string> {
+  if (typeof window === "undefined") return "";
+  const bridge = (window as Window & { CryonAndroid?: { scanDeviceMusic?: () => string } }).CryonAndroid;
+  return bridge?.scanDeviceMusic?.() ?? "";
+}
+
 export async function pickMusicFolder(): Promise<string> {
   // Нативная Android-оболочка сама открывает SAF-диалог (Kotlin), копирует
   // выбранную папку в filesDir и возвращает путь через глобальный колбэк
