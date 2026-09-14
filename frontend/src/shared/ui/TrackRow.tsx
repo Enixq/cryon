@@ -82,7 +82,7 @@ export function TrackRow({
       </div>
 
       {/* Обложка + название */}
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         <Cover
           accent={track.accent}
           src={coverUrl}
@@ -91,7 +91,7 @@ export function TrackRow({
           rounded="rounded-lg"
           iconSize={16}
         />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div
             className={cn(
               "truncate text-[14px] font-medium text-white sm:text-[15px]",
@@ -108,7 +108,7 @@ export function TrackRow({
       </div>
 
       {/* Правая часть */}
-      <div className="flex min-w-0 items-center gap-1 sm:gap-4">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-4">
         {/* Оценка рекомендации. Видна по наведению, но остаётся видимой, если
             оценка уже стоит — иначе непонятно, что было нажато. «Нравится» ещё и
             кладёт трек в избранное (см. useRecoFeedback). */}
@@ -168,7 +168,7 @@ export function TrackRow({
         )}
         {showAddToPlaylist && <TrackQuickActions track={track} />}
         <div className="flex shrink-0 flex-col items-end leading-tight">
-          {track.playCount ? <span className="text-[11px] tabular-nums text-slate-500">▶ {formatPlayCount(track.playCount)}</span> : null}
+          {track.playCount ? <span className="hidden text-[11px] tabular-nums text-slate-500 sm:inline">▶ {formatPlayCount(track.playCount)}</span> : null}
           <span className="w-9 text-right text-[13px] tabular-nums text-slate-400 sm:w-10 sm:text-sm">{formatDuration(track.duration)}</span>
         </div>
       </div>
