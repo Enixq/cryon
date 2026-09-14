@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -26,27 +27,70 @@ type AudioStream struct {
 // ytClient переиспользуется между вызовами: youtube.Client безопасен для
 // конкурентного использования, и один экземпляр не пересоздаёт http-клиент на
 // каждый трек (а также переиспользует внутреннее состояние библиотеки).
-var ytClient = youtube.Client{}
+//
+// HTTPClient задан явно с КОНЕЧНЫМИ таймаутами. По умолчанию kkdai/youtube
+// берёт http.DefaultClient (Timeout: 0) — из-за этого зависший запрос к
+// InnerTube/странице YouTube (медленный TLS под VPN, троттлинг, обрыв сети)
+// висел вечно и держал горутину, а с ней — singleflight в localserver (все
+// ждущие Range-запросы плеера). Это и была одна из причин «музыка не всегда
+// включается»: плеер бесконечно буферизовал без ошибки. Бюджеты разнесены по
+// фазам под медленный VPN, но общий предел конечен.
+var ytClient = youtube.Client{HTTPClient: newYouTubeMetadataClient()}
+
+func newYouTubeMetadataClient() *http.Client {
+	return &http.Client{
+		Timeout: 25 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   12 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: 20 * time.Second,
+			ExpectContinueTimeout: 2 * time.Second,
+			MaxIdleConns:          16,
+			MaxIdleConnsPerHost:   8,
+			IdleConnTimeout:       90 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
+	}
+}
 
 const minimumAudioBitrate = 96000
 
-// GetYouTubeAudioStream извлекает прямой аудиопоток видео YouTube
-// по его ID. Работает без API-ключа через библиотеку kkdai/youtube.
+// GetYouTubeAudioStream извлекает прямой аудиопоток видео YouTube по его ID.
+// Работает без API-ключа. Первичная попытка (kkdai/youtube) ограничена
+// собственным под-дедлайном: даже если она зависнет или упадёт, у резолвера
+// останется бюджет на бесключевые фолбэки (InnerTube → Piped → yt-dlp) в
+// пределах общего дедлайна, который ставит вызывающий код (core.GetAudioStream).
 func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, error) {
+	primaryCtx, cancelPrimary := context.WithTimeout(ctx, 22*time.Second)
+	stream, err := getYouTubeAudioStreamPrimary(primaryCtx, videoID)
+	cancelPrimary()
+	if err == nil {
+		return stream, nil
+	}
+
+	if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
+		return fallback, nil
+	}
+	return nil, fmt.Errorf("не удалось получить аудиопоток YouTube: %w", err)
+}
+
+// getYouTubeAudioStreamPrimary — первичный путь через kkdai/youtube (клиент
+// ANDROID_VR по умолчанию: InnerTube-плеер, прямые URL без расшифровки сигнатур).
+// Никаких фолбэков внутри не делает — ими управляет GetYouTubeAudioStream, чтобы
+// цепочка была единой и предсказуемой по времени.
+func getYouTubeAudioStreamPrimary(ctx context.Context, videoID string) (*AudioStream, error) {
 	video, err := ytClient.GetVideoContext(ctx, videoID)
 	if err != nil {
-		if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
-			return fallback, nil
-		}
-		return nil, fmt.Errorf("?? ??????? ???????? ????? YouTube: %w", err)
+		return nil, fmt.Errorf("не удалось получить данные видео YouTube: %w", err)
 	}
 
 	formats := video.Formats.WithAudioChannels()
 	if len(formats) == 0 {
-		if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
-			return fallback, nil
-		}
-		return nil, fmt.Errorf("???????????? ?? ???????")
+		return nil, fmt.Errorf("подходящих аудиоформатов не нашлось")
 	}
 
 	// Предпочитаем аудио-only поток (mimeType "audio/..."): он в разы легче
@@ -68,18 +112,12 @@ func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, e
 	if bestAudio != nil {
 		format = *bestAudio
 	} else if format.Bitrate < minimumAudioBitrate {
-		if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
-			return fallback, nil
-		}
-		return nil, fmt.Errorf("YouTube audio stream quality is below 96 kbps")
+		return nil, fmt.Errorf("качество аудиопотока YouTube ниже 96 кбит/с")
 	}
 
 	streamURL, err := ytClient.GetStreamURLContext(ctx, video, &format)
 	if err != nil {
-		if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
-			return fallback, nil
-		}
-		return nil, fmt.Errorf("?? ??????? ???????? URL ??????: %w", err)
+		return nil, fmt.Errorf("не удалось получить URL аудиопотока YouTube: %w", err)
 	}
 
 	return &AudioStream{
@@ -134,6 +172,12 @@ type pipedStreamsResponse struct {
 }
 
 func getYouTubeAudioStreamFallback(ctx context.Context, videoID string) (*AudioStream, error) {
+	// Порядок фолбэков — от самого надёжного бесключевого к внешнему бинарнику.
+	// InnerTube (клиент IOS) и Piped работают на Android; yt-dlp — только на
+	// десктопе (на телефоне его нет).
+	if stream, err := getYouTubeAudioStreamWithInnerTube(ctx, videoID); err == nil {
+		return stream, nil
+	}
 	if stream, err := getYouTubeAudioStreamWithPiped(ctx, videoID); err == nil {
 		return stream, nil
 	}
@@ -141,8 +185,20 @@ func getYouTubeAudioStreamFallback(ctx context.Context, videoID string) (*AudioS
 }
 
 func getYouTubeAudioStreamWithPiped(ctx context.Context, videoID string) (*AudioStream, error) {
-	client := &http.Client{Timeout: 12 * time.Second}
-	instances := []string{"https://pipedapi.kavin.rocks", "https://pipedapi.adminforge.de", "https://pipedapi.reallyaweso.me"}
+	client := &http.Client{Timeout: 8 * time.Second}
+	// Публичные Piped-инстансы часто умирают/меняются — держим расширенный
+	// список и перебираем по очереди (мёртвые отсеиваются быстро по ошибке
+	// соединения). Это лишь третичный фолбэк: основной бесключевой путь на
+	// Android — kkdai и InnerTube выше.
+	instances := []string{
+		"https://pipedapi.kavin.rocks",
+		"https://pipedapi.adminforge.de",
+		"https://api.piped.yt",
+		"https://pipedapi.leptons.xyz",
+		"https://pipedapi.r4fo.com",
+		"https://pipedapi.reallyaweso.me",
+		"https://pipedapi.ducks.party",
+	}
 	var lastErr error
 	for _, instance := range instances {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, instance+"/streams/"+videoID, nil)

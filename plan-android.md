@@ -1055,3 +1055,52 @@ Yandex-токен).
 ./internal/services/deezer/...`, затем локальная сборка APK через
 `scripts/build-android.ps1` — убедиться, что AAR пересобирается и приложение
 показывает непустые рекомендации на свежем профиле.
+
+## Надёжный бесключевой YouTube (поиск + аудио) в APK (2026-09-14)
+
+**Жалоба пользователя (дословно):** «На андроиде проблема была была, что YouTube
+Music не всегда ищет/не всегда включает музыку. Да и на декстопе тоже, нужно
+починить». Баг воспроизводится **на обеих платформах** → корень в общем Go-core, а
+не в UI/оболочке. Полный разбор и все правки — в [plan.md](plan.md) §52.
+
+**Почему это особенно важно для Android.** На телефоне **нет ни `yt-dlp`, ни
+`mpv`** — то, чем десктоп прикрывает бесключевой YouTube. До этой правки на Android
+поиск YouTube держался на двух хрупких скрейпах (HTML-страница + Bing), а аудио —
+на kkdai + мёртвых Piped-инстансах. Когда скрейп отдавал 0 без ошибки или резолв
+зависал на бездедлайновом `http.DefaultClient`, у Android **не оставалось запасного
+пути** → «не ищет / не включает».
+
+**Что даёт APK эта правка (Android-кода нет — всё в общем ядре):**
+- **InnerTube-поиск** (`youtubei/v1/search`, новый
+  [internal/services/youtube/innertube.go](internal/services/youtube/innertube.go)) —
+  структурный JSON вместо парсинга HTML, встроен **первым** среди бесключевых путей.
+  Надёжный поиск, работающий на телефоне на чистом `net/http`.
+- **InnerTube-плеер IOS** (`youtubei/v1/player`, новый
+  [internal/services/audiofetcher/innertube.go](internal/services/audiofetcher/innertube.go)) —
+  второй нативный аудиопуть (прямые URL без расшифровки сигнатур, без yt-dlp),
+  встроен в цепочку фолбэков перед Piped: `kkdai (ANDROID_VR) → InnerTube (IOS) →
+  Piped → yt-dlp`. На Android yt-dlp недостижим, поэтому первые три звена — это и
+  есть весь рабочий тракт, и теперь их два независимых, а не один.
+- **Дедлайны против вечной тишины плеера.** `core.GetAudioStream` оборачивает
+  резолв YouTube в `context.WithTimeout(a.ctx, 40s)`, у kkdai появился HTTPClient с
+  конечными фазовыми таймаутами, первичная попытка ограничена под-дедлайном 22s. На
+  Android это лечит «крутится вечно, но не играет»: `a.ctx` там —
+  `context.WithCancel(context.Background())` (ставится в `mobile.go` `Start()`, см.
+  раздел 2026-09-13) **без дедлайна**, поэтому зависший запрос держал singleflight
+  в [mobileserver.go](internal/core/mobileserver.go)→`localAssetHandler` и все
+  Range-запросы `<audio>` висели молча. Теперь резолв гарантированно завершается
+  успехом или ошибкой.
+
+**Почему `gomobile bind` не ломается.** Оба новых файла — чистый stdlib
+(`net/http`, `encoding/json`, `bytes`, `strconv`), **без build-тегов и без новых
+внешних модулей**. Пакеты `youtube`/`audiofetcher` уже тянутся в APK транзитивно
+(`core` → `services/*`). Значит в `mobile/go.mod`/`go.sum` ничего не добавляется,
+шаг `go mod tidy` в job `build-android` ничего не доустанавливает,
+`gomobile bind -target=android/arm64 -tags cryonmobile` проходит как раньше.
+Публичные ключи InnerTube (`AIzaSy…`) — **не секрет** (зашиты в сами клиенты
+YouTube, не привязаны к аккаунту), политика «секреты не в APK» не нарушается.
+
+**Проверка при возврате toolchain/гейта:** `go build ./...`,
+`go build -tags cryonmobile ./...`, `go test ./internal/services/youtube/...`,
+затем `scripts/build-android.ps1` → на телефоне: поиск YouTube даёт результаты и
+трек **включается** (в логе видно, какой путь сработал — InnerTube/kkdai/Piped).

@@ -140,6 +140,16 @@ func (s *Service) Search(ctx context.Context, query string) ([]domain.Track, err
 		log.Warn("youtube: data api search failed", "err", err)
 	}
 
+	// InnerTube — самый надёжный бесключевой путь (структурный JSON вместо
+	// парсинга HTML) и работает на Android без yt-dlp. Пробуем его сразу после
+	// официального API и до хрупкого скрейпа страницы/Bing.
+	if tracks, err := s.searchByInnerTube(ctx, query); err == nil && len(tracks) > 0 {
+		log.Debug("youtube: found via innertube", "count", len(tracks))
+		return tracks, nil
+	} else if err != nil {
+		log.Warn("youtube: innertube search failed", "err", err)
+	}
+
 	if tracks, err := s.searchByPage(ctx, query); err == nil && len(tracks) > 0 {
 		log.Debug("youtube: found via search page", "count", len(tracks))
 		return tracks, nil
@@ -463,14 +473,24 @@ func (s *Service) searchByPage(ctx context.Context, query string) ([]domain.Trac
 	params := u.Query()
 	params.Set("search_query", query)
 	params.Set("sp", "EgIQAQ==")
+	// hl/gl фиксируют язык и регион: без них YouTube по гео VPN отдаёт локаль,
+	// на которой чаще срабатывает consent-стена и меняется разметка.
+	params.Set("hl", "en")
+	params.Set("gl", "US")
 	u.RawQuery = params.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/124.0 Safari/537.36")
-	req.Header.Set("Accept-Language", "ru,en-US;q=0.9,en;q=0.8")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9,ru;q=0.8")
+	// Обходим consent-стену (ЕС/первый визит): без cookie согласия YouTube
+	// возвращает страницу согласия вообще без ytInitialData, и парсер молча
+	// давал 0 результатов — одна из причин «не всегда ищет». SOCS — актуальная
+	// cookie согласия, CONSENT — легаси-вариант, ставим обе для надёжности.
+	req.AddCookie(&http.Cookie{Name: "SOCS", Value: "CAISNQgDEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjQwMzE5LjA3X3AwGgJlbiACGgYIgLC_sAY", Path: "/", Domain: ".youtube.com"})
+	req.AddCookie(&http.Cookie{Name: "CONSENT", Value: "YES+cb.20210328-17-p0.en+FX+000", Path: "/", Domain: ".youtube.com"})
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, err

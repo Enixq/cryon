@@ -751,7 +751,16 @@ func normalizeTrackText(value string) string {
 func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.AudioStream, error) {
 	switch domain.ServiceID(service) {
 	case domain.ServiceYouTube:
-		return audiofetcher.GetYouTubeAudioStream(a.ctx, trackID)
+		// Резолв URL ограничен по времени. a.ctx (контекст запуска Wails или
+		// фоновый на мобиле) не имеет дедлайна, поэтому зависший запрос к
+		// YouTube раньше держал singleflight в localserver вечно — плеер
+		// бесконечно «буферизовал» без ошибки. Дедлайн гарантирует, что резолв
+		// завершится успехом или ошибкой, и фронтенд получит onerror вместо
+		// вечной тишины. Сам аудиопоток качается отдельным запросом в
+		// localserver и этим дедлайном НЕ ограничен (URL уже строка).
+		ctx, cancel := context.WithTimeout(a.ctx, 40*time.Second)
+		defer cancel()
+		return audiofetcher.GetYouTubeAudioStream(ctx, trackID)
 	case domain.ServiceSoundCloud:
 		sc, ok := a.registry[domain.ServiceSoundCloud].(*soundcloud.Service)
 		if !ok {
