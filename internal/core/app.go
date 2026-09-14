@@ -24,6 +24,7 @@ import (
 	"Cryon2/internal/recommendations"
 	"Cryon2/internal/services"
 	"Cryon2/internal/services/audiofetcher"
+	"Cryon2/internal/services/deezer"
 	"Cryon2/internal/services/lastfm"
 	"Cryon2/internal/services/local"
 	"Cryon2/internal/services/lyrics"
@@ -126,9 +127,11 @@ func NewApp() *App {
 	} else {
 		app.store = st
 	}
-	// Движок рекомендаций поверх истории/избранного и Last.fm (если задан ключ).
-	// Поиск делегируем SearchAll, чтобы находить реальные проигрываемые треки.
-	app.reco = recommendations.New(app.store, lastfm.New(cfg.LastFMAPIKey), func(ctx context.Context, query string) ([]domain.Track, error) {
+	// Движок рекомендаций поверх истории/избранного и графа похожести. Last.fm
+	// используется, если задан ключ; иначе — бесключевой граф Deezer, поэтому
+	// рекомендации работают без настройки. Поиск делегируем SearchAll, чтобы
+	// находить реальные проигрываемые треки (аудио из Deezer не берётся).
+	app.reco = recommendations.New(app.store, lastfm.New(cfg.LastFMAPIKey), deezer.New(), func(ctx context.Context, query string) ([]domain.Track, error) {
 		return app.SearchAll(query)
 	})
 	return app
@@ -940,8 +943,9 @@ func (a *App) ListRecommendations(limit int) ([]domain.Track, error) {
 	return tracks, nil
 }
 
-// RecommendationsAvailable сообщает, доступен ли онлайн-движок (задан ли ключ
-// Last.fm). false — работает только оффлайн-фолбэк.
+// RecommendationsAvailable сообщает, доступен ли онлайн-движок (граф похожести).
+// Теперь фактически всегда true: при отсутствии ключа Last.fm работает
+// бесключевой граф Deezer, поэтому рекомендации доступны без настройки.
 func (a *App) RecommendationsAvailable() bool {
 	return a.reco != nil && a.reco.OnlineAvailable()
 }
@@ -969,9 +973,11 @@ func (a *App) SetLastFMKey(apiKey string) error {
 	return nil
 }
 
-// LastFMConnected сообщает, задан ли ключ Last.fm (без раскрытия самого ключа).
+// LastFMConnected сообщает, задан ли именно ключ Last.fm (без раскрытия самого
+// ключа). Отделено от RecommendationsAvailable: движок теперь онлайн и без ключа
+// (через Deezer), но тумблер в настройках должен показывать статус Last.fm.
 func (a *App) LastFMConnected() bool {
-	return a.reco != nil && a.reco.OnlineAvailable()
+	return a.reco != nil && a.reco.LastFMAvailable()
 }
 
 // ListAutoMix возвращает авто-подборку: kind = "daily" («Микс дня») или

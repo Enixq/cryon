@@ -622,8 +622,8 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
   return (
     <Section
       anchorRef={anchorRef}
-      title="Yandex Music"
-      description="Подключение включает поиск через официальное API и прямое воспроизведение. Для получения токена откройте веб-приложение MarshalX, войдите в аккаунт и вставьте полученный токен ниже. Без подключения Yandex работает через веб-поиск."
+      title="Yandex Music (необязательно)"
+      description="Необязательно: токен включает поиск через официальное API, прямой поток и радар новинок. Для получения токена откройте веб-приложение MarshalX, войдите в аккаунт и вставьте полученный токен ниже. Без токена Yandex работает через веб-поиск, а поиск/воспроизведение/рекомендации в целом — и вовсе без него."
     >
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2 text-xs">
@@ -708,9 +708,10 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
   );
 }
 
-// LastFMSection — подключение ключа Last.fm, включающего онлайн-рекомендации
-// (похожие артисты/треки, «Микс дня», «Открытия недели»). Без ключа движок
-// работает в оффлайн-режиме поверх истории и избранного.
+// LastFMSection — необязательный ключ Last.fm. Рекомендации работают и без него
+// (бесключевой граф Deezer + кросс-источниковый подбор); ключ Last.fm лишь
+// обогащает граф (числовая близость + жанровые теги) и включает 2-хоповые
+// «Открытия недели». Без ключа движок остаётся онлайн через Deezer.
 function LastFMSection({ anchorRef }: SectionAnchorProps) {
   const [apiKey, setApiKey] = useState("");
   const [connected, setConnected] = useState(false);
@@ -762,8 +763,8 @@ function LastFMSection({ anchorRef }: SectionAnchorProps) {
   return (
     <Section
       anchorRef={anchorRef}
-      title="Last.fm (рекомендации)"
-      description="Ключ Last.fm включает умные рекомендации: похожих артистов, «Микс дня» и «Открытия недели» из всех источников. Без ключа подборки строятся только по вашей истории и избранному."
+      title="Last.fm (необязательно)"
+      description="Рекомендации работают сразу, без ключей. Ключ Last.fm — необязательное улучшение: добавляет числовую близость артистов и жанровые теги, а также включает 2-хоповые «Открытия недели». Без него граф похожести берётся из Deezer (бесключево)."
     >
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2 text-xs">

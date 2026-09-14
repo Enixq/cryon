@@ -1,14 +1,20 @@
 // Package recommendations — движок авто-предложек поверх мульти-сервисной
-// библиотеки. Профиль вкусов строится из локальной истории и избранного
-// (чистый Go), а «похожесть» артистов берётся из Last.fm — он знает артистов
-// во всех источниках, поэтому рекомендации работают cross-service без обучения
-// собственной модели.
+// библиотеки. Профиль вкусов строится из локальных сигналов (избранное,
+// плейлисты, история, локальная библиотека — чистый Go), а «похожесть» артистов
+// берётся из графа похожести: Last.fm (если задан ключ) либо бесключевой Deezer
+// как фолбэк. Оба графа знают артистов во всех источниках, поэтому рекомендации
+// работают cross-service без обучения собственной модели и без настройки ключей.
 //
 // Уровни (см. plan.md, п.12):
-//   - Уровень 1 — контентный фильтр: веса артистов из истории/избранного →
-//     ранжирование кандидатов (частота, свежесть, исключение прослушанного).
-//   - Fallback без Last.fm-ключа: те же любимые артисты через обычный поиск,
-//     чтобы рекомендации работали хотя бы базово оффлайн.
+//   - Уровень 1 — контентный фильтр: веса артистов из истории/избранного/
+//     локальной библиотеки → ранжирование кандидатов (частота, свежесть,
+//     исключение прослушанного).
+//   - Граф похожести: Last.fm приоритетен (богаче: match + теги), при отсутствии
+//     ключа или пустом ответе — бесключевой Deezer. Аудио из Deezer не берётся —
+//     только названия «артист+трек», которые затем ищутся в проигрываемых
+//     источниках (YouTube/SoundCloud/Yandex/локальные файлы).
+//   - Холодный старт: совсем пустой профиль наполняется из глобального чарта
+//     Deezer, чтобы даже свежая установка давала непустые рекомендации.
 package recommendations
 
 import (
@@ -22,6 +28,7 @@ import (
 
 	"Cryon2/internal/domain"
 	"Cryon2/internal/logging"
+	"Cryon2/internal/services/deezer"
 	"Cryon2/internal/services/lastfm"
 	"Cryon2/internal/store"
 )
@@ -35,6 +42,11 @@ type SearchFunc func(ctx context.Context, query string) ([]domain.Track, error)
 type Engine struct {
 	store  store.Store
 	lastfm *lastfm.Client
+	// deezer — бесключевой граф похожести (fallback к Last.fm). Даёт похожих
+	// артистов, топ-треки и чарт без ключа/регистрации, поэтому рекомендации
+	// работают «из коробки». Только ГРАФ: аудио из Deezer не берём — найденные
+	// названия ищутся в обычных проигрываемых источниках.
+	deezer *deezer.Client
 	search SearchFunc
 	favFn  func(ctx context.Context) ([]domain.Track, error)
 	histFn func(ctx context.Context, limit int) ([]store.HistoryRow, error)
@@ -43,23 +55,38 @@ type Engine struct {
 	// прослушивание.
 	plFn       func(ctx context.Context) ([]domain.UserPlaylist, error)
 	plTracksFn func(ctx context.Context, playlistID string) ([]domain.Track, error)
+	// localFn — локальная библиотека как сигнал вкуса. Нужна для холодного
+	// старта: пользователь, который только просканировал папку (без избранного/
+	// истории), всё равно получает непустой профиль и рекомендации.
+	localFn func(ctx context.Context) ([]store.LocalTrackRow, error)
 }
 
-// New собирает движок. store и search обязательны; lastfm может быть без ключа
-// (тогда работает оффлайн-фолбэк).
-func New(st store.Store, lf *lastfm.Client, search SearchFunc) *Engine {
-	e := &Engine{store: st, lastfm: lf, search: search}
+// New собирает движок. store и search обязательны; lastfm может быть без ключа,
+// а deezer — бесключевой граф-фолбэк (см. поле deezer). Даже без ключа Last.fm
+// онлайн-движок остаётся доступен через Deezer.
+func New(st store.Store, lf *lastfm.Client, dz *deezer.Client, search SearchFunc) *Engine {
+	e := &Engine{store: st, lastfm: lf, deezer: dz, search: search}
 	if st != nil {
 		e.favFn = st.FavoriteList
 		e.histFn = st.HistoryList
 		e.plFn = st.PlaylistList
 		e.plTracksFn = st.PlaylistTracks
+		e.localFn = st.LocalTrackList
 	}
 	return e
 }
 
-// OnlineAvailable сообщает, доступен ли онлайн-движок (задан ли ключ Last.fm).
+// OnlineAvailable сообщает, доступен ли онлайн-движок (граф похожести). Доступен,
+// если задан ключ Last.fm ЛИБО есть бесключевой граф Deezer — то есть фактически
+// всегда, поэтому рекомендации работают без настройки.
 func (e *Engine) OnlineAvailable() bool {
+	return e != nil && (e.lastfm.Available() || (e.deezer != nil && e.deezer.Available()))
+}
+
+// LastFMAvailable сообщает именно про ключ Last.fm (для тумблера в настройках).
+// Отделено от OnlineAvailable: движок теперь онлайн и без ключа (через Deezer),
+// но UI должен показывать, подключён ли конкретно Last.fm.
+func (e *Engine) LastFMAvailable() bool {
 	return e != nil && e.lastfm.Available()
 }
 
@@ -273,6 +300,50 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 				for _, a := range r.Track.Artists {
 					add(a, 1.0*recency, r.PlayedAtMs, 1, false)
 				}
+			}
+		}
+	}
+
+	// Локальная библиотека — сигнал вкуса для холодного старта. Пользователь,
+	// который только просканировал папку с музыкой (без избранного и истории),
+	// всё равно получает непустой профиль → непустые рекомендации. Файл в
+	// коллекции — осознанный выбор, поэтому deliberate=true (без затухания по
+	// времени). Вес плоский (1.5 на артиста, не на трек) и берём только top-50
+	// артистов по числу локальных треков — иначе библиотека на 10k+ треков
+	// раздула бы профиль и перебила избранное/историю.
+	if e.localFn != nil {
+		if rows, err := e.localFn(ctx); err == nil {
+			counts := map[string]int{}
+			display := map[string]string{}
+			for _, r := range rows {
+				// Локальный трек уже в коллекции — не рекомендуем его обратно.
+				seenTrackKeys[trackKey(domain.Track{Title: r.Title, Artists: r.Artists})] = true
+				for _, a := range r.Artists {
+					name := strings.TrimSpace(a)
+					if name == "" {
+						continue
+					}
+					lkey := strings.ToLower(name)
+					counts[lkey]++
+					if _, ok := display[lkey]; !ok {
+						display[lkey] = name
+					}
+				}
+			}
+			type localArtist struct {
+				name  string
+				count int
+			}
+			ranked := make([]localArtist, 0, len(counts))
+			for lkey, c := range counts {
+				ranked = append(ranked, localArtist{name: display[lkey], count: c})
+			}
+			sort.Slice(ranked, func(i, j int) bool { return ranked[i].count > ranked[j].count })
+			if len(ranked) > 50 {
+				ranked = ranked[:50]
+			}
+			for _, a := range ranked {
+				add(a.name, 1.5, 0, 0, true)
 			}
 		}
 	}
@@ -725,7 +796,11 @@ func (e *Engine) Recommendations(ctx context.Context, limit int) ([]domain.Track
 	}
 	profile := e.buildTaste(ctx)
 	if len(profile.artists) == 0 {
-		return []domain.Track{}, nil
+		// Совсем новый профиль: ни локальной библиотеки, ни избранного, ни
+		// истории. Вместо пустой выдачи — «якорь» из глобального чарта Deezer
+		// (бесключево), прогнанный через обычный поиск в проигрываемых
+		// источниках. Если графа Deezer нет — только тогда пусто, как раньше.
+		return e.chartFallbackRecommendations(ctx, profile, limit), nil
 	}
 
 	// Берём топ любимых артистов как «затравку».
@@ -745,7 +820,7 @@ func (e *Engine) Recommendations(ctx context.Context, limit int) ([]domain.Track
 	}
 
 	var tracks []domain.Track
-	if e.lastfm.Available() {
+	if e.OnlineAvailable() {
 		tracks = e.onlineRecommendations(ctx, profile, seeds, limit)
 		if len(tracks) == 0 {
 			logging.L().Debug("recommendations: онлайн-движок пуст, откат в оффлайн")
@@ -761,6 +836,51 @@ func (e *Engine) Recommendations(ctx context.Context, limit int) ([]domain.Track
 		}
 	}
 	return tracks, nil
+}
+
+// chartFallbackRecommendations — выдача для совсем пустого профиля (холодный
+// старт без единого сигнала: ни библиотеки, ни избранного, ни истории). Берёт
+// глобальный чарт Deezer как кандидатов и ищет их в реальных проигрываемых
+// источниках тем же конвейером resolveCandidates (дедуп, кап по артистам, выбор
+// привычного источника). Если графа Deezer нет — пусто, как было раньше.
+// Кэшируется отдельным ключом на recoTTL: чарт меняется редко, а сборка — это
+// десятки поисков.
+func (e *Engine) chartFallbackRecommendations(ctx context.Context, t taste, limit int) []domain.Track {
+	if limit <= 0 {
+		limit = 20
+	}
+	if e.deezer == nil || !e.deezer.Available() {
+		return []domain.Track{}
+	}
+	const cacheKey = "reco:chart:v1"
+	if e.store != nil {
+		if raw, ok, _ := e.store.RecoCacheGet(ctx, cacheKey); ok {
+			var cached []domain.Track
+			if json.Unmarshal([]byte(raw), &cached) == nil && len(cached) > 0 {
+				return cached
+			}
+		}
+	}
+	// Берём чарт с запасом: часть отсеется дедупом и непроигрываемостью.
+	chart, err := e.deezer.ChartTracks(ctx, limit*3)
+	if err != nil {
+		logging.L().Debug("recommendations: chart fallback не удался", "err", err)
+		return []domain.Track{}
+	}
+	if len(chart) == 0 {
+		return []domain.Track{}
+	}
+	cands := make([]scoredCand, 0, len(chart))
+	for _, tr := range chart {
+		cands = append(cands, scoredCand{artist: tr.Artist, title: tr.Title, score: tr.Match})
+	}
+	tracks := e.resolveCandidates(ctx, cands, t, limit)
+	if len(tracks) > 0 && e.store != nil {
+		if data, mErr := json.Marshal(tracks); mErr == nil {
+			_ = e.store.RecoCacheSet(ctx, cacheKey, string(data), recoTTL)
+		}
+	}
+	return tracks
 }
 
 // RelatedTracks возвращает до limit треков, похожих на конкретный seed —
@@ -1189,9 +1309,12 @@ func (e *Engine) offlineRecommendations(ctx context.Context, t taste, seeds []ar
 	return out
 }
 
-// similarArtistsCached — SimilarArtists с кэшем в SQLite (TTL сутки).
+// similarArtistsCached — похожие артисты с кэшем в SQLite (TTL сутки). Сначала
+// Last.fm (богаче: числовой match + теговый слой), при пустом или ошибочном
+// ответе — бесключевой граф Deezer. Ключ кэша нейтральный (graph:*), т.к.
+// результат может прийти из любого графа; старые lastfm:*-ключи истекут сами.
 func (e *Engine) similarArtistsCached(ctx context.Context, artist string, limit int) []lastfm.Artist {
-	key := "lastfm:similar:" + strings.ToLower(artist)
+	key := "graph:similar:v1:" + strings.ToLower(artist)
 	if e.store != nil {
 		if raw, ok, _ := e.store.RecoCacheGet(ctx, key); ok {
 			var cached []lastfm.Artist
@@ -1200,12 +1323,32 @@ func (e *Engine) similarArtistsCached(ctx context.Context, artist string, limit 
 			}
 		}
 	}
-	res, err := e.lastfm.SimilarArtists(ctx, artist, limit)
-	if err != nil {
-		logging.L().Debug("recommendations: similar artists не удалось", "artist", artist, "err", err)
-		return nil
+
+	var res []lastfm.Artist
+	errored := false
+	if e.lastfm.Available() {
+		got, err := e.lastfm.SimilarArtists(ctx, artist, limit)
+		if err != nil {
+			errored = true
+			logging.L().Debug("recommendations: similar artists (lastfm) не удалось", "artist", artist, "err", err)
+		} else {
+			res = got
+		}
 	}
-	if e.store != nil {
+	// Фолбэк на бесключевой граф Deezer: ключа Last.fm нет или он ничего не дал.
+	if len(res) == 0 && e.deezer != nil && e.deezer.Available() {
+		got, err := e.deezer.SimilarArtists(ctx, artist, limit)
+		if err != nil {
+			errored = true
+			logging.L().Debug("recommendations: similar artists (deezer) не удалось", "artist", artist, "err", err)
+		} else {
+			res = deezerArtistsToLastfm(got)
+		}
+	}
+
+	// Кэшируем и пустой результат (артист неизвестен обоим графам), но не после
+	// сетевой ошибки — иначе транзиентный сбой заблокировал бы повтор на сутки.
+	if e.store != nil && (len(res) > 0 || !errored) {
 		if data, mErr := json.Marshal(res); mErr == nil {
 			_ = e.store.RecoCacheSet(ctx, key, string(data), 24*time.Hour)
 		}
@@ -1213,9 +1356,10 @@ func (e *Engine) similarArtistsCached(ctx context.Context, artist string, limit 
 	return res
 }
 
-// topTracksCached — TopArtistTracks с кэшем в SQLite (TTL сутки).
+// topTracksCached — топ-треки артиста с кэшем в SQLite (TTL сутки). Та же схема
+// «Last.fm → Deezer-фолбэк», что и в similarArtistsCached.
 func (e *Engine) topTracksCached(ctx context.Context, artist string, limit int) []lastfm.Track {
-	key := "lastfm:toptracks:" + strings.ToLower(artist)
+	key := "graph:toptracks:v1:" + strings.ToLower(artist)
 	if e.store != nil {
 		if raw, ok, _ := e.store.RecoCacheGet(ctx, key); ok {
 			var cached []lastfm.Track
@@ -1224,17 +1368,55 @@ func (e *Engine) topTracksCached(ctx context.Context, artist string, limit int) 
 			}
 		}
 	}
-	res, err := e.lastfm.TopArtistTracks(ctx, artist, limit)
-	if err != nil {
-		logging.L().Debug("recommendations: top tracks не удалось", "artist", artist, "err", err)
-		return nil
+
+	var res []lastfm.Track
+	errored := false
+	if e.lastfm.Available() {
+		got, err := e.lastfm.TopArtistTracks(ctx, artist, limit)
+		if err != nil {
+			errored = true
+			logging.L().Debug("recommendations: top tracks (lastfm) не удалось", "artist", artist, "err", err)
+		} else {
+			res = got
+		}
 	}
-	if e.store != nil {
+	if len(res) == 0 && e.deezer != nil && e.deezer.Available() {
+		got, err := e.deezer.TopArtistTracks(ctx, artist, limit)
+		if err != nil {
+			errored = true
+			logging.L().Debug("recommendations: top tracks (deezer) не удалось", "artist", artist, "err", err)
+		} else {
+			res = deezerTracksToLastfm(got)
+		}
+	}
+
+	if e.store != nil && (len(res) > 0 || !errored) {
 		if data, mErr := json.Marshal(res); mErr == nil {
 			_ = e.store.RecoCacheSet(ctx, key, string(data), 24*time.Hour)
 		}
 	}
 	return res
+}
+
+// deezerArtistsToLastfm мапит артистов графа Deezer в тип lastfm.Artist, чтобы
+// весь онлайн-путь (onlineRecommendations/resolveCandidates/discovery.go) работал
+// с одним типом независимо от источника графа. Match у Deezer синтезирован из
+// ранга (см. deezer.rankMatch).
+func deezerArtistsToLastfm(in []deezer.Artist) []lastfm.Artist {
+	out := make([]lastfm.Artist, 0, len(in))
+	for _, a := range in {
+		out = append(out, lastfm.Artist{Name: a.Name, Match: a.Match})
+	}
+	return out
+}
+
+// deezerTracksToLastfm мапит топ-треки Deezer в тип lastfm.Track (Title→Name).
+func deezerTracksToLastfm(in []deezer.Track) []lastfm.Track {
+	out := make([]lastfm.Track, 0, len(in))
+	for _, t := range in {
+		out = append(out, lastfm.Track{Name: t.Title, Artist: t.Artist, Match: t.Match})
+	}
+	return out
 }
 
 // MixKind — тип авто-подборки.

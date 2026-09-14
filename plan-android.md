@@ -1010,3 +1010,48 @@ adb install -r dist\Cryon2-v0.2.2-android-arm64.apk
 Перед сборкой один раз, если ещё не прогонялось: `go build ./...`, `go vet ./...`,
 `go build -tags cryonmobile ./...`, `go test ./...`; фронт — `tsc -b`, `vitest run`,
 `vite build`.
+
+## Актуальный baseline + бесключевые рекомендации в APK (2026-09-14)
+
+**Поправка дрейфа версии.** Разделы выше писались на 0.2.1/0.2.2 и упоминают
+«незакоммиченные» фиксы. Актуальное состояние: рабочее дерево на этот момент чистое и
+находится **ровно на git-теге `v0.2.11`** (`git describe --exact-match` → `v0.2.11`;
+теги идут v0.1.0 … v0.2.11). Прежние заметки про 0.2.2 и «фиксы в рабочем дереве» —
+исторические: с тех пор всё закоммичено и вышло несколько релизов.
+
+Расхождение, которое стоит держать в голове (косметическое, сборку не ломает):
+[android/app/build.gradle.kts](android/app/build.gradle.kts) отстаёт — `versionCode
+6`, `versionName "0.2.5"`, тогда как git-тег релиза уже `v0.2.11`. Имя файла APK берёт
+`-Tag` (git-тег) в [scripts/build-android.ps1](scripts/build-android.ps1) и CI, поэтому
+на артефакт релиза это не влияет; но при проверке «Настройки → Приложения → Cryon»
+номер будет из `build.gradle.kts` (0.2.5), а не из тега. При следующем релизе имеет
+смысл поднять `versionName`/`versionCode` в такт тегу.
+
+**Бесключевые рекомендации попадают в APK «бесплатно».** Изменения §51 из
+[plan.md](plan.md) (бесключевой граф Deezer как fallback + засев `buildTaste` из
+локальной библиотеки + чартовый фолбэк холодного старта + split
+`RecommendationsAvailable`/`LastFMConnected`) сделаны **целиком в общем Go-core**:
+`internal/recommendations`, `internal/core` и новый пакет `internal/services/deezer`.
+Android-кода для этого **не требуется**:
+
+- `mobile/mobile.go` поднимает тот же `core.NewApp()`, что и десктоп; движок
+  рекомендаций внутри `core` уже конструирует `deezer.New()`.
+- `mobile/go.mod` содержит `replace Cryon2 => ../`, поэтому `gomobile bind` собирает
+  ядро из локального дерева, и пакет `deezer` подтягивается **транзитивно** через
+  `core` → `recommendations` → `services/deezer`.
+- Пакет `deezer` — без build-тегов, без CGO, только stdlib + `internal/logging`
+  (уже зависимость). Новых внешних модулей в `mobile/go.mod` / `go.sum` не
+  появляется → шаг CI `go mod tidy` в job `build-android` ничего не доустанавливает,
+  `gomobile bind -target=android/arm64 -tags cryonmobile` проходит как раньше.
+
+Итог: свежий APK получает рекомендации «из коробки» без ключей — на телефоне граф
+похожести берётся из публичного API Deezer, аудио резолвится в SoundCloud/локальные
+файлы (YouTube Music исключён из подбора by design, plan §30.2; больше покрытия даёт
+Yandex-токен).
+
+**Проверка при возврате toolchain/гейта классификатора** (в этой сессии `go`-команды
+всё ещё упираются в «claude-opus-4-8 is temporarily unavailable»): `go build ./...`,
+`go build -tags cryonmobile ./...`, `go test ./internal/recommendations/...
+./internal/services/deezer/...`, затем локальная сборка APK через
+`scripts/build-android.ps1` — убедиться, что AAR пересобирается и приложение
+показывает непустые рекомендации на свежем профиле.

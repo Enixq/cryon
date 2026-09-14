@@ -240,9 +240,10 @@ export async function startSpotifyLogin(): Promise<void> {
 }
 
 /**
- * Рекомендации на основе истории и избранного (похожие артисты через Last.fm
- * при наличии ключа, иначе оффлайн-фолбэк по любимым артистам). В вебе без
- * Wails возвращается пусто — HomePage тогда использует клиентский derive.
+ * Рекомендации на основе истории/избранного/локальной библиотеки. Граф похожести
+ * работает без ключей (бесключевой Deezer), а при наличии ключа Last.fm граф
+ * обогащается (числовая близость + жанровые теги). В вебе без Wails возвращается
+ * пусто — HomePage тогда использует клиентский derive.
  */
 export async function listRecommendations(limit = 20): Promise<Track[]> {
   if (!isWailsRuntime()) return [];
@@ -253,7 +254,11 @@ export async function listRecommendations(limit = 20): Promise<Track[]> {
   }
 }
 
-/** Доступен ли онлайн-движок рекомендаций (задан ли ключ Last.fm). */
+/**
+ * Доступен ли онлайн-движок рекомендаций. Теперь фактически всегда true в
+ * десктоп/Android-сборке: граф похожести есть и без ключей (Deezer). Отдельно от
+ * lastfmConnected — тот про конкретный ключ Last.fm.
+ */
 export async function recommendationsAvailable(): Promise<boolean> {
   if (!isWailsRuntime()) return false;
   try {
@@ -263,7 +268,8 @@ export async function recommendationsAvailable(): Promise<boolean> {
   }
 }
 
-/** Задан ли ключ Last.fm (без раскрытия самого ключа). */
+/** Задан ли ключ Last.fm (без раскрытия самого ключа). Только для тумблера в
+ * настройках — рекомендации работают и без него (см. recommendationsAvailable). */
 export async function lastfmConnected(): Promise<boolean> {
   if (!isWailsRuntime()) return false;
   try {
@@ -274,8 +280,9 @@ export async function lastfmConnected(): Promise<boolean> {
 }
 
 /**
- * Сохранить ключ Last.fm и сразу применить его к движку рекомендаций. Пустая
- * строка отключает онлайн-режим. Бесплатный ключ: last.fm/api/account/create.
+ * Сохранить ключ Last.fm и сразу применить его к движку рекомендаций. Ключ
+ * необязателен: пустая строка не отключает рекомендации, а лишь возвращает граф
+ * к бесключевому Deezer. Бесплатный ключ: last.fm/api/account/create.
  */
 export async function setLastFMKey(apiKey: string): Promise<void> {
   if (!isWailsRuntime()) return;
