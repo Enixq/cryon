@@ -4,6 +4,14 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, for example v0.2.15'
+        required: true
+
+env:
+  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
 
 permissions:
   contents: write
@@ -35,15 +43,15 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Build (exe + NSIS installer)
-        run: wails build -nsis -ldflags "-X Cryon2/internal/update.Version=${{ github.ref_name }}"
+        run: wails build -nsis -ldflags "-X Cryon2/internal/update.Version=${{ env.RELEASE_VERSION }}"
 
       - name: Prepare artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force
-          Copy-Item build/bin/Cryon2.exe "dist/Cryon2-${{ github.ref_name }}-windows-amd64.exe"
+          Copy-Item build/bin/Cryon2.exe "dist/Cryon2-${{ env.RELEASE_VERSION }}-windows-amd64.exe"
           if (Test-Path build/bin/Cryon2-amd64-installer.exe) {
-            Copy-Item build/bin/Cryon2-amd64-installer.exe "dist/Cryon2-${{ github.ref_name }}-windows-installer.exe"
+            Copy-Item build/bin/Cryon2-amd64-installer.exe "dist/Cryon2-${{ env.RELEASE_VERSION }}-windows-installer.exe"
           }
           Get-ChildItem dist
 
@@ -80,6 +88,8 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
 
       - name: Install gomobile
         run: |
@@ -104,7 +114,7 @@ jobs:
           mkdir -p ../android/app/libs
           go mod tidy
           gomobile bind -target=android/arm64 -androidapi 24 \
-            -ldflags "-X Cryon2/internal/update.Version=${GITHUB_REF_NAME}" \
+            -ldflags "-X Cryon2/internal/update.Version=${RELEASE_VERSION}" \
             -o ../android/app/libs/cryonmobile.aar -tags cryonmobile .
           test -s ../android/app/libs/cryonmobile.aar
 
@@ -123,7 +133,7 @@ jobs:
           CRYON_KEYSTORE_PASSWORD: ${{ secrets.CRYON_KEYSTORE_PASSWORD }}
           CRYON_KEY_ALIAS: ${{ secrets.CRYON_KEY_ALIAS }}
           CRYON_KEY_PASSWORD: ${{ secrets.CRYON_KEY_PASSWORD }}
-          CRYON_RELEASE_VERSION: ${{ github.ref_name }}
+          CRYON_RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
@@ -132,7 +142,7 @@ jobs:
         run: |
           mkdir -p dist
           cp android/app/build/outputs/apk/release/app-release.apk \
-             "dist/Cryon2-${{ github.ref_name }}-android-arm64.apk"
+             "dist/Cryon2-${{ env.RELEASE_VERSION }}-android-arm64.apk"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -141,6 +151,7 @@ jobs:
           path: dist/*
 
   release:
+    if: github.event_name == 'push'
     needs: [build-windows, build-android]
     runs-on: ubuntu-latest
     steps:
