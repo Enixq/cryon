@@ -28,6 +28,8 @@ import { OnboardingModal } from "./OnboardingModal";
 import { EqualizerModal } from "./EqualizerModal";
 import { ShareTrackModal } from "./ShareTrackModal";
 import { RouteErrorBoundary } from "./ErrorBoundary";
+import { notify } from "../store/notificationStore";
+import { apiV1BaseUrl } from "../shared/api/v1";
 import type { CSSProperties } from "react";
 
 // Ключи запросов, зависящих от подключённых источников: их выдача меняется
@@ -57,6 +59,22 @@ export function AppLayout() {
 
   // Системные медиа-контролы (SMTC на Windows) + аппаратные медиа-клавиши.
   useMediaSession();
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const response = await fetch(apiV1BaseUrl() + "/v1/system/update");
+        if (!response.ok || cancelled) return;
+        const release = await response.json() as { available?: boolean; latest?: string };
+        if (release.available && release.latest) {
+          notify({ kind: "info", title: "Доступно обновление Cryon", message: `Новая версия ${release.latest} доступна в разделе «Настройки → Общее».` });
+        }
+      } catch { return; }
+    };
+    void check();
+    return () => { cancelled = true; };
+  }, []);
 
   // Аппаратная кнопка / жест «Назад» на Android: закрыть оверлей → шаг назад по
   // истории → на «Главную» → и только затем выход. Без этого WebView по

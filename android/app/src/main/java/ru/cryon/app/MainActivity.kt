@@ -1,8 +1,11 @@
 package ru.cryon.app
 
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.ContentUris
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.app.Notification
@@ -10,6 +13,7 @@ import android.app.PendingIntent
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.ViewGroup
 import android.widget.Toast
 import android.content.pm.PackageManager
@@ -17,6 +21,8 @@ import android.window.OnBackInvokedDispatcher
 import androidx.appcompat.app.AppCompatActivity
 import androidx.documentfile.provider.DocumentFile
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.media.app.NotificationCompat.MediaStyle
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
@@ -33,6 +39,9 @@ import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebSettings
+import android.webkit.WebChromeClient
+import android.webkit.ValueCallback
+import android.net.Uri
 import mobile.Mobile
 
 /**
@@ -46,6 +55,11 @@ class MainActivity : AppCompatActivity() {
     private val folderRequestCode = 1001
     private val mediaPermissionRequestCode = 1002
     private val notificationPermissionRequestCode = 1003
+    private val fileRequestCode = 1004
+    private val reportRequestCode = 1005
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private var pendingPlaybackReport: String? = null
+    private var pendingUpdatePath: String? = null
     private val nowPlayingNotificationId = 77
     private val nowPlayingChannelId = "cryon_now_playing"
     private var lastBackPressedAt = 0L
@@ -55,9 +69,23 @@ class MainActivity : AppCompatActivity() {
     private var currentArtworkUrl: String = ""
     private var currentArtwork: Bitmap? = null
     private var artworkRequestId = 0L
+    private val playbackStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != CryonPlaybackService.ACTION_STATE) return
+            dispatchNativePlaybackState(intent)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingPlaybackReport = savedInstanceState?.getString("pendingPlaybackReport")
+        pendingUpdatePath = savedInstanceState?.getString("pendingUpdatePath")
+        ContextCompat.registerReceiver(
+            this,
+            playbackStateReceiver,
+            IntentFilter(CryonPlaybackService.ACTION_STATE),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         mediaSession = MediaSessionCompat(this, "Cryon").apply {
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() = dispatchPlayerCommand("play")
@@ -66,19 +94,14 @@ class MainActivity : AppCompatActivity() {
                 override fun onSkipToPrevious() = dispatchPlayerCommand("previous")
                 override fun onSeekTo(pos: Long) = dispatchPlayerCommand("seek:$pos")
             })
-            isActive = true
+            // Media3 owns the active media session. Keep this legacy bridge
+            // inactive while the WebView UI is being migrated.
+            isActive = false
         }
 
         // 1) Go-бэкенд: SQLite в filesDir, HTTP-сервер на случайном порту петли.
         //    Повторный вход (singleTask + поворот экрана) — сервер уже поднят.
-        baseURL = try {
-            Mobile.start(filesDir.absolutePath)
-        } catch (e: Exception) {
-            // Сервер уже запущен (рекреация активити) — URL не вернуть из Go,
-            // поэтому перезапускаем процесс целиком: Stop + Start.
-            Mobile.stop()
-            Mobile.start(filesDir.absolutePath)
-        }
+        baseURL = Mobile.start(filesDir.absolutePath)
 
         // 2) WebView строим отдельным методом — тот же код нужен при пересоздании
         //    после смерти рендер-процесса (onRenderProcessGone).
@@ -112,7 +135,26 @@ class MainActivity : AppCompatActivity() {
             mediaPlaybackRequiresUserGesture = false
             cacheMode = WebSettings.LOAD_DEFAULT
             allowFileAccess = false
-            allowContentAccess = false
+            allowContentAccess = true
+        }
+        wv.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(view: WebView?, callback: ValueCallback<Array<Uri>>, params: FileChooserParams?): Boolean {
+                fileChooserCallback?.onReceiveValue(null)
+                fileChooserCallback = callback
+                return try {
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/zip", "application/json", "application/octet-stream"))
+                    }
+                    startActivityForResult(intent, fileRequestCode)
+                    true
+                } catch (_: Exception) {
+                    fileChooserCallback = null
+                    callback.onReceiveValue(null)
+                    false
+                }
+            }
         }
         wv.webViewClient = object : WebViewClient() {
             // Рендер-процесс WebView умер. Если НЕ обработать (или вернуть false),
@@ -149,6 +191,40 @@ class MainActivity : AppCompatActivity() {
         fun pickMusicFolder() { runOnUiThread { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), folderRequestCode) } }
 
         @JavascriptInterface
+        fun installUpdate() {
+            Thread {
+                try {
+                    val path = Mobile.prepareUpdate(filesDir.absolutePath)
+                    runOnUiThread {
+                        pendingUpdatePath = path
+                        dispatchUpdateResult("")
+                        openUpdateInstaller()
+                    }
+                } catch (error: Exception) {
+                    runOnUiThread { dispatchUpdateResult(error.message ?: "Не удалось скачать обновление") }
+                }
+            }.start()
+        }
+
+        @JavascriptInterface
+        fun savePlaybackReport(report: String) {
+            runOnUiThread {
+                try {
+                    pendingPlaybackReport = report
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/json"
+                        putExtra(Intent.EXTRA_TITLE, "cryon-playback-report.json")
+                    }
+                    startActivityForResult(intent, reportRequestCode)
+                } catch (_: Exception) {
+                    pendingPlaybackReport = null
+                    Toast.makeText(this@MainActivity, "Не удалось открыть сохранение отчёта", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+        @JavascriptInterface
         fun updateNowPlaying(title: String, artist: String, playing: Boolean, artworkUrl: String, duration: Double, position: Double, quality: String, liked: Boolean, radio: Boolean) {
             runOnUiThread { showNowPlaying(title, artist, playing, artworkUrl, duration, position, quality, liked, radio) }
         }
@@ -159,6 +235,44 @@ class MainActivity : AppCompatActivity() {
                 (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(nowPlayingNotificationId)
                 mediaSession.setMetadata(null)
                 mediaSession.isActive = false
+            }
+        }
+
+        @JavascriptInterface
+        fun nativePlay(streamUrl: String, trackId: String, title: String, artist: String, artworkUrl: String, durationMs: Long, autoPlay: Boolean, startPositionMs: Long, mimeType: String) {
+            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_PLAY) {
+                putExtra(CryonPlaybackService.EXTRA_STREAM_URL, streamUrl)
+                putExtra(CryonPlaybackService.EXTRA_TRACK_ID, trackId)
+                putExtra(CryonPlaybackService.EXTRA_TITLE, title)
+                putExtra(CryonPlaybackService.EXTRA_ARTIST, artist)
+                putExtra(CryonPlaybackService.EXTRA_ARTWORK_URL, artworkUrl)
+                putExtra(CryonPlaybackService.EXTRA_DURATION_MS, durationMs)
+                putExtra(CryonPlaybackService.EXTRA_AUTO_PLAY, autoPlay)
+                putExtra(CryonPlaybackService.EXTRA_POSITION_MS, startPositionMs.coerceAtLeast(0L))
+                putExtra(CryonPlaybackService.EXTRA_MIME_TYPE, mimeType)
+            }
+        }
+
+        @JavascriptInterface
+        fun nativePause() { CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_PAUSE) }
+
+        @JavascriptInterface
+        fun nativeResume() { CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_RESUME) }
+
+        @JavascriptInterface
+        fun nativeStop() { CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_STOP) }
+
+        @JavascriptInterface
+        fun nativeSeek(positionMs: Long) {
+            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_SEEK) {
+                putExtra(CryonPlaybackService.EXTRA_POSITION_MS, positionMs)
+            }
+        }
+
+        @JavascriptInterface
+        fun nativeSetVolume(volume: Int) {
+            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_VOLUME) {
+                putExtra(CryonPlaybackService.EXTRA_VOLUME, volume)
             }
         }
 
@@ -178,6 +292,28 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == reportRequestCode) {
+            val report = pendingPlaybackReport
+            pendingPlaybackReport = null
+            val uri = if (resultCode == RESULT_OK) data?.data else null
+            if (uri != null && report != null) {
+                val saved = try {
+                    val output = contentResolver.openOutputStream(uri) ?: error("Cannot open report")
+                    output.use { it.write(report.toByteArray(Charsets.UTF_8)) }
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+                Toast.makeText(this, if (saved) "Отчёт сохранён" else "Не удалось сохранить отчёт", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        if (requestCode == fileRequestCode) {
+            val uri = if (resultCode == RESULT_OK) data?.data?.takeIf { it.scheme == "content" } else null
+            fileChooserCallback?.onReceiveValue(uri?.let { arrayOf(it) })
+            fileChooserCallback = null
+            return
+        }
         if (requestCode != folderRequestCode) return
         val uri = if (resultCode == RESULT_OK) data?.data else null
         if (uri == null) {
@@ -209,6 +345,22 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             if (this::webView.isInitialized) {
                 webView.evaluateJavascript("window.__cryonNativeMediaCommand && window.__cryonNativeMediaCommand(" + JSONObject.quote(command) + ")", null)
+            }
+        }
+    }
+
+    private fun dispatchNativePlaybackState(intent: Intent) {
+        if (!this::webView.isInitialized) return
+        val payload = JSONObject()
+            .put("trackId", intent.getStringExtra(CryonPlaybackService.EXTRA_TRACK_ID).orEmpty())
+            .put("state", intent.getStringExtra(CryonPlaybackService.EXTRA_STATE).orEmpty())
+            .put("playing", intent.getBooleanExtra(CryonPlaybackService.EXTRA_PLAYING, false))
+            .put("positionMs", intent.getLongExtra(CryonPlaybackService.EXTRA_POSITION_MS, 0L))
+            .put("durationMs", intent.getLongExtra(CryonPlaybackService.EXTRA_DURATION_MS, 0L))
+            .put("error", intent.getStringExtra(CryonPlaybackService.EXTRA_ERROR).orEmpty())
+        runOnUiThread {
+            if (this::webView.isInitialized) {
+                webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('cryon:native-playback', { detail: $payload }))", null)
             }
         }
     }
@@ -403,10 +555,54 @@ class MainActivity : AppCompatActivity() {
         handleBackGesture()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        pendingPlaybackReport?.let { outState.putString("pendingPlaybackReport", it) }
+        pendingUpdatePath?.let { outState.putString("pendingUpdatePath", it) }
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pendingUpdatePath != null && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls())) {
+            openUpdateInstaller()
+        }
+    }
+
+    private fun dispatchUpdateResult(error: String) {
+        if (this::webView.isInitialized) {
+            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('cryon:update-result', { detail: " + JSONObject.quote(error) + " }))", null)
+        }
+    }
+
+    private fun openUpdateInstaller() {
+        val path = pendingUpdatePath ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+                Toast.makeText(this, "Разрешите установку обновлений Cryon и вернитесь в приложение", Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+                return
+            }
+            val uri = FileProvider.getUriForFile(this, "$packageName.updates", File(path))
+            pendingUpdatePath = null
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+        } catch (error: Exception) {
+            pendingUpdatePath = null
+            dispatchUpdateResult(error.message ?: "Не удалось открыть установку обновления")
+            Toast.makeText(this, "Не удалось открыть установку обновления", Toast.LENGTH_LONG).show()
+        }
+    }
+
     override fun onDestroy() {
+        fileChooserCallback?.onReceiveValue(null)
+        fileChooserCallback = null
+        unregisterReceiver(playbackStateReceiver)
         if (this::mediaSession.isInitialized) mediaSession.release()
-        // Останавливаем Go-сервер и освобождаем SQLite.
-        Mobile.stop()
+        // Do not stop the loopback Go engine here: Media3 may still stream
+        // through it after the Activity/WebView was recreated or backgrounded.
+        // Android tears down the process together with the service when needed.
         if (this::webView.isInitialized) {
             webView.destroy()
         }

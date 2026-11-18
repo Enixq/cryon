@@ -36,6 +36,17 @@ type Service struct {
 	albumCache map[string]cachedAlbum
 }
 
+const (
+	youtubeSearchAttemptTimeout = 6 * time.Second
+	youtubeYtDlpStartDelay      = 700 * time.Millisecond
+)
+
+type searchAttemptResult struct {
+	name   string
+	tracks []domain.Track
+	err    error
+}
+
 var _ domain.MusicService = (*Service)(nil)
 
 func New(apiKey string) *Service {
@@ -132,45 +143,79 @@ func (s *Service) Search(ctx context.Context, query string) ([]domain.Track, err
 	if query == "" {
 		return []domain.Track{}, nil
 	}
-	log := logging.L()
-	if tracks, err := s.searchByAPI(ctx, query); err == nil && len(tracks) > 0 {
-		log.Debug("youtube: found via data api", "count", len(tracks))
-		return tracks, nil
-	} else if err != nil {
-		log.Warn("youtube: data api search failed", "err", err)
+	// Раньше пути шли строго один за другим под общим дедлайном core в 8 с.
+	// Один зависший InnerTube/HTML запрос на VPN съедал весь бюджет, поэтому
+	// рабочий yt-dlp даже не запускался. Ищем несколькими независимыми путями
+	// параллельно и берём первый непустой ответ; контекст сразу отменяет
+	// проигравшие запросы.
+	type searchAttempt struct {
+		name  string
+		delay time.Duration
+		run   func(context.Context, string) ([]domain.Track, error)
+	}
+	attempts := []searchAttempt{
+		{name: "innertube", run: s.searchByInnerTube},
+		{name: "page", run: s.searchByPage},
+		{name: "bing", run: func(ctx context.Context, q string) ([]domain.Track, error) {
+			results, err := fetchBingSearchWithRetry(ctx, q)
+			if err != nil {
+				return nil, err
+			}
+			return tracksFromBing(results), nil
+		}},
+		// yt-dlp даём короткую фору HTTP-путям, чтобы не поднимать внешний
+		// процесс в обычной ситуации, но не ждём их полного тайм-аута.
+		{name: "yt-dlp", delay: youtubeYtDlpStartDelay, run: s.searchByYtDlp},
+	}
+	if s.HasAPIKey() {
+		attempts = append([]searchAttempt{{name: "data-api", run: s.searchByAPI}}, attempts...)
 	}
 
-	// InnerTube — самый надёжный бесключевой путь (структурный JSON вместо
-	// парсинга HTML) и работает на Android без yt-dlp. Пробуем его сразу после
-	// официального API и до хрупкого скрейпа страницы/Bing.
-	if tracks, err := s.searchByInnerTube(ctx, query); err == nil && len(tracks) > 0 {
-		log.Debug("youtube: found via innertube", "count", len(tracks))
-		return tracks, nil
-	} else if err != nil {
-		log.Warn("youtube: innertube search failed", "err", err)
+	searchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan searchAttemptResult, len(attempts))
+	for _, attempt := range attempts {
+		go func(attempt searchAttempt) {
+			if attempt.delay > 0 {
+				timer := time.NewTimer(attempt.delay)
+				defer timer.Stop()
+				select {
+				case <-searchCtx.Done():
+					results <- searchAttemptResult{name: attempt.name, err: searchCtx.Err()}
+					return
+				case <-timer.C:
+				}
+			}
+			attemptCtx, stop := context.WithTimeout(searchCtx, youtubeSearchAttemptTimeout)
+			defer stop()
+			tracks, err := attempt.run(attemptCtx, query)
+			results <- searchAttemptResult{name: attempt.name, tracks: tracks, err: err}
+		}(attempt)
 	}
 
-	if tracks, err := s.searchByPage(ctx, query); err == nil && len(tracks) > 0 {
-		log.Debug("youtube: found via search page", "count", len(tracks))
-		return tracks, nil
-	} else if err != nil {
-		log.Warn("youtube: page search failed", "err", err)
-	}
-
-	results, err := fetchBingSearchWithRetry(ctx, query)
-	if err == nil && len(results) > 0 {
-		tracks := tracksFromBing(results)
-		if len(tracks) > 0 {
-			log.Debug("youtube: found via bing", "count", len(tracks))
-			return tracks, nil
+	var failures []string
+	emptyResult := false
+	for range attempts {
+		var result searchAttemptResult
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result = <-results:
+		}
+		if len(result.tracks) > 0 {
+			logging.L().Debug("youtube: found via search path", "path", result.name, "count", len(result.tracks))
+			return result.tracks, nil
+		}
+		if result.err != nil {
+			failures = append(failures, result.name+": "+result.err.Error())
+		} else {
+			emptyResult = true
 		}
 	}
-	if err != nil {
-		log.Warn("youtube: bing search failed", "err", err)
+	if emptyResult {
+		return []domain.Track{}, nil
 	}
-
-	log.Debug("youtube: falling back to yt-dlp search")
-	return s.searchByYtDlp(ctx, query)
+	return nil, fmt.Errorf("поиск YouTube не дал результатов (%s)", strings.Join(failures, "; "))
 }
 
 // searchByAPI использует YouTube Data API v3. Это предпочтительный путь для

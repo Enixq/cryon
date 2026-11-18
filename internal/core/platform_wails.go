@@ -36,5 +36,5 @@ func (h *wailsHost) PickDirectory(title string) (string, error) {
 // Startup). На Android-сборке файл (и этот метод) исключён тегом `!android`:
 // мобильный код использует StartMobileServer, который сам ставит sseHost.
 func (a *App) UseWailsRuntime() {
-	a.platform = &wailsHost{app: a}
+	a.platform = newEventMirroringHost(&wailsHost{app: a}, a.eventHub())
 }

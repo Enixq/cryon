@@ -13,10 +13,11 @@ package mobile
 import (
 	"Cryon2/internal/core"
 	"Cryon2/internal/logging"
+	"Cryon2/internal/update"
 	"context"
 	"embed"
-	"errors"
 	"io/fs"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -25,23 +26,23 @@ import (
 var assets embed.FS
 
 var (
-	mu      sync.Mutex
-	app     *core.App
-	stopSrv func()
-	cancel  context.CancelFunc
+	mu        sync.Mutex
+	app       *core.App
+	serverURL string
+	stopSrv   func()
+	cancel    context.CancelFunc
 )
 
 // Start инициализирует бэкенд и поднимает встроенный сервер на петле.
 // dataDir — каталог данных Android (context.getFilesDir()); там SQLite
 // хранит библиотеку, историю и настройки. Возвращает базовый URL вида
 // "http://127.0.0.1:<порт>", который WebView грузит как главную страницу.
-// Повторный вызов без Stop — ошибка (Kotlin-оболочка зовёт Start один раз
-// на процесс; Stop — в onDestroy).
+// Повторный вызов возвращает адрес уже работающего сервера.
 func Start(dataDir string) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if app != nil {
-		return "", errAlreadyStarted
+		return serverURL, nil
 	}
 
 	// КЛЮЧЕВОЕ для Android: перенаправляем каталог данных в filesDir приложения
@@ -74,6 +75,7 @@ func Start(dataDir string) (string, error) {
 	a.Startup(ctx)
 
 	app = a
+	serverURL = baseURL
 	stopSrv = stop
 	cancel = cancelFn
 	return baseURL, nil
@@ -96,6 +98,9 @@ func Stop() {
 		app.Shutdown(nil)
 		app = nil
 	}
+	serverURL = ""
 }
 
-var errAlreadyStarted = errors.New("mobile: сервер уже запущен")
+func PrepareUpdate(dataDir string) (string, error) {
+	return update.Download(context.Background(), filepath.Join(dataDir, "updates"))
+}

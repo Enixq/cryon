@@ -1,15 +1,17 @@
 import { FolderOpen, HardDrive, Play, RefreshCw, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useTrackListPlayer } from "../store/playerStore";
 import {
   addLocalFolder,
+  enqueueLocalLibraryRescan,
   listLocalFolders,
   listLocalTracks,
   pickMusicFolder,
   removeLocalFolder,
   rescanLocalLibrary,
 } from "../shared/api/client";
+import { hasApiV1Runtime, listJobsV1 } from "../shared/api/v1";
 import { TrackRow } from "../shared/ui/TrackRow";
 import { formatDuration, pluralWithCount } from "../shared/lib/format";
 
@@ -17,6 +19,7 @@ export function LocalMusicPage() {
   const { playTrack, isPlaying, activeTrackId } = useTrackListPlayer();
   const queryClient = useQueryClient();
   const [folderPendingRemoval, setFolderPendingRemoval] = useState<string | null>(null);
+  const completedScanRef = useRef<string | null>(null);
 
   const { data: tracks = [] } = useQuery({
     queryKey: ["localTracks"],
@@ -50,12 +53,31 @@ export function LocalMusicPage() {
   });
 
   const rescanMutation = useMutation({
-    mutationFn: () => rescanLocalLibrary(),
+    mutationFn: async () => {
+      const job = await enqueueLocalLibraryRescan();
+      if (job) return job;
+      await rescanLocalLibrary();
+      return null;
+    },
     onSuccess: refresh,
   });
 
+  const { data: scanJobs = [] } = useQuery({
+    queryKey: ["jobs", "library.rescan"],
+    queryFn: listJobsV1,
+    enabled: hasApiV1Runtime(),
+    refetchInterval: (query) => query.state.data?.some((job) => job.kind === "library.rescan" && (job.state === "queued" || job.state === "running" || job.state === "retrying")) ? 1000 : false,
+  });
+  const activeScan = scanJobs.find((job) => job.kind === "library.rescan" && (job.state === "queued" || job.state === "running" || job.state === "retrying"));
+  const completedScan = scanJobs.find((job) => job.kind === "library.rescan" && job.state === "completed");
+  useEffect(() => {
+    if (!completedScan || completedScanRef.current === completedScan.id) return;
+    completedScanRef.current = completedScan.id;
+    refresh();
+  }, [completedScan?.id]);
+
   const totalSeconds = tracks.reduce((sum, t) => sum + t.duration, 0);
-  const scanning = addMutation.isPending || rescanMutation.isPending;
+  const scanning = addMutation.isPending || rescanMutation.isPending || Boolean(activeScan);
 
   return (
     <div className="flex flex-col gap-6 py-2">
@@ -102,7 +124,7 @@ export function LocalMusicPage() {
           className="flex items-center gap-2 rounded-xl bg-white/8 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/12 disabled:opacity-50"
         >
           <RefreshCw size={16} className={scanning ? "animate-spin" : ""} />
-          {scanning ? "Сканирование…" : "Пересканировать"}
+          {activeScan?.message || (scanning ? "Сканирование…" : "Пересканировать")}
         </button>
       </div>
 

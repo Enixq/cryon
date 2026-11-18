@@ -32,3 +32,43 @@ func (nullHost) Emit(string, ...interface{})             {}
 func (nullHost) OpenURL(string)                          {}
 func (nullHost) PickFile(_, _, _ string) (string, error) { return "", nil }
 func (nullHost) PickDirectory(string) (string, error)    { return "", nil }
+
+// eventMirroringHost keeps the legacy platform-specific event channel and the
+// public API v1 event stream in sync while clients migrate between them.
+type eventMirroringHost struct {
+	target platformHost
+	events *apiEventHub
+}
+
+func newEventMirroringHost(target platformHost, events *apiEventHub) platformHost {
+	return &eventMirroringHost{target: target, events: events}
+}
+
+func (h *eventMirroringHost) Emit(event string, data ...interface{}) {
+	if h.events != nil {
+		h.events.publish(event, data...)
+	}
+	if h.target != nil {
+		h.target.Emit(event, data...)
+	}
+}
+
+func (h *eventMirroringHost) OpenURL(url string) {
+	if h.target != nil {
+		h.target.OpenURL(url)
+	}
+}
+
+func (h *eventMirroringHost) PickFile(title, filterName, filterPattern string) (string, error) {
+	if h.target == nil {
+		return "", nil
+	}
+	return h.target.PickFile(title, filterName, filterPattern)
+}
+
+func (h *eventMirroringHost) PickDirectory(title string) (string, error) {
+	if h.target == nil {
+		return "", nil
+	}
+	return h.target.PickDirectory(title)
+}

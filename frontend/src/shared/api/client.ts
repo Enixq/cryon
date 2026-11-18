@@ -7,6 +7,41 @@ import type { ArtistPage } from "../types";
 import { mapArtistInfo, mapTrack, mapTracks, splitTrackId, toBackendTrack } from "./mappers";
 import * as App from "../../../wailsjs/go/main/App";
 import { tracks as mockTracks } from "../../mocks/data";
+import {
+  addHistoryV1,
+  addPlaylistTrackV1,
+  clearHistoryV1,
+  createPlaylistV1,
+  deletePlaylistV1,
+  enqueueJobV1,
+  favoriteTracksV1,
+  hasApiV1Runtime,
+  listHistoryV1,
+  listPlaylistsV1,
+  localFoldersV1,
+  localTracksV1,
+  dailyMixV1,
+  newReleasesV1,
+  playlistTracksV1,
+  recommendationsV1,
+  relatedTracksV1,
+  removePlaylistTrackV1,
+  reorderPlaylistTracksV1,
+  searchV1,
+  updatePlaylistV1,
+  validateSourceV1,
+  weeklyDiscoveriesV1,
+  listSourcesV1,
+  playbackPauseV1,
+  playbackPlayV1,
+  playbackResumeV1,
+  playbackSeekV1,
+  playbackSetVolumeV1,
+  playbackStatusV1,
+  playbackStopV1,
+  type BackgroundJob,
+  type PlaylistV1,
+} from "./v1";
 
 export interface LocalAccount { id: string; login: string; email: string; isGuest: boolean; }
 
@@ -78,6 +113,7 @@ export async function search(source: string, query: string): Promise<Track[]> {
   if (!isWailsRuntime()) {
     return mockSearch(query).filter((t) => t.source === source);
   }
+  if (hasApiV1Runtime()) return searchV1(query, source);
   const result = await App.Search(source, query);
   return mapTracks(result);
 }
@@ -87,6 +123,7 @@ export async function searchAll(query: string): Promise<Track[]> {
   if (!isWailsRuntime()) {
     return mockSearch(query);
   }
+  if (hasApiV1Runtime()) return searchV1(query);
   const result = await App.SearchAll(query);
   return mapTracks(result);
 }
@@ -96,6 +133,7 @@ export async function searchInSources(query: string, sources: SourceId[]): Promi
   if (!isWailsRuntime()) {
     return mockSearch(query).filter((track) => sources.length === 0 || sources.includes(track.source));
   }
+  if (hasApiV1Runtime() && sources.length <= 1) return searchV1(query, sources[0]);
   return mapTracks(await App.SearchInSources(query, sources));
 }
 
@@ -206,6 +244,7 @@ export async function listFavorites(): Promise<Track[]> {
   if (!isWailsRuntime()) {
     return mockTracks.filter((t) => t.liked).map((track) => ({ ...track, liked: true }));
   }
+  if (hasApiV1Runtime()) return (await favoriteTracksV1()).map((track) => ({ ...track, liked: true }));
   const result = await App.ListFavorites();
   return mapTracks(result).map((track) => ({ ...track, liked: true }));
 }
@@ -214,6 +253,7 @@ export interface FavoritesImportResult {
   source: string;
   found: number;
   imported: number;
+  skipped: number;
 }
 
 /** Импортировать любимые треки подключённого внешнего сервиса в Cryon. */
@@ -225,10 +265,14 @@ export async function importFavorites(source: SourceId): Promise<FavoritesImport
 }
 
 /** Импорт liked songs из официальной локальной выгрузки Spotify, без OAuth. */
-export async function importSpotifyLibraryExport(): Promise<FavoritesImportResult | null> {
+export async function previewSpotifyLibraryExport(): Promise<{ path: string; tracks: Track[] } | null> {
   if (!isWailsRuntime()) return null;
   const path = await App.PickSpotifyLibraryExport();
-  return path ? await App.ImportSpotifyLibraryExport(path) : null;
+  return path ? { path, tracks: mapTracks(await App.PreviewSpotifyLibraryExport(path)) } : null;
+}
+
+export async function importSpotifyLibraryExport(selection: { path: string; trackIds: string[] }): Promise<FavoritesImportResult> {
+  return App.ImportSelectedSpotifyLibraryExport(selection.path, selection.trackIds.map((id) => splitTrackId(id).rawId));
 }
 
 /** Открыть браузер и начать OAuth-вход Spotify (Authorization Code + PKCE). */
@@ -248,6 +292,7 @@ export async function startSpotifyLogin(): Promise<void> {
 export async function listRecommendations(limit = 20): Promise<Track[]> {
   if (!isWailsRuntime()) return [];
   try {
+    if (hasApiV1Runtime()) return await recommendationsV1(limit);
     return mapTracks(await App.ListRecommendations(limit));
   } catch {
     return [];
@@ -360,6 +405,7 @@ export async function setRecoFeedback(
 export async function listRelatedTracks(seed: Track, limit = 15): Promise<Track[]> {
   if (!isWailsRuntime()) return [];
   try {
+    if (hasApiV1Runtime()) return await relatedTracksV1(seed, limit);
     return mapTracks(await App.ListRelatedTracks(toBackendTrack(seed), limit));
   } catch {
     return [];
@@ -370,6 +416,7 @@ export async function listRelatedTracks(seed: Track, limit = 15): Promise<Track[
 export async function listDailyMix(limit = 20): Promise<Track[]> {
   if (!isWailsRuntime()) return [];
   try {
+    if (hasApiV1Runtime()) return await dailyMixV1(limit);
     return mapTracks(await App.ListDailyMix(limit));
   } catch {
     return [];
@@ -380,6 +427,7 @@ export async function listDailyMix(limit = 20): Promise<Track[]> {
 export async function listWeeklyDiscoveries(limit = 20): Promise<Track[]> {
   if (!isWailsRuntime()) return [];
   try {
+    if (hasApiV1Runtime()) return await weeklyDiscoveriesV1(limit);
     return mapTracks(await App.ListWeeklyDiscoveries(limit));
   } catch {
     return [];
@@ -394,6 +442,7 @@ export async function listWeeklyDiscoveries(limit = 20): Promise<Track[]> {
 export async function listNewReleases(limit = 40): Promise<Track[]> {
   if (!isWailsRuntime()) return [];
   try {
+    if (hasApiV1Runtime()) return await newReleasesV1(limit);
     return mapTracks(await App.ListNewReleases(limit));
   } catch {
     return [];
@@ -434,12 +483,14 @@ export async function listLocalTracks(): Promise<Track[]> {
   if (!isWailsRuntime()) {
     return mockTracks.filter((t) => t.source === "local");
   }
+  if (hasApiV1Runtime()) return localTracksV1();
   return mapTracks(await App.ListLocalTracks());
 }
 
 /** Папки-источники локальной музыки. */
 export async function listLocalFolders(): Promise<string[]> {
   if (!isWailsRuntime()) return [];
+  if (hasApiV1Runtime()) return localFoldersV1();
   return App.ListLocalFolders();
 }
 
@@ -500,6 +551,13 @@ export async function removeLocalFolder(path: string): Promise<Track[]> {
 export async function rescanLocalLibrary(): Promise<Track[]> {
   if (!isWailsRuntime()) return [];
   return mapTracks(await App.RescanLocalLibrary());
+}
+
+/** Queue a local-library scan outside the UI runtime. New clients should use
+ * this rather than waiting on a potentially long RPC call. */
+export async function enqueueLocalLibraryRescan(): Promise<BackgroundJob | null> {
+  if (!isWailsRuntime() || !hasApiV1Runtime()) return null;
+  return enqueueJobV1("library.rescan", 50);
 }
 
 /** Обложка локального трека как data-URL (пусто, если нет). */
@@ -786,7 +844,7 @@ export async function listSourceStatus(): Promise<SourceStatusDto[]> {
     ];
   }
   try {
-    const rows = await App.ListSourceStatus();
+    const rows = hasApiV1Runtime() ? await listSourcesV1() : await App.ListSourceStatus();
     if (!Array.isArray(rows)) return [];
     return rows.map((r) => {
       const connected = Boolean(r.connected);
@@ -805,6 +863,10 @@ export async function listSourceStatus(): Promise<SourceStatusDto[]> {
 /** Проверить сохранённые учётные данные источника реальным API. */
 export async function validateSource(source: SourceId): Promise<void> {
   if (!isWailsRuntime()) return;
+  if (hasApiV1Runtime()) {
+    await validateSourceV1(source);
+    return;
+  }
   await App.ValidateSource(source);
 }
 
@@ -838,6 +900,11 @@ export async function addHistory(track: Track): Promise<void> {
     emitHistoryChanged();
     return;
   }
+  if (hasApiV1Runtime()) {
+    await addHistoryV1(track);
+    emitHistoryChanged();
+    return;
+  }
   await App.AddHistory(toBackendTrack(track));
   emitHistoryChanged();
 }
@@ -845,6 +912,13 @@ export async function addHistory(track: Track): Promise<void> {
 /** История прослушивания: список записей (свежие сверху). */
 export async function listHistory(): Promise<HistoryEntryDto[]> {
   if (!isWailsRuntime()) return readMockHistory().map((entry) => ({ ...entry, track: { ...entry.track } }));
+  if (hasApiV1Runtime()) {
+    const rows = await listHistoryV1();
+    return rows.map((row) => ({
+      track: row.track,
+      playedAt: new Date(row.playedAtMs).toISOString(),
+    }));
+  }
   const rows = await App.ListHistory();
   if (!Array.isArray(rows)) return [];
   return rows.map((r) => ({
@@ -857,6 +931,11 @@ export async function listHistory(): Promise<HistoryEntryDto[]> {
 export async function clearHistory(): Promise<void> {
   if (!isWailsRuntime()) {
     saveMockHistory([]);
+    emitHistoryChanged();
+    return;
+  }
+  if (hasApiV1Runtime()) {
+    await clearHistoryV1();
     emitHistoryChanged();
     return;
   }
@@ -955,9 +1034,14 @@ function mapPlaylist(p: {
   };
 }
 
+function mapPlaylistV1(p: PlaylistV1): UserPlaylistDto {
+  return mapPlaylist(p);
+}
+
 /** Список пользовательских плейлистов. */
 export async function listPlaylists(): Promise<UserPlaylistDto[]> {
   if (!isWailsRuntime()) return mockUserPlaylists.map((playlist) => ({ ...playlist, coverUrls: [...playlist.coverUrls] }));
+  if (hasApiV1Runtime()) return (await listPlaylistsV1()).map(mapPlaylistV1);
   const rows = await App.ListPlaylists();
   if (!Array.isArray(rows)) return [];
   return rows.map(mapPlaylist);
@@ -980,6 +1064,7 @@ export async function createPlaylist(
     mockPlaylistTracks.set(playlist.id, []);
     return { ...playlist, coverUrls: [] };
   }
+  if (hasApiV1Runtime()) return mapPlaylistV1(await createPlaylistV1(title, description));
   const p = await App.CreatePlaylist(title, description);
   return mapPlaylist(p);
 }
@@ -996,6 +1081,10 @@ export async function updatePlaylist(
     );
     return;
   }
+  if (hasApiV1Runtime()) {
+    await updatePlaylistV1(id, title, description);
+    return;
+  }
   await App.UpdatePlaylist(id, title, description);
 }
 
@@ -1006,12 +1095,17 @@ export async function deletePlaylist(id: string): Promise<void> {
     mockPlaylistTracks.delete(id);
     return;
   }
+  if (hasApiV1Runtime()) {
+    await deletePlaylistV1(id);
+    return;
+  }
   await App.DeletePlaylist(id);
 }
 
 /** Треки плейлиста. */
 export async function listPlaylistTracks(playlistId: string): Promise<Track[]> {
   if (!isWailsRuntime()) return mockPlaylistTracks.get(playlistId) ?? [];
+  if (hasApiV1Runtime()) return playlistTracksV1(playlistId);
   return mapTracks(await App.ListPlaylistTracks(playlistId));
 }
 
@@ -1036,6 +1130,10 @@ export async function addTrackToPlaylist(
     }
     return;
   }
+  if (hasApiV1Runtime()) {
+    await addPlaylistTrackV1(playlistId, track);
+    return;
+  }
   await App.AddTrackToPlaylist(playlistId, toBackendTrack(track));
 }
 
@@ -1046,6 +1144,10 @@ export async function removeTrackFromPlaylist(
 ): Promise<void> {
   if (!isWailsRuntime()) return;
   const { source, rawId } = splitTrackId(compositeId);
+  if (hasApiV1Runtime()) {
+    await removePlaylistTrackV1(playlistId, source, rawId);
+    return;
+  }
   await App.RemoveTrackFromPlaylist(playlistId, source, rawId);
 }
 
@@ -1062,6 +1164,10 @@ export async function reorderPlaylistTracks(
     const { source, rawId } = splitTrackId(compositeId);
     return { service: source, trackId: rawId };
   });
+  if (hasApiV1Runtime()) {
+    await reorderPlaylistTracksV1(playlistId, keys);
+    return;
+  }
   await App.ReorderPlaylistTracks(playlistId, keys);
 }
 
@@ -1070,6 +1176,14 @@ export async function reorderPlaylistTracks(
 /** Доступно ли воспроизведение через mpv. Если нет — играем в <audio>. */
 export async function playerBackendAvailable(): Promise<boolean> {
   if (!isWailsRuntime()) return false;
+  if (hasApiV1Runtime()) {
+    try {
+      return (await playbackStatusV1()).available;
+    } catch {
+      // Старый binding остаётся совместимым fallback, пока desktop-маршрут
+      // проходит постепенную проверку на установках пользователей.
+    }
+  }
   try {
     return await App.PlayerBackendAvailable();
   } catch {
@@ -1079,31 +1193,79 @@ export async function playerBackendAvailable(): Promise<boolean> {
 
 export async function playerPlay(compositeId: string, streamUrl: string): Promise<void> {
   if (!isWailsRuntime()) return;
+  if (hasApiV1Runtime()) {
+    try {
+      await playbackPlayV1(compositeId, streamUrl);
+      return;
+    } catch {
+      // Compatibility fallback below.
+    }
+  }
   await App.PlayerPlay(compositeId, streamUrl);
 }
 
 export async function playerPause(): Promise<void> {
   if (!isWailsRuntime()) return;
+  if (hasApiV1Runtime()) {
+    try {
+      await playbackPauseV1();
+      return;
+    } catch {
+      // Compatibility fallback below.
+    }
+  }
   await App.PlayerPause();
 }
 
 export async function playerResume(): Promise<void> {
   if (!isWailsRuntime()) return;
+  if (hasApiV1Runtime()) {
+    try {
+      await playbackResumeV1();
+      return;
+    } catch {
+      // Compatibility fallback below.
+    }
+  }
   await App.PlayerResume();
 }
 
 export async function playerStop(): Promise<void> {
   if (!isWailsRuntime()) return;
+  if (hasApiV1Runtime()) {
+    try {
+      await playbackStopV1();
+      return;
+    } catch {
+      // Compatibility fallback below.
+    }
+  }
   await App.PlayerStop();
 }
 
 export async function playerSeek(positionS: number): Promise<void> {
   if (!isWailsRuntime()) return;
+  if (hasApiV1Runtime()) {
+    try {
+      await playbackSeekV1(positionS);
+      return;
+    } catch {
+      // Compatibility fallback below.
+    }
+  }
   await App.PlayerSeek(positionS);
 }
 
 export async function playerSetVolume(volume: number): Promise<void> {
   if (!isWailsRuntime()) return;
+  if (hasApiV1Runtime()) {
+    try {
+      await playbackSetVolumeV1(volume);
+      return;
+    } catch {
+      // Compatibility fallback below.
+    }
+  }
   await App.PlayerSetVolume(volume);
 }
 
@@ -1137,6 +1299,19 @@ export async function playerStatus(): Promise<{
   eof: boolean;
 } | null> {
   if (!isWailsRuntime()) return null;
+  if (hasApiV1Runtime()) {
+    try {
+      const status = await playbackStatusV1();
+      return {
+        state: status.state,
+        positionS: status.positionS,
+        durationS: status.durationS,
+        eof: status.eof,
+      };
+    } catch {
+      // Compatibility fallback below.
+    }
+  }
   try {
     const status = await App.PlayerStatus();
     return {

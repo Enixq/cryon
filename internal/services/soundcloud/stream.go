@@ -33,6 +33,7 @@ var scriptSrcPattern = regexp.MustCompile(`<script[^>]+src="([^"]+)"`)
 type StreamInfo struct {
 	URL        string
 	MimeType   string
+	Protocol   string
 	DurationMs int
 	ArtworkURL string
 }
@@ -172,6 +173,7 @@ func (s *Service) ResolveStream(ctx context.Context, trackRef string) (*StreamIn
 	return &StreamInfo{
 		URL:        streamURL,
 		MimeType:   chosen.Format.MimeType,
+		Protocol:   chosen.Format.Protocol,
 		DurationMs: track.DurationMs,
 		ArtworkURL: normalizeArtwork(track.ArtworkURL, s.ensureArtworkHost(ctx)),
 	}, nil

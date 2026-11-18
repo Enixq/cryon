@@ -100,7 +100,7 @@ export function SearchPage() {
   const trackQueries = useQueries({
     queries: activeSources.map((source) => ({
       queryKey: ["search", trimmed, source],
-      queryFn: () => search(source, trimmed).catch(() => []),
+      queryFn: () => search(source, trimmed),
       retry: 0,
       enabled: trimmed.length > 0,
     })),

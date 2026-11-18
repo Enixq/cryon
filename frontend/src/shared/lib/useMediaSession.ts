@@ -14,6 +14,7 @@
 import { useEffect } from "react";
 import { usePlayerStore } from "../../store/playerStore";
 import { useTrackCover } from "./useTrackCover";
+import { hasNativeAndroidPlayer } from "./nativeAndroidPlayer";
 
 // Смещение перемотки по умолчанию для seekbackward/seekforward (сек).
 const SEEK_STEP = 10;
@@ -84,12 +85,13 @@ export function useMediaSession(): void {
   // Метаданные текущего трека (название, артист, альбом, обложка).
   useEffect(() => {
     const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean, artworkUrl: string, duration: number, position: number, quality: string, liked: boolean, radio: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
+    const nativePlayerOwnsSession = hasNativeAndroidPlayer();
     if (!track) {
-      nativeBridge?.clearNowPlaying?.();
+      if (!nativePlayerOwnsSession) nativeBridge?.clearNowPlaying?.();
       if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
       return;
     }
-    nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying, coverUrl ?? "", duration, progress, track.quality ?? "", Boolean(track.liked), radio);
+    if (!nativePlayerOwnsSession) nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying, coverUrl ?? "", duration, progress, track.quality ?? "", Boolean(track.liked), radio);
     if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title,
@@ -101,8 +103,10 @@ export function useMediaSession(): void {
 
   useEffect(() => {
     const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean, artworkUrl: string, duration: number, position: number, quality: string, liked: boolean, radio: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
-    if (track) nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying, coverUrl ?? "", duration, progress, track.quality ?? "", Boolean(track.liked), radio);
-    else nativeBridge?.clearNowPlaying?.();
+    if (!hasNativeAndroidPlayer()) {
+      if (track) nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying, coverUrl ?? "", duration, progress, track.quality ?? "", Boolean(track.liked), radio);
+      else nativeBridge?.clearNowPlaying?.();
+    }
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.playbackState = track ? (isPlaying ? "playing" : "paused") : "none";
   }, [isPlaying, track, coverUrl, radio, progress, duration]);

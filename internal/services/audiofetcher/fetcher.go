@@ -59,23 +59,101 @@ func newYouTubeMetadataClient() *http.Client {
 
 const minimumAudioBitrate = 96000
 
+type audioStreamAttempt struct {
+	name    string
+	timeout time.Duration
+	resolve func(context.Context) (*AudioStream, error)
+}
+
+type audioStreamResult struct {
+	name   string
+	stream *AudioStream
+	err    error
+}
+
+// raceAudioStreams returns the first usable stream from independent resolvers.
+// A blocked YouTube endpoint must not prevent another supported client from
+// resolving the same video.
+func raceAudioStreams(ctx context.Context, attempts []audioStreamAttempt) (*AudioStream, error) {
+	raceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan audioStreamResult, len(attempts))
+	for _, attempt := range attempts {
+		go func(attempt audioStreamAttempt) {
+			attemptCtx, stop := context.WithTimeout(raceCtx, attempt.timeout)
+			defer stop()
+			stream, err := attempt.resolve(attemptCtx)
+			results <- audioStreamResult{name: attempt.name, stream: stream, err: err}
+		}(attempt)
+	}
+
+	failures := make([]string, 0, len(attempts))
+	for range attempts {
+		var result audioStreamResult
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result = <-results:
+		}
+		if result.err == nil && result.stream != nil && result.stream.URL != "" {
+			return result.stream, nil
+		}
+		if result.err != nil {
+			failures = append(failures, result.name+": "+result.err.Error())
+		}
+	}
+	if len(failures) == 0 {
+		return nil, fmt.Errorf("аудиопоток YouTube не найден")
+	}
+	return nil, fmt.Errorf("аудиопоток YouTube не получен (%s)", strings.Join(failures, "; "))
+}
+
 // GetYouTubeAudioStream извлекает прямой аудиопоток видео YouTube по его ID.
 // Работает без API-ключа. Первичная попытка (kkdai/youtube) ограничена
 // собственным под-дедлайном: даже если она зависнет или упадёт, у резолвера
 // останется бюджет на бесключевые фолбэки (InnerTube → Piped → yt-dlp) в
 // пределах общего дедлайна, который ставит вызывающий код (core.GetAudioStream).
 func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, error) {
-	primaryCtx, cancelPrimary := context.WithTimeout(ctx, 22*time.Second)
-	stream, err := getYouTubeAudioStreamPrimary(primaryCtx, videoID)
-	cancelPrimary()
-	if err == nil {
+	stream, primaryErr := raceAudioStreams(ctx, []audioStreamAttempt{
+		{
+			name:    "metadata",
+			timeout: 18 * time.Second,
+			resolve: func(ctx context.Context) (*AudioStream, error) {
+				return getYouTubeAudioStreamPrimary(ctx, videoID)
+			},
+		},
+		{
+			name:    "innertube",
+			timeout: 18 * time.Second,
+			resolve: func(ctx context.Context) (*AudioStream, error) {
+				return getYouTubeAudioStreamWithInnerTube(ctx, videoID)
+			},
+		},
+	})
+	if primaryErr == nil {
 		return stream, nil
 	}
 
-	if fallback, fallbackErr := getYouTubeAudioStreamFallback(ctx, videoID); fallbackErr == nil {
+	fallback, fallbackErr := raceAudioStreams(ctx, []audioStreamAttempt{
+		{
+			name:    "piped",
+			timeout: 12 * time.Second,
+			resolve: func(ctx context.Context) (*AudioStream, error) {
+				return getYouTubeAudioStreamWithPiped(ctx, videoID)
+			},
+		},
+		{
+			name:    "yt-dlp",
+			timeout: 20 * time.Second,
+			resolve: func(ctx context.Context) (*AudioStream, error) {
+				return getYouTubeAudioStreamWithYtDlp(ctx, videoID)
+			},
+		},
+	})
+	if fallbackErr == nil {
 		return fallback, nil
 	}
-	return nil, fmt.Errorf("не удалось получить аудиопоток YouTube: %w", err)
+	return nil, fmt.Errorf("не удалось получить аудиопоток YouTube: основной путь: %v; резервный путь: %w", primaryErr, fallbackErr)
 }
 
 // getYouTubeAudioStreamPrimary — первичный путь через kkdai/youtube (клиент

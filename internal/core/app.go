@@ -2,6 +2,7 @@ package core
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 
 	"Cryon2/internal/config"
 	"Cryon2/internal/domain"
+	"Cryon2/internal/identity"
 	"Cryon2/internal/logging"
 	"Cryon2/internal/playback"
 	"Cryon2/internal/recommendations"
@@ -42,6 +44,7 @@ const appName = "Cryon2"
 const sourceStatusChangedEvent = "source:status-changed"
 const favoritesChangedEvent = "favorites:changed"
 const notificationsChangedEvent = "notifications:changed"
+const keyPlaybackPreferences = "playback.selectionPreferences"
 
 // recoChangedEvent — профиль вкусов изменился (пользователь оценил трек).
 // Фронтенд по нему сбрасывает кэш всех подборок: оценка должна отражаться
@@ -54,6 +57,7 @@ type FavoritesImportResult struct {
 	Source   string `json:"source"`
 	Found    int    `json:"found"`
 	Imported int    `json:"imported"`
+	Skipped  int    `json:"skipped"`
 }
 
 // AccountConnectionStatus is a token-safe description of an external music
@@ -72,6 +76,15 @@ type AccountConnectionStatus struct {
 // остаются на компьютере и не синхронизируются с внешними сервисами.
 type LocalAccount = store.Account
 
+// PlaybackPreferences are the user-facing rules for choosing among equivalent
+// recordings from different services.
+type PlaybackPreferences struct {
+	PreferLocal    bool           `json:"preferLocal"`
+	PreferExplicit bool           `json:"preferExplicit"`
+	OfficialOnly   bool           `json:"officialOnly"`
+	SourcePriority map[string]int `json:"sourcePriority"`
+}
+
 // notifCounter обеспечивает уникальность id оповещений при генерации в один
 // и тот же наносекундный момент.
 var notifCounter uint64
@@ -80,16 +93,21 @@ var notifCounter uint64
 // и локальное хранилище. Методы с большой буквы доступны фронтенду
 // через Wails-биндинги.
 type App struct {
-	ctx      context.Context
-	cfg      config.Config
-	registry map[domain.ServiceID]domain.MusicService
-	local    *local.Service
-	player   *playback.Controller
-	store    store.Store
-	reco     *recommendations.Engine
-	lyrics   *lyrics.Client
-	mu       sync.Mutex
-	statusMu sync.RWMutex
+	ctx          context.Context
+	startupError string
+	workerCancel context.CancelFunc
+	workerDone   chan struct{}
+	cfg          config.Config
+	registry     map[domain.ServiceID]domain.MusicService
+	local        *local.Service
+	player       *playback.Controller
+	store        store.Store
+	reco         *recommendations.Engine
+	lyrics       *lyrics.Client
+	mu           sync.Mutex
+	eventsMu     sync.Mutex
+	statusMu     sync.RWMutex
+	events       *apiEventHub
 	// validationErrors хранит только результат явной проверки API в текущем
 	// запуске. Это не подменяет конфигурационный статус, а дополняет его.
 	validationErrors map[domain.ServiceID]string
@@ -118,7 +136,9 @@ func NewApp() *App {
 		validationErrors: make(map[domain.ServiceID]string),
 		runtimeErrors:    make(map[domain.ServiceID]string),
 		platform:         nullHost{}, // десктоп заменит на wailsHost в main
+		events:           newAPIEventHub(),
 	}
+	app.platform = newEventMirroringHost(app.platform, app.events)
 	app.lyrics = lyrics.New()
 	app.oauth = newOAuthCoordinator(app)
 	st, err := storeSqlite.New(appName)
@@ -142,6 +162,8 @@ func (a *App) startup(ctx context.Context) {
 	if a.store != nil {
 		if err := a.store.Init(ctx); err != nil {
 			logging.L().Error("не удалось инициализировать БД", "err", err)
+			a.startupError = err.Error()
+			return
 		} else {
 			a.loadLocalLibraryCache(ctx)
 			a.addDefaultMusicFolder(ctx)
@@ -149,10 +171,16 @@ func (a *App) startup(ctx context.Context) {
 			a.restoreLastFMKey(ctx)
 			a.restoreServiceCredentials(ctx)
 		}
+	} else {
+		a.startupError = "хранилище недоступно"
+		return
 	}
 	logging.L().Info("Cryon2 запущен")
 	// Периодический live-контроль доступности источников (задача 38).
 	a.startHealthChecks(ctx)
+	// Durable jobs execute outside UI runtimes and therefore survive WebView
+	// renderer recreation on Android.
+	a.startJobWorker(ctx)
 	// LAN-сервер для телефона (только сборка `wails build -tags cryonlan`;
 	// иначе no-op из lanserver_stub.go).
 	a.startLANServer()
@@ -247,11 +275,8 @@ func (a *App) ImportFavorites(source string) (FavoritesImportResult, error) {
 		}
 		_ = refreshed
 		result.Found = len(tracks)
-		for _, track := range tracks {
-			if err := a.store.FavoriteAdd(a.ctx, track); err != nil {
-				return result, err
-			}
-			result.Imported++
+		if err := a.importFavoriteTracks(tracks, &result); err != nil {
+			return result, err
 		}
 		a.platform.Emit(favoritesChangedEvent)
 		a.pushNotification("success", "Импорт Spotify завершён", fmt.Sprintf("Обработано треков: %d из %d.", result.Imported, result.Found))
@@ -270,11 +295,8 @@ func (a *App) ImportFavorites(source string) (FavoritesImportResult, error) {
 		return result, err
 	}
 	result.Found = len(tracks)
-	for _, track := range tracks {
-		if err := a.store.FavoriteAdd(a.ctx, track); err != nil {
-			return result, fmt.Errorf("не удалось сохранить «%s»: %w", track.Title, err)
-		}
-		result.Imported++
+	if err := a.importFavoriteTracks(tracks, &result); err != nil {
+		return result, err
 	}
 	a.platform.Emit(favoritesChangedEvent)
 	a.pushNotification("success", "Импорт избранного завершён", fmt.Sprintf("Yandex Music: обработано треков: %d из %d; дубликаты пропущены.", result.Imported, result.Found))
@@ -292,9 +314,27 @@ func (a *App) PickSpotifyLibraryExport() (string, error) {
 	)
 }
 
+// PreviewSpotifyLibraryExport reads the selected export without changing the library.
+func (a *App) PreviewSpotifyLibraryExport(path string) ([]domain.Track, error) {
+	return spotifyLibraryTracks(path)
+}
+
 // ImportSpotifyLibraryExport импортирует liked songs из официальной выгрузки
 // Spotify. Файл остаётся на устройстве и никуда не загружается.
 func (a *App) ImportSpotifyLibraryExport(path string) (FavoritesImportResult, error) {
+	return a.importSpotifyLibrarySelection(path, nil)
+}
+
+// ImportSelectedSpotifyLibraryExport imports only track IDs selected in the preview.
+func (a *App) ImportSelectedSpotifyLibraryExport(path string, trackIDs []string) (FavoritesImportResult, error) {
+	selected := make(map[string]bool, len(trackIDs))
+	for _, id := range trackIDs {
+		selected[id] = true
+	}
+	return a.importSpotifyLibrarySelection(path, selected)
+}
+
+func (a *App) importSpotifyLibrarySelection(path string, selected map[string]bool) (FavoritesImportResult, error) {
 	result := FavoritesImportResult{Source: string(domain.ServiceSpotify)}
 	if a.store == nil || a.ctx == nil {
 		return result, fmt.Errorf("хранилище недоступно")
@@ -303,28 +343,71 @@ func (a *App) ImportSpotifyLibraryExport(path string) (FavoritesImportResult, er
 	if err != nil {
 		return result, err
 	}
-	result.Found = len(tracks)
-	for _, track := range tracks {
-		if err := a.store.FavoriteAdd(a.ctx, track); err != nil {
-			return result, err
+	if selected != nil {
+		filtered := make([]domain.Track, 0, len(tracks))
+		for _, track := range tracks {
+			if selected[track.ID] {
+				filtered = append(filtered, track)
+			}
 		}
-		result.Imported++
+		tracks = filtered
+	}
+	result.Found = len(tracks)
+	if err := a.importFavoriteTracks(tracks, &result); err != nil {
+		return result, err
 	}
 	a.platform.Emit(favoritesChangedEvent)
 	a.pushNotification("success", "Импорт Spotify завершён", fmt.Sprintf("Из выгрузки добавлено треков: %d из %d.", result.Imported, result.Found))
 	return result, nil
 }
 
+func (a *App) importFavoriteTracks(tracks []domain.Track, result *FavoritesImportResult) error {
+	if a.store == nil || a.ctx == nil {
+		return fmt.Errorf("хранилище недоступно")
+	}
+	existing, err := a.store.FavoriteList(a.ctx)
+	if err != nil {
+		return err
+	}
+	known := make(map[string]struct{}, len(existing))
+	for _, track := range existing {
+		known[string(track.Service)+":"+track.ID] = struct{}{}
+	}
+	for _, track := range tracks {
+		key := string(track.Service) + ":" + track.ID
+		if _, found := known[key]; found {
+			result.Skipped++
+			continue
+		}
+		if err := a.store.FavoriteAdd(a.ctx, track); err != nil {
+			return fmt.Errorf("не удалось сохранить «%s»: %w", track.Title, err)
+		}
+		known[key] = struct{}{}
+		result.Imported++
+	}
+	return nil
+}
+
 func spotifyLibraryTracks(path string) ([]domain.Track, error) {
-	var data []byte
-	if strings.EqualFold(filepath.Ext(path), ".zip") {
-		archive, err := zip.OpenReader(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось прочитать файл выгрузки: %w", err)
+	}
+	return parseSpotifyLibrary(data, strings.EqualFold(filepath.Ext(path), ".zip"))
+}
+
+func parseSpotifyLibrary(data []byte, zipped bool) ([]domain.Track, error) {
+	if zipped {
+		archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
 			return nil, fmt.Errorf("не удалось открыть ZIP-выгрузку Spotify: %w", err)
 		}
-		defer archive.Close()
+		data = nil
 		for _, file := range archive.File {
 			if strings.EqualFold(filepath.Base(file.Name), "YourLibrary.json") {
+				if file.UncompressedSize64 > 32<<20 {
+					return nil, fmt.Errorf("YourLibrary.json слишком большой")
+				}
 				reader, openErr := file.Open()
 				if openErr != nil {
 					return nil, openErr
@@ -340,21 +423,22 @@ func spotifyLibraryTracks(path string) ([]domain.Track, error) {
 		if len(data) == 0 {
 			return nil, fmt.Errorf("в выгрузке не найден файл YourLibrary.json")
 		}
-	} else {
-		var err error
-		data, err = os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("не удалось прочитать файл выгрузки: %w", err)
-		}
 	}
-	var rows []struct {
+	type spotifyLibraryRow struct {
 		Track  string `json:"track"`
 		Artist string `json:"artist"`
 		Album  string `json:"album"`
 		URI    string `json:"uri"`
 	}
+	var rows []spotifyLibraryRow
 	if err := json.Unmarshal(data, &rows); err != nil {
-		return nil, fmt.Errorf("некорректный YourLibrary.json: %w", err)
+		var library struct {
+			Tracks []spotifyLibraryRow `json:"tracks"`
+		}
+		if objectErr := json.Unmarshal(data, &library); objectErr != nil {
+			return nil, fmt.Errorf("некорректный YourLibrary.json: %w", objectErr)
+		}
+		rows = library.Tracks
 	}
 	tracks := make([]domain.Track, 0, len(rows))
 	for _, row := range rows {
@@ -522,6 +606,20 @@ func (a *App) loadLocalLibraryCache(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {
+	if a.workerCancel != nil {
+		a.workerCancel()
+	}
+	if a.workerDone != nil {
+		select {
+		case <-a.workerDone:
+		case <-time.After(5 * time.Second):
+			logging.L().Warn("фоновое задание не завершилось при закрытии")
+			if a.player != nil {
+				a.player.Shutdown()
+			}
+			return
+		}
+	}
 	if a.player != nil {
 		a.player.Shutdown()
 	}
@@ -679,11 +777,10 @@ func (a *App) ResolvePlayableTrack(track domain.Track) (domain.Track, error) {
 	// Источники опрашиваются параллельно, а результат берётся строго по
 	// приоритету списка: раньше это были четыре последовательных поиска, что
 	// давало заметную задержку перед первым звуком.
-	type resolved struct {
-		track domain.Track
-		ok    bool
-	}
-	found := make([]resolved, len(sources))
+	var (
+		matches []domain.Track
+		mu      sync.Mutex
+	)
 
 	var wg sync.WaitGroup
 	for i, source := range sources {
@@ -706,21 +803,106 @@ func (a *App) ResolvePlayableTrack(track domain.Track) (domain.Track, error) {
 				if candidate.PlayableKind != domain.PlayableStream || !sameTrack(track, candidate) {
 					continue
 				}
-				found[i] = resolved{track: candidate, ok: true}
-				return
+				mu.Lock()
+				matches = append(matches, candidate)
+				mu.Unlock()
 			}
 		}(i, source, svc)
 	}
 	wg.Wait()
 
-	for _, r := range found {
-		if !r.ok {
+	preferences := a.playbackPreferences()
+	for _, group := range identity.GroupTracks(append([]domain.Track{track}, matches...)) {
+		if len(group.Candidates) == 0 || group.Candidates[0].Track.ID != track.ID || group.Candidates[0].Track.Service != track.Service {
 			continue
 		}
-		logging.L().Info("выбрана альтернативная версия трека", "from", track.Service, "to", r.track.Service, "title", track.Title)
-		return r.track, nil
+		for _, candidate := range identity.RankCandidates(group.Candidates[1:], preferences) {
+			logging.L().Info("выбрана альтернативная версия трека", "from", track.Service, "to", candidate.Track.Service, "title", track.Title)
+			return candidate.Track, nil
+		}
 	}
 	return track, nil
+}
+
+// ResolvePlaybackFallback finds an equivalent stream from another source after
+// the current playback candidate has actually failed. It deliberately runs only
+// on failure so normal playback does not wait for extra provider searches.
+func (a *App) ResolvePlaybackFallback(track domain.Track, failedService string) (domain.PlaybackCandidate, bool) {
+	query := strings.TrimSpace(strings.Join(append(append([]string{}, track.Artists...), track.Title), " "))
+	if query == "" {
+		return domain.PlaybackCandidate{}, false
+	}
+
+	failed := domain.ServiceID(failedService)
+	sources := []domain.ServiceID{
+		domain.ServiceLocal,
+		domain.ServiceSoundCloud,
+		domain.ServiceYandex,
+		domain.ServiceYouTube,
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var (
+		matches []domain.Track
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+	)
+	for _, source := range sources {
+		if source == failed {
+			continue
+		}
+		svc, ok := a.registry[source]
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func(source domain.ServiceID, svc domain.MusicService) {
+			defer wg.Done()
+			defer a.recoverGoroutine("ResolvePlaybackFallback")
+			searchCtx, cancel := context.WithTimeout(ctx, searchSourceTimeout)
+			defer cancel()
+			candidates, err := svc.Search(searchCtx, query)
+			if err != nil {
+				logging.L().Debug("не удалось найти запасной источник", "service", source, "err", err)
+				return
+			}
+			for _, candidate := range candidates {
+				if candidate.PlayableKind != domain.PlayableStream || !sameTrack(track, candidate) {
+					continue
+				}
+				mu.Lock()
+				matches = append(matches, candidate)
+				mu.Unlock()
+			}
+		}(source, svc)
+	}
+	wg.Wait()
+	if len(matches) == 0 {
+		return domain.PlaybackCandidate{}, false
+	}
+
+	groups := identity.GroupTracks(append([]domain.Track{track}, matches...))
+	preferences := a.playbackPreferences()
+	for _, group := range groups {
+		containsOriginal := false
+		for _, candidate := range group.Candidates {
+			if candidate.Track.Service == track.Service && candidate.Track.ID == track.ID {
+				containsOriginal = true
+				break
+			}
+		}
+		if !containsOriginal {
+			continue
+		}
+		for _, candidate := range identity.RankCandidates(group.Candidates, preferences) {
+			if candidate.Track.Service != failed {
+				return candidate, true
+			}
+		}
+	}
+	return domain.PlaybackCandidate{}, false
 }
 
 func sameTrack(a, b domain.Track) bool {
@@ -770,9 +952,13 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 		if err != nil {
 			return nil, err
 		}
+		format := info.MimeType
+		if info.Protocol == "hls" {
+			format = "application/x-mpegURL"
+		}
 		return &audiofetcher.AudioStream{
 			URL:      info.URL,
-			Format:   info.MimeType,
+			Format:   format,
 			Duration: int64(info.DurationMs / 1000),
 		}, nil
 	case domain.ServiceYandex:
@@ -1302,6 +1488,71 @@ func (a *App) SetSetting(key string, value string) error {
 		return fmt.Errorf("хранилище недоступно")
 	}
 	return a.store.SettingSet(a.ctx, key, value)
+}
+
+func defaultPlaybackPreferences() identity.Preferences {
+	return identity.Preferences{SourcePriority: map[domain.ServiceID]int{
+		domain.ServiceLocal:      40,
+		domain.ServiceSoundCloud: 30,
+		domain.ServiceYandex:     20,
+		domain.ServiceYouTube:    10,
+	}}
+}
+
+func (a *App) playbackPreferences() identity.Preferences {
+	defaults := defaultPlaybackPreferences()
+	if a.store == nil {
+		return defaults
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	value, found, err := a.store.SettingGet(ctx, keyPlaybackPreferences)
+	if err != nil || !found || strings.TrimSpace(value) == "" {
+		return defaults
+	}
+	var persisted PlaybackPreferences
+	if json.Unmarshal([]byte(value), &persisted) != nil {
+		return defaults
+	}
+	defaults.PreferLocal = persisted.PreferLocal
+	for service, priority := range persisted.SourcePriority {
+		defaults.SourcePriority[domain.ServiceID(service)] = priority
+	}
+	return defaults
+}
+
+// GetPlaybackPreferences returns the effective preferences, including defaults
+// for sources the user has not explicitly reordered.
+func (a *App) GetPlaybackPreferences() PlaybackPreferences {
+	preferences := a.playbackPreferences()
+	priorities := make(map[string]int, len(preferences.SourcePriority))
+	for service, priority := range preferences.SourcePriority {
+		priorities[string(service)] = priority
+	}
+	return PlaybackPreferences{
+		PreferLocal:    preferences.PreferLocal,
+		PreferExplicit: preferences.PreferExplicit,
+		OfficialOnly:   preferences.OfficialOnly,
+		SourcePriority: priorities,
+	}
+}
+
+// SetPlaybackPreferences persists candidate-selection rules for future plays.
+func (a *App) SetPlaybackPreferences(preferences PlaybackPreferences) error {
+	if a.store == nil {
+		return fmt.Errorf("хранилище недоступно")
+	}
+	payload, err := json.Marshal(preferences)
+	if err != nil {
+		return err
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.store.SettingSet(ctx, keyPlaybackPreferences, string(payload))
 }
 
 // --- Yandex Music: токен ---
@@ -1903,6 +2154,9 @@ func (a *App) RescanLocalLibrary() ([]domain.Track, error) {
 
 // ListLocalTracks возвращает все треки локальной библиотеки.
 func (a *App) ListLocalTracks() []domain.Track {
+	if a.local == nil {
+		return []domain.Track{}
+	}
 	items := a.local.All()
 	out := make([]domain.Track, 0, len(items))
 	for _, t := range items {

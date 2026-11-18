@@ -20,11 +20,15 @@ func (a *App) Startup(ctx context.Context) { a.startup(ctx) }
 // хранилище.
 func (a *App) Shutdown(ctx context.Context) { a.shutdown(ctx) }
 
-// AssetHandler возвращает HTTP-обработчик локальных аудиофайлов и
-// стрим-прокси (/local/<id>, /stream/...). На десктопе он подключается к
-// ассет-серверу Wails, на мобайле — в mux встроенного сервера.
+// AssetHandler returns the shared HTTP surface for the desktop asset server:
+// typed API v1 plus local files and stream proxy. Mobile mounts the same API
+// explicitly in its loopback server. Keeping this surface identical lets the
+// React desktop transition endpoint by endpoint without Wails-only bindings.
 func (a *App) AssetHandler() http.Handler {
-	return &localAssetHandler{app: a}
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", a.APIHandler())
+	mux.Handle("/", &localAssetHandler{app: a})
+	return mux
 }
 
 // StartMobileServer поднимает встроенный HTTP-сервер на 127.0.0.1:<случайный

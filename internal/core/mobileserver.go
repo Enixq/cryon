@@ -1,6 +1,7 @@
 //go:build cryonmobile
 
 package core
+
 import (
 	"encoding/json"
 	"fmt"
@@ -166,7 +167,7 @@ func injectBaseURL(html []byte) []byte {
 // backend начинают уходить в WebView через SSE.
 func (a *App) startMobileServer(spa fs.FS) (string, func(), error) {
 	hub := newSSEHub()
-	a.platform = &sseHost{hub: hub}
+	a.platform = newEventMirroringHost(&sseHost{hub: hub}, a.eventHub())
 
 	assetHandler := &localAssetHandler{app: a}
 	mux := http.NewServeMux()
@@ -179,6 +180,7 @@ func (a *App) startMobileServer(spa fs.FS) (string, func(), error) {
 		a.serveRPC(w, r)
 	})
 	mux.HandleFunc("/api/events", hub.serveEvents)
+	mux.Handle("/v1/", a.APIHandler())
 	mux.Handle("/local/", assetHandler)
 	mux.Handle("/stream/", assetHandler)
 

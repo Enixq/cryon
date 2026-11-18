@@ -75,6 +75,15 @@ type Store interface {
 	AccountSetGuest(ctx context.Context) (Account, error)
 	AccountCurrent(ctx context.Context) (Account, bool, error)
 	AccountLogout(ctx context.Context) error
+
+	// Durable фоновые задания: долгие операции переживают перезапуск UI и
+	// получают явные статусы, приоритеты, retry и прогресс.
+	JobEnqueue(ctx context.Context, job Job) (Job, error)
+	JobList(ctx context.Context, limit int) ([]Job, error)
+	JobClaimNext(ctx context.Context, nowMs int64) (Job, bool, error)
+	JobProgress(ctx context.Context, id string, progress float64, message string) error
+	JobFinish(ctx context.Context, id string, state JobState, message, errorMessage string) error
+	JobCancel(ctx context.Context, id string) error
 }
 
 // PlaylistTrackKey идентифицирует трек внутри плейлиста (service+trackID).
@@ -125,4 +134,36 @@ type Account struct {
 	Login   string `json:"login"`
 	Email   string `json:"email"`
 	IsGuest bool   `json:"isGuest"`
+}
+
+// JobState describes the lifecycle of durable background work.
+type JobState string
+
+const (
+	JobQueued    JobState = "queued"
+	JobRunning   JobState = "running"
+	JobRetrying  JobState = "retrying"
+	JobBlocked   JobState = "blocked"
+	JobFailed    JobState = "failed"
+	JobCompleted JobState = "completed"
+	JobCancelled JobState = "cancelled"
+)
+
+// Job persists a long-running operation independently from any UI process.
+type Job struct {
+	ID           string   `json:"id"`
+	Kind         string   `json:"kind"`
+	State        JobState `json:"state"`
+	Priority     int      `json:"priority"`
+	PayloadJSON  string   `json:"payloadJson"`
+	Attempt      int      `json:"attempt"`
+	MaxAttempts  int      `json:"maxAttempts"`
+	Progress     float64  `json:"progress"`
+	Message      string   `json:"message"`
+	Error        string   `json:"error,omitempty"`
+	RunAfterMs   int64    `json:"runAfterMs"`
+	CreatedAtMs  int64    `json:"createdAtMs"`
+	UpdatedAtMs  int64    `json:"updatedAtMs"`
+	StartedAtMs  int64    `json:"startedAtMs,omitempty"`
+	FinishedAtMs int64    `json:"finishedAtMs,omitempty"`
 }

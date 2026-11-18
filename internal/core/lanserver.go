@@ -1,6 +1,7 @@
 //go:build cryonlan
 
 package core
+
 import (
 	"fmt"
 	"net"
@@ -46,6 +47,17 @@ func (a *App) startLANServer() {
 		}
 		a.serveRPC(w, r)
 	})
+
+	// API v1 работает параллельно с legacy RPC и нужен нативным клиентам.
+	apiHandler := a.APIHandler()
+	mux.Handle("/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		apiHandler.ServeHTTP(w, r)
+	}))
 
 	// Аудио и локальные файлы — переиспользуем существующий обработчик, добавив
 	// заголовки CORS (кросс-доменный <audio> + Web Audio-граф эквалайзера).

@@ -5,13 +5,14 @@ import { PageHeader } from "../shared/ui/PageHeader";
 import { ServiceIcon } from "../shared/ui/ServiceIcon";
 import { SOURCES } from "../shared/sources";
 import { listSourceStatus, onSourceStatusChanged } from "../shared/api/client";
+import type { SourceStatusDto } from "../shared/api/client";
 import type { SourceLevel } from "../shared/api/client";
 import type { SourceId } from "../shared/types";
 import { cn } from "../shared/lib/cn";
 
 // Цвет точки и подпись статуса — те же градации, что в боковой панели.
 const STATUS_META: Record<SourceLevel, { color: string; label: string }> = {
-  ok: { color: "bg-emerald-400", label: "Подключено — играет напрямую" },
+  ok: { color: "bg-emerald-400", label: "Настроен для прямого воспроизведения" },
   limited: { color: "bg-amber-400", label: "Ограниченно — поиск / внешние ссылки" },
   off: { color: "bg-rose-500", label: "Не подключено" },
 };
@@ -28,14 +29,16 @@ const order: SourceId[] = ["youtube", "soundcloud", "yandex", "spotify", "local"
  */
 export function ServicesPage() {
   const navigate = useNavigate();
-  const [levels, setLevels] = useState<Record<string, SourceLevel>>({});
+  const [sources, setSources] = useState<Record<string, SourceStatusDto>>({});
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let alive = true;
     const refresh = () => {
       void listSourceStatus().then((rows) => {
         if (!alive) return;
-        setLevels(Object.fromEntries(rows.map((r) => [r.id, r.level])));
+        setSources(Object.fromEntries(rows.map((row) => [row.id, row])));
+        setLoaded(true);
       });
     };
     refresh();
@@ -53,8 +56,8 @@ export function ServicesPage() {
       <div className="flex flex-col gap-2">
         {order.map((id) => {
           const meta = SOURCES[id];
-          const level = levels[id] ?? "off";
-          const status = STATUS_META[level];
+          const source = sources[id];
+          const status = source ? STATUS_META[source.level] : { color: "bg-slate-500", label: loaded ? "Статус недоступен" : "Проверяем состояние…" };
           return (
             <button
               key={id}
@@ -68,8 +71,9 @@ export function ServicesPage() {
                 <div className="truncate text-[15px] font-semibold text-white">{meta.name}</div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-400">
                   <span className={cn("h-2 w-2 shrink-0 rounded-full", status.color)} aria-hidden />
-                  <span className="truncate">{status.label}</span>
+                  <span className="truncate">{source?.error ? "Ошибка подключения" : status.label}</span>
                 </div>
+                {source?.error && <div className="mt-1 break-words text-xs text-amber-300">{source.error}</div>}
               </div>
               <ChevronRight size={18} className="shrink-0 text-slate-500" />
             </button>

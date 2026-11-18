@@ -1,0 +1,704 @@
+openapi: 3.1.0
+info:
+  title: Cryon API
+  version: 1.0.0-draft
+  description: >-
+    Versioned local API for Cryon native clients. Legacy /api/call remains
+    available only while existing Wails screens migrate.
+servers:
+  - url: http://127.0.0.1
+paths:
+  /v1/system/health:
+    get:
+      operationId: getSystemHealth
+      responses:
+        '200':
+          description: Engine is reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /v1/events:
+    get:
+      operationId: subscribeEvents
+      responses:
+        '200':
+          description: Server-Sent Events stream. Each data message contains an EventEnvelope.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /v1/sources:
+    get:
+      operationId: listSources
+      responses:
+        '200':
+          description: Runtime source status.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SourceStatus'
+  /v1/sources/{id}/validate:
+    post:
+      operationId: validateSource
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Source credentials validated. }
+        '404': { description: Source is not registered. }
+  /v1/search:
+    get:
+      operationId: searchTracks
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: service
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Source identifier, or omit/all for aggregated search.
+      responses:
+        '200':
+          description: Ordered playback candidates from the requested source scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/recommendations:
+    get:
+      operationId: listRecommendations
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Personalized recommendation tracks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+  /v1/recommendations/daily-mix:
+    get:
+      operationId: listDailyMix
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Daily personalized mix.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+  /v1/recommendations/weekly-discoveries:
+    get:
+      operationId: listWeeklyDiscoveries
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Weekly discovery mix.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+  /v1/recommendations/new-releases:
+    get:
+      operationId: listNewReleases
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: New releases from connected sources.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+  /v1/recommendations/related:
+    post:
+      operationId: listRelatedTracks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelatedTracksRequest'
+      responses:
+        '200':
+          description: Tracks related to the supplied seed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+  /v1/library/favorites:
+    get:
+      operationId: listFavorites
+      responses:
+        '200':
+          description: Favorite source tracks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Track'
+  /v1/library/history:
+    get:
+      operationId: listHistory
+      responses:
+        '200':
+          description: Listening history.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HistoryItem'
+    post:
+      operationId: addHistoryEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrackRequest'
+      responses:
+        '204': { description: History entry recorded. }
+    delete:
+      operationId: clearHistory
+      responses:
+        '204': { description: History cleared. }
+  /v1/library/local/tracks:
+    get:
+      operationId: listLocalTracks
+      responses:
+        '200':
+          description: Tracks indexed from local music folders.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackList'
+  /v1/library/local/folders:
+    get:
+      operationId: listLocalFolders
+      responses:
+        '200':
+          description: Registered local music folders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+  /v1/playlists:
+    get:
+      operationId: listPlaylists
+      responses:
+        '200':
+          description: User playlists.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Playlist'
+    post:
+      operationId: createPlaylist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePlaylistRequest'
+      responses:
+        '201':
+          description: Playlist created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Playlist'
+  /v1/playlists/{id}:
+    patch:
+      operationId: updatePlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePlaylistRequest'
+      responses:
+        '204': { description: Playlist updated. }
+    delete:
+      operationId: deletePlaylist
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+      responses:
+        '204': { description: Playlist deleted. }
+  /v1/playlists/{id}/tracks:
+    get:
+      operationId: listPlaylistTracks
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+      responses:
+        '200':
+          description: Playlist tracks in user-defined order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Track'
+    post:
+      operationId: addPlaylistTrack
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrackRequest'
+      responses:
+        '204': { description: Track added. }
+    delete:
+      operationId: removePlaylistTrack
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+        - name: service
+          in: query
+          required: true
+          schema: { type: string }
+        - name: trackId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Track removed. }
+  /v1/playlists/{id}/tracks/order:
+    put:
+      operationId: reorderPlaylistTracks
+      parameters:
+        - $ref: '#/components/parameters/PlaylistId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaylistOrderRequest'
+      responses:
+        '204': { description: Playlist order updated. }
+  /v1/jobs:
+    get:
+      operationId: listJobs
+      responses:
+        '200':
+          description: Durable background jobs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Job'
+    post:
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJobRequest'
+      responses:
+        '201':
+          description: Persisted background job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+  /v1/jobs/{id}:
+    delete:
+      operationId: cancelJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Job cancelled. }
+  /v1/imports/spotify:
+    post:
+      operationId: importSpotifyFile
+      description: Preview an export or import selected track IDs. The file is processed locally.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, action]
+              properties:
+                file: { type: string, format: binary }
+                action: { type: string, enum: [preview, import] }
+                trackIds: { type: string, description: JSON array of selected source track IDs for import. }
+      responses:
+        '200': { description: Track list for preview or import counts. }
+        '400': { description: Invalid export or selection. }
+  /v1/system/update:
+    get:
+      operationId: checkUpdate
+      responses:
+        '200':
+          description: Current version and availability of a newer signed release.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [current, latest, available, platform]
+                properties:
+                  current: { type: string }
+                  latest: { type: string }
+                  available: { type: boolean }
+                  platform: { type: string }
+                  size: { type: integer, format: int64 }
+                  notesUrl: { type: string }
+        '502': { description: The release could not be checked. }
+  /v1/playback/resolve:
+    post:
+      operationId: resolvePlayback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [track]
+              properties:
+                track: { $ref: '#/components/schemas/Track' }
+                native: { type: boolean, default: false, description: Resolve native-compatible streaming formats when needed. }
+      responses:
+        '200':
+          description: Best playable candidate and its streaming URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackResolution'
+        '409':
+          description: The track has no direct playable candidate.
+  /v1/playback/fallback:
+    post:
+      operationId: resolvePlaybackFallback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackFallbackRequest'
+      responses:
+        '200':
+          description: Equivalent playable version from another source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackFallback'
+        '404':
+          description: No equivalent fallback was found.
+  /v1/playback/status:
+    get:
+      operationId: playbackStatus
+      responses:
+        '200':
+          description: Current desktop playback state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackStatus'
+        '503':
+          description: Desktop playback backend is unavailable on this device.
+  /v1/playback/preferences:
+    get:
+      operationId: playbackPreferences
+      responses:
+        '200':
+          description: Effective playback candidate preferences.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackPreferences'
+    put:
+      operationId: setPlaybackPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackPreferences'
+      responses:
+        '204': { description: Preferences saved. }
+  /v1/playback/play:
+    post:
+      operationId: playbackPlay
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [trackId, streamUrl]
+              properties:
+                trackId: { type: string }
+                streamUrl: { type: string }
+      responses:
+        '204': { description: Playback started. }
+  /v1/playback/pause:
+    post:
+      operationId: playbackPause
+      responses:
+        '204': { description: Playback paused. }
+  /v1/playback/resume:
+    post:
+      operationId: playbackResume
+      responses:
+        '204': { description: Playback resumed. }
+  /v1/playback/stop:
+    post:
+      operationId: playbackStop
+      responses:
+        '204': { description: Playback stopped. }
+  /v1/playback/seek:
+    post:
+      operationId: playbackSeek
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [positionS]
+              properties:
+                positionS: { type: number, minimum: 0 }
+      responses:
+        '204': { description: Position changed. }
+  /v1/playback/volume:
+    post:
+      operationId: playbackSetVolume
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [volume]
+              properties:
+                volume: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        '204': { description: Volume changed. }
+components:
+  parameters:
+    PlaylistId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Health:
+      type: object
+      required: [status, api, atMs]
+      properties:
+        status: { type: string, example: ok }
+        api: { type: string, example: v1 }
+        atMs: { type: integer, format: int64 }
+    EventEnvelope:
+      type: object
+      required: [event, data]
+      properties:
+        event: { type: string, example: source:status-changed }
+        data:
+          type: array
+          items: {}
+    SourceStatus:
+      type: object
+      required: [id, connected, level]
+      properties:
+        id: { type: string }
+        connected: { type: boolean }
+        level: { type: string, enum: [ok, limited, off] }
+        error: { type: string }
+    PlaybackStatus:
+      type: object
+      required: [backend, available, state, positionS, durationS, volume, eof]
+      properties:
+        backend: { type: string, enum: [mpv, none] }
+        available: { type: boolean }
+        state: { type: string, enum: [idle, playing, paused] }
+        trackId: { type: string }
+        positionS: { type: number }
+        durationS: { type: number }
+        volume: { type: integer, minimum: 0, maximum: 100 }
+        eof: { type: boolean }
+        message: { type: string }
+    PlaybackPreferences:
+      type: object
+      required: [preferLocal, preferExplicit, officialOnly, sourcePriority]
+      properties:
+        preferLocal: { type: boolean }
+        preferExplicit: { type: boolean }
+        officialOnly: { type: boolean }
+        sourcePriority:
+          type: object
+          additionalProperties: { type: integer }
+    Track:
+      type: object
+      description: Transitional source-specific track DTO; replaced by CanonicalTrack + PlaybackCandidate in a later API version.
+      required: [id, title, artists, service]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        artists:
+          type: array
+          items: { type: string }
+        album: { type: string }
+        service: { type: string }
+        durationMs: { type: integer, format: int64 }
+        artworkUrl: { type: string }
+    TrackList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Track'
+    SearchResponse:
+      type: object
+      required: [query, tracks]
+      properties:
+        query: { type: string }
+        service: { type: string }
+        tracks:
+          type: array
+          items: { $ref: '#/components/schemas/Track' }
+    HistoryItem:
+      type: object
+      required: [track, playedAtMs]
+      properties:
+        track: { $ref: '#/components/schemas/Track' }
+        playedAtMs: { type: integer, format: int64 }
+    Playlist:
+      type: object
+      required: [id, title, description, trackCount]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        trackCount: { type: integer, minimum: 0 }
+        coverUrls:
+          type: array
+          items: { type: string }
+    TrackRequest:
+      type: object
+      required: [track]
+      properties:
+        track: { $ref: '#/components/schemas/Track' }
+    RelatedTracksRequest:
+      type: object
+      required: [track]
+      properties:
+        track: { $ref: '#/components/schemas/Track' }
+        limit: { type: integer, minimum: 1, maximum: 100, default: 15 }
+    CreatePlaylistRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+    UpdatePlaylistRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+    PlaylistTrackKey:
+      type: object
+      required: [service, trackId]
+      properties:
+        service: { type: string }
+        trackId: { type: string }
+    PlaylistOrderRequest:
+      type: object
+      required: [tracks]
+      properties:
+        tracks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlaylistTrackKey'
+    Job:
+      type: object
+      required: [id, kind, state, priority, attempt, maxAttempts, progress, createdAtMs, updatedAtMs]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        state: { type: string, enum: [queued, running, retrying, blocked, failed, completed, cancelled] }
+        priority: { type: integer }
+        payloadJson: { type: string }
+        attempt: { type: integer }
+        maxAttempts: { type: integer }
+        progress: { type: number, minimum: 0, maximum: 1 }
+        message: { type: string }
+        error: { type: string }
+        runAfterMs: { type: integer, format: int64 }
+        createdAtMs: { type: integer, format: int64 }
+        updatedAtMs: { type: integer, format: int64 }
+        startedAtMs: { type: integer, format: int64 }
+        finishedAtMs: { type: integer, format: int64 }
+    CreateJobRequest:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, minLength: 1 }
+        priority: { type: integer, default: 0 }
+        payloadJson: { type: string }
+        maxAttempts: { type: integer, minimum: 1, default: 3 }
+    PlaybackResolution:
+      type: object
+      required: [track, streamUrl]
+      properties:
+        track: { $ref: '#/components/schemas/Track' }
+        streamUrl: { type: string, example: /stream/youtube/dQw4w9WgXcQ }
+        mimeType: { type: string, description: Explicit media type when required by the native player. }
+    PlaybackFallbackRequest:
+      type: object
+      required: [track]
+      properties:
+        track: { $ref: '#/components/schemas/Track' }
+        failedService: { type: string, description: Source whose stream failed. }
+    PlaybackFallback:
+      type: object
+      required: [track, streamUrl, reason]
+      properties:
+        track: { $ref: '#/components/schemas/Track' }
+        streamUrl: { type: string }
+        reason: { type: string }

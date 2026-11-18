@@ -377,16 +377,12 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 		}
 	}
 
-	// Порог для «случайных» прослушиваний: артист, о котором мы знаем только по
-	// единичному проигрыванию (не в избранном/плейлистах/лайках и проигран < 2
-	// раз), в профиль НЕ попадает. Иначе радар и рекомендации наполняются тем,
-	// что человек послушал один раз «на пробу» — ровно на это и была жалоба.
-	const minIncidentalPlays = 2
+	// Даже одно свежее прослушивание остаётся слабым, но полезным сигналом:
+	// профиль должен отражать все локальные действия и не терять историю. Его
+	// вес (с учётом затухания) заметно ниже избранного, плейлистов и явного лайка,
+	// поэтому случайное прослушивание не способно перехватить рекомендации.
 	out := make([]artistWeight, 0, len(weights))
 	for _, w := range weights {
-		if !w.deliberate && w.plays < minIncidentalPlays {
-			continue
-		}
 		out = append(out, *w)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -508,7 +504,6 @@ func (e *Engine) PersonalizeReleases(ctx context.Context, in []domain.Track) []d
 		track domain.Track
 		score float64
 	}
-	relevant := make([]scored, 0, len(in))
 	reordered := make([]scored, 0, len(in))
 	for _, t := range in {
 		key := artistKey(t)
@@ -519,34 +514,16 @@ func (e *Engine) PersonalizeReleases(ctx context.Context, in []domain.Track) []d
 		simScore := similar[key]
 		full := famScore + simScore + profile.sources[t.Service]
 		reordered = append(reordered, scored{track: t, score: full})
-		if famScore > 0 || simScore > 0 {
-			relevant = append(relevant, scored{track: t, score: full})
-		}
 	}
 
-	// Фильтруем радар до релевантных исполнителей ТОЛЬКО когда есть сигнал
-	// «похожести» от Last.fm: тогда можно уверенно отбросить редакционный
-	// мейнстрим, оставив знакомых и близких артистов. Без Last.fm сигнала для
-	// фильтрации нет — просто пересортировываем полный список (как раньше),
-	// иначе радар схлопнулся бы до горстки уже знакомых артистов. Пустой
-	// relevant при живом Last.fm — тоже повод не оставлять секцию пустой.
-	// Фильтруем радар до релевантных исполнителей, как только есть сигнал вкуса,
-	// НЕ дожидаясь Last.fm. Знакомых артистов (familiar) достаточно, чтобы
-	// отбросить редакционный мейнстрим — шансон/поп из ленты сервиса, который
-	// пользователь никогда не слушал (это и была жалоба). Similar (Last.fm)
-	// лишь расширяет набор «релевантных», но не является условием фильтрации.
-	//
-	// Защита от пустой секции сохраняется: фильтруем ТОЛЬКО когда после фильтра
-	// что-то остаётся; иначе (лента вообще не пересекается со вкусом) отдаём
-	// пересортированный полный список, чтобы радар не схлопнулся в ноль.
-	pick := reordered
-	if len(relevant) > 0 {
-		pick = relevant
-	}
-	sort.SliceStable(pick, func(i, j int) bool { return pick[i].score > pick[j].score })
+	// Радар остаётся разнообразной лентой: знакомые и похожие артисты идут
+	// первыми, но остальные релизы не вырезаются. Иначе одна удачная пересечка
+	// с профилем превращает раздел в короткий список уже знакомой музыки.
+	// Заблокированные артисты исключаются безусловно.
+	sort.SliceStable(reordered, func(i, j int) bool { return reordered[i].score > reordered[j].score })
 
-	out := make([]domain.Track, len(pick))
-	for i, s := range pick {
+	out := make([]domain.Track, len(reordered))
+	for i, s := range reordered {
 		out[i] = s.track
 	}
 	return out

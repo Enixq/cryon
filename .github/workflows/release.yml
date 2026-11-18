@@ -19,8 +19,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,7 +35,7 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
       - name: Build (exe + NSIS installer)
-        run: wails build -nsis
+        run: wails build -nsis -ldflags "-X Cryon2/internal/update.Version=${{ github.ref_name }}"
 
       - name: Prepare artifacts
         shell: pwsh
@@ -64,8 +63,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          cache: true
-          cache-dependency-path: go.sum
+          cache: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -106,19 +104,34 @@ jobs:
           mkdir -p ../android/app/libs
           go mod tidy
           gomobile bind -target=android/arm64 -androidapi 24 \
+            -ldflags "-X Cryon2/internal/update.Version=${GITHUB_REF_NAME}" \
             -o ../android/app/libs/cryonmobile.aar -tags cryonmobile .
           test -s ../android/app/libs/cryonmobile.aar
 
-      - name: Build debug APK
+      - name: Prepare signing key
+        shell: bash
+        env:
+          CRYON_KEYSTORE_BASE64: ${{ secrets.CRYON_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$CRYON_KEYSTORE_BASE64"
+          echo "$CRYON_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/cryon-release.jks"
+
+      - name: Build signed APK
         working-directory: android
+        env:
+          CRYON_KEYSTORE_PATH: ${{ runner.temp }}/cryon-release.jks
+          CRYON_KEYSTORE_PASSWORD: ${{ secrets.CRYON_KEYSTORE_PASSWORD }}
+          CRYON_KEY_ALIAS: ${{ secrets.CRYON_KEY_ALIAS }}
+          CRYON_KEY_PASSWORD: ${{ secrets.CRYON_KEY_PASSWORD }}
+          CRYON_RELEASE_VERSION: ${{ github.ref_name }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
 
       - name: Prepare artifacts
         run: |
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-debug.apk \
+          cp android/app/build/outputs/apk/release/app-release.apk \
              "dist/Cryon2-${{ github.ref_name }}-android-arm64.apk"
 
       - name: Upload build artifacts

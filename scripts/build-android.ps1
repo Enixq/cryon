@@ -25,6 +25,9 @@
     Собрать release-APK (assembleRelease) вместо debug. Требует настроенной
     подписи в android/app/build.gradle.kts, иначе Gradle упадёт. По умолчанию debug.
 
+.PARAMETER WindowsSocketWorkaround
+    Обойти сбой локальных Unix-сокетов Java в Windows при запуске Gradle.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\build-android.ps1
 
@@ -49,7 +52,8 @@
 param(
     [string]$Tag = "dev",
     [switch]$SkipFrontend,
-    [switch]$Release
+    [switch]$Release,
+    [switch]$WindowsSocketWorkaround
 )
 
 $ErrorActionPreference = "Stop"
@@ -142,7 +146,16 @@ $apkKind = if ($Release) { "release" } else { "debug" }
 $apkName = if ($Release) { "app-release.apk" } else { "app-debug.apk" }
 $apkPath = Join-Path $android "app\build\outputs\apk\$apkKind\$apkName"
 if (Test-Path $apkPath) { Remove-Item -Force $apkPath }
-Invoke-Checked $gradlew @($gradleTask, "--no-daemon") $android
+$previousJavaToolOptions = $env:JAVA_TOOL_OPTIONS
+try {
+    if ($WindowsSocketWorkaround) {
+        $socketDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("cryon-gradle-missing-" + [guid]::NewGuid().ToString("N"))
+        $env:JAVA_TOOL_OPTIONS = "$previousJavaToolOptions `"-Djdk.net.unixdomain.tmpdir=$socketDirectory`"".Trim()
+    }
+    Invoke-Checked $gradlew @($gradleTask, "--no-daemon") $android
+} finally {
+    $env:JAVA_TOOL_OPTIONS = $previousJavaToolOptions
+}
 
 # --- 5. Итоговый путь + копия в dist/ ---
 if (-not (Test-Path $apkPath)) { Fail "APK не найден по пути $apkPath" }

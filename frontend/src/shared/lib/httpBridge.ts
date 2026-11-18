@@ -116,8 +116,9 @@ export function installHttpBridge(): boolean {
       get(_t, prop) {
         if (typeof prop !== "string" || prop === "then") return undefined;
         return (...args: unknown[]) => {
-          // Плеер mpv — только десктоп. На телефоне звук идёт через HTML5 <audio>
-          // (/stream). Гасим весь Player*, чтобы не управлять mpv на ПК по сети.
+          // mpv — только desktop. На Android звук принадлежит нативному
+          // Media3 service и получает URL через /v1/playback/resolve, поэтому
+          // legacy Player* не должен управлять desktop mpv по сети.
           if (prop === "PlayerBackendAvailable") return Promise.resolve(false);
           if (prop.startsWith("Player")) return Promise.resolve(undefined);
           // Системные диалоги открылись бы на ПК и подвесили бы вызов с телефона.
@@ -168,7 +169,7 @@ export function installHttpBridge(): boolean {
         }
         es = null;
       }
-      const source = new EventSource(base + "/api/events");
+      const source = new EventSource(base + "/v1/events");
       es = source;
       source.onopen = () => {
         attempts = 0; // соединение живо — сбрасываем задержку

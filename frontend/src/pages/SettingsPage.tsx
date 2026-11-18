@@ -8,17 +8,24 @@ import {
   Link2,
   SlidersHorizontal,
   Settings2,
+  Activity,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { SOURCES } from "../shared/sources";
+import { SOURCES, sourceName } from "../shared/sources";
 import { cn } from "../shared/lib/cn";
-import type { SourceId } from "../shared/types";
+import { formatDuration } from "../shared/lib/format";
+import type { SourceId, Track } from "../shared/types";
 import { ServiceIcon } from "../shared/ui/ServiceIcon";
 import { PageHeader } from "../shared/ui/PageHeader";
 import { TabBar, type TabItem } from "../shared/ui/TabBar";
 import { useUiStore } from "../store/uiStore";
 import { usePlaybackSettingsStore } from "../store/playbackSettingsStore";
+import { usePlaybackDiagnosticsStore } from "../store/playbackDiagnosticsStore";
+import { useFavoriteIds } from "../shared/lib/useFavorites";
 import {
   addLocalFolder,
   getSetting,
@@ -44,24 +51,38 @@ import {
   youtubeConnected,
   importFavorites,
   importSpotifyLibraryExport,
+  previewSpotifyLibraryExport,
   startSpotifyLogin,
   listAccountConnections,
   setOAuthApplicationConfig,
   validateSource,
+  type FavoritesImportResult,
 } from "../shared/api/client";
 import { configuredBaseUrl, setConfiguredBaseUrl } from "../shared/lib/httpBridge";
+import { apiV1BaseUrl, hasApiV1Runtime, playbackPreferencesV1, setPlaybackPreferencesV1, spotifyFileImportV1, type PlaybackPreferencesV1 } from "../shared/api/v1";
+import { mapTracks, splitTrackId } from "../shared/api/mappers";
+import { hasNativeAndroidPlayer } from "../shared/lib/nativeAndroidPlayer";
+import type { domain } from "../../wailsjs/go/models";
 
 // Ключи персистентных настроек в хранилище. Плавный переход и нормализация
 // хранятся под ключами playback.crossfade / playback.normalizeVolume внутри
 // playbackSettingsStore; здесь остаётся только «высокое качество».
 const KEY_HIGH_QUALITY = "playback.highQuality";
+const DEFAULT_PLAYBACK_PREFERENCES: PlaybackPreferencesV1 = {
+  preferLocal: false,
+  preferExplicit: false,
+  officialOnly: false,
+  sourcePriority: {},
+};
+const PLAYBACK_SOURCE_ORDER: SourceId[] = ["local", "soundcloud", "yandex", "youtube"];
 
-type SettingsTab = "music" | "connections" | "playback" | "general";
+type SettingsTab = "music" | "connections" | "playback" | "diagnostics" | "general";
 
 const SETTINGS_TABS: TabItem<SettingsTab>[] = [
   { id: "music", label: "Музыка", icon: Music2 },
   { id: "connections", label: "Подключения", icon: Link2 },
   { id: "playback", label: "Звук", icon: SlidersHorizontal },
+  { id: "diagnostics", label: "Диагностика", icon: Activity },
   { id: "general", label: "Общее", icon: Settings2 },
 ];
 
@@ -86,6 +107,49 @@ export function SettingsPage() {
   const youtubeConfigRef = useRef<HTMLDivElement | null>(null);
   const queryClient = useQueryClient();
   const setEqualizerOpen = useUiStore((s) => s.setEqualizerOpen);
+  const playbackDiagnostics = usePlaybackDiagnosticsStore((s) => s.items);
+  const clearPlaybackDiagnostics = usePlaybackDiagnosticsStore((s) => s.clear);
+  const exportPlaybackDiagnostics = () => {
+    const report = {
+      exportedAt: new Date().toISOString(),
+      events: playbackDiagnostics.map(({ kind, title, artist, fromSource, toSource, positionSeconds, createdAt, fallbackSearchMs, startupMs }) => ({
+        kind, title, artist, fromSource, toSource, positionSeconds, createdAt, fallbackSearchMs, startupMs,
+      })),
+    };
+    const reportJson = JSON.stringify(report, null, 2);
+    if (window.CryonAndroid?.savePlaybackReport) {
+      window.CryonAndroid.savePlaybackReport(reportJson);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([reportJson], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "cryon-playback-report.json";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const { data: playbackPreferences = DEFAULT_PLAYBACK_PREFERENCES } = useQuery({
+    queryKey: ["playbackPreferences"],
+    queryFn: () => hasApiV1Runtime() ? playbackPreferencesV1() : Promise.resolve(DEFAULT_PLAYBACK_PREFERENCES),
+  });
+  const playbackPreferencesMutation = useMutation({
+    mutationFn: setPlaybackPreferencesV1,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["playbackPreferences"] }),
+  });
+  const orderedPlaybackSources = [...PLAYBACK_SOURCE_ORDER].sort(
+    (left, right) => (playbackPreferences.sourcePriority[right] ?? 0) - (playbackPreferences.sourcePriority[left] ?? 0),
+  );
+  const movePlaybackSource = (source: SourceId, direction: -1 | 1) => {
+    const index = orderedPlaybackSources.indexOf(source);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= orderedPlaybackSources.length) return;
+    const next = [...orderedPlaybackSources];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    playbackPreferencesMutation.mutate({
+      ...playbackPreferences,
+      sourcePriority: Object.fromEntries(next.map((id, position) => [id, (next.length - position) * 10])),
+    });
+  };
 
   // Каждый источник ведёт к своей секции настройки. Раньше все варианты
   // прокручивали к Yandex — теперь у каждого сервиса собственный якорь.
@@ -350,6 +414,125 @@ export function SettingsPage() {
               <SlidersHorizontal size={17} /> Открыть эквалайзер
             </button>
           </Section>
+
+          <Section title="Выбор версии трека" description="Эти правила помогают выбрать вариант, когда Cryon ищет воспроизводимую или запасную версию трека.">
+            <div className="flex flex-col gap-1">
+              <Toggle
+                label="Предпочитать локальную копию"
+                checked={playbackPreferences.preferLocal}
+                onChange={(preferLocal) => playbackPreferencesMutation.mutate({ ...playbackPreferences, preferLocal })}
+              />
+            </div>
+            <p className="text-xs text-slate-400">Выбор explicit и официальных записей появится после добавления надёжных признаков от источников.</p>
+            <div className="mt-3 border-t border-white/8 pt-3">
+              <div className="mb-2 text-sm text-slate-300">Приоритет сервисов</div>
+              <div className="flex flex-col gap-1">
+                {orderedPlaybackSources.map((source, index) => (
+                  <div key={source} className="flex items-center gap-3 rounded-xl bg-white/[0.05] p-2">
+                    <ServiceIcon id={source} size={28} badge />
+                    <span className="flex-1 text-sm text-white">{SOURCES[source].name}</span>
+                    <button
+                      type="button"
+                      onClick={() => movePlaybackSource(source, -1)}
+                      disabled={index === 0 || playbackPreferencesMutation.isPending}
+                      className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30"
+                      title="Поднять приоритет"
+                      aria-label="Поднять приоритет"
+                    >
+                      <ChevronUp size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => movePlaybackSource(source, 1)}
+                      disabled={index === orderedPlaybackSources.length - 1 || playbackPreferencesMutation.isPending}
+                      className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30"
+                      title="Понизить приоритет"
+                      aria-label="Понизить приоритет"
+                    >
+                      <ChevronDown size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Section>
+        </div>
+      )}
+
+      {/* ── Диагностика ───────────────────────────────────────────────── */}
+      {tab === "diagnostics" && (
+        <div className="columns-1 gap-5 lg:columns-2">
+          <Section
+            title="Переключения и ошибки"
+            description="Последние события воспроизведения на этом устройстве."
+          >
+            {playbackDiagnostics.length === 0 ? (
+              <p className="rounded-xl bg-white/[0.05] p-3 text-sm text-slate-400">
+                За последнее время проблем с воспроизведением не было.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={exportPlaybackDiagnostics}
+                    className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                  >
+                    <Download size={16} /> Сохранить отчёт
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearPlaybackDiagnostics}
+                    className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+                    title="Очистить историю"
+                    aria-label="Очистить историю диагностики"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+                {playbackDiagnostics.map((event) => {
+                  const switched = event.kind === "fallback" && event.toSource;
+                  return (
+                    <div key={event.id} className="rounded-xl bg-white/[0.05] p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className={switched || event.kind === "started" ? "text-sm font-medium text-emerald-300" : "text-sm font-medium text-amber-300"}>
+                            {event.kind === "started" ? "Воспроизведение началось" : switched ? "Источник переключён" : "Воспроизведение остановлено"}
+                          </div>
+                          <div className="truncate text-sm text-white">{event.artist} — {event.title}</div>
+                        </div>
+                        <span className="shrink-0 text-[11px] text-slate-500">{relativeTime(event.createdAt)}</span>
+                      </div>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                        {switched
+                          ? "С " + sourceName(event.fromSource) + " на " + sourceName(event.toSource!) + " · продолжено с " + formatDuration(event.positionSeconds) + ". " + event.message
+                          : event.message}
+                      </p>
+                      {event.fallbackSearchMs !== undefined && <p className="mt-1 text-xs text-slate-500">Поиск запасного источника: {(event.fallbackSearchMs / 1000).toFixed(1)} с</p>}
+                      {event.startupMs !== undefined && <p className="mt-1 text-xs text-slate-500">Время до запуска: {(event.startupMs / 1000).toFixed(1)} с</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Section>
+
+          <Section title="Состояние источников" description="Текущая готовность сервисов, из которых Cryon ищет и воспроизводит музыку.">
+            <div className="flex flex-col gap-2">
+              {services.map((service) => (
+                <div key={service.id} className="flex items-center gap-3 rounded-xl bg-white/[0.05] p-3">
+                  <ServiceIcon id={service.id} size={30} badge />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-white">{SOURCES[service.id].name}</div>
+                    <div className={service.error ? "truncate text-xs text-amber-300" : "text-xs text-slate-400"}>
+                      {service.error || (service.connected ? "Готов к работе" : "Требует настройки")}
+                    </div>
+                  </div>
+                  <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", service.connected ? "bg-emerald-400" : "bg-slate-500")} />
+                </div>
+              ))}
+            </div>
+          </Section>
         </div>
       )}
 
@@ -357,6 +540,7 @@ export function SettingsPage() {
       {tab === "general" && (
         <>
           <div className="columns-1 gap-5 lg:columns-2">
+            <UpdateSection />
             {(isMobileShell() || Boolean(configuredBaseUrl())) && <MobileServerSection />}
             <Section title="Интерфейс" description="Оформление приложения.">
               <div className="flex flex-col gap-1">
@@ -384,7 +568,6 @@ export function SettingsPage() {
             <ResetDataSection />
           </div>
 
-          <div className="text-xs text-slate-500">Cryon2 · Нативное desktop-приложение · Версия 0.1.0</div>
         </>
       )}
     </div>
@@ -395,6 +578,78 @@ export function SettingsPage() {
 function isMobileShell(): boolean {
   const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
   return Boolean(cap?.isNativePlatform?.());
+}
+
+function UpdateSection() {
+  const [state, setState] = useState<"idle" | "checking" | "downloading">("idle");
+  const [message, setMessage] = useState("");
+  const [release, setRelease] = useState<{ available?: boolean; latest?: string; notesUrl?: string } | null>(null);
+  const android = hasNativeAndroidPlayer();
+
+  const check = async () => {
+    setState("checking");
+    setMessage("");
+    try {
+      const response = await fetch(apiV1BaseUrl() + "/v1/system/update");
+      const body = await response.json() as { available?: boolean; latest?: string; notesUrl?: string; error?: string };
+      if (!response.ok) throw new Error(body.error || "Не удалось проверить обновления");
+      setRelease(body);
+      setMessage(body.available ? `Доступна версия ${body.latest}` : "Установлена последняя версия");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Не удалось проверить обновления");
+    } finally {
+      setState("idle");
+    }
+  };
+
+  const install = async () => {
+    setState("downloading");
+    setMessage("Загружаем обновление и проверяем файл…");
+    if (android && window.CryonAndroid?.installUpdate) {
+      window.CryonAndroid.installUpdate();
+      return;
+    }
+    try {
+      const app = (window as unknown as { go?: { main?: { App?: { InstallUpdate?: () => Promise<void> } } }; runtime?: { Quit?: () => void } });
+      if (!app.go?.main?.App?.InstallUpdate || !app.runtime?.Quit) throw new Error("Установка обновления в этой версии недоступна");
+      await app.go.main.App.InstallUpdate();
+      app.runtime.Quit();
+    } catch (error) {
+      setState("idle");
+      setMessage(error instanceof Error ? error.message : "Не удалось установить обновление");
+    }
+  };
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const error = (event as CustomEvent<string>).detail;
+      setState("idle");
+      setMessage(error || "Файл готов. Подтвердите установку в системном окне Android.");
+    };
+    window.addEventListener("cryon:update-result", handler);
+    return () => window.removeEventListener("cryon:update-result", handler);
+  }, []);
+
+  return (
+    <Section title="Обновления" description="Cryon проверяет официальный GitHub-релиз и загружает подходящий файл. Ваши избранные, настройки и история сохраняются.">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={check} disabled={state !== "idle"} className="rounded-xl bg-white/10 px-4 py-2 text-sm text-slate-200 hover:bg-white/15 disabled:opacity-50">{state === "checking" ? "Проверяем…" : "Проверить обновления"}</button>
+        {release?.available && <button type="button" onClick={() => void install()} disabled={state !== "idle"} className="rounded-xl bg-[#a855f7] px-4 py-2 text-sm font-medium text-white hover:bg-[#9333ea] disabled:opacity-50">{state === "downloading" ? "Загружаем…" : "Установить"}</button>}
+        {release?.notesUrl && <a href={release.notesUrl} target="_blank" rel="noreferrer" className="text-sm text-[#c084fc] hover:text-white">Открыть релиз</a>}
+      </div>
+      {message && <p className="mt-3 text-sm text-slate-400">{message}</p>}
+      {!android && <p className="mt-3 text-xs text-slate-500">Для Windows загрузка и перезапуск выполняются автоматически после выбора установки.</p>}
+    </Section>
+  );
+}
+
+function relativeTime(iso: string): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (minutes < 1) return "только что";
+  if (minutes < 60) return String(minutes) + " мин назад";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return String(hours) + " ч назад";
+  return new Date(iso).toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
 }
 
 /**
@@ -516,21 +771,56 @@ function AccountConnectionsSection() {
 
 function ImportFavoritesSection() {
   const [message, setMessage] = useState<string | null>(null);
+  const [lastResult, setLastResult] = useState<FavoritesImportResult | null>(null);
+  const [spotifyPreview, setSpotifyPreview] = useState<{ path?: string; file?: File; tracks: Track[] } | null>(null);
+  const spotifyFileInput = useRef<HTMLInputElement | null>(null);
+  const [selectedSpotifyIds, setSelectedSpotifyIds] = useState<Set<string>>(new Set());
   const [source, setSource] = useState<"yandex" | "spotify">("yandex");
   const queryClient = useQueryClient();
+  const favoriteIds = useFavoriteIds();
   const mutation = useMutation({
     mutationFn: () => importFavorites(source),
-    onSuccess: (result) => setMessage(`Импорт завершён: обработано ${result.imported} из ${result.found} треков; дубликаты пропущены.`),
+    onSuccess: (result) => {
+      setLastResult(result);
+      setMessage(`Импорт завершён: найдено ${result.found}, добавлено ${result.imported}, уже было ${result.skipped}.`);
+    },
     onError: (error) => setMessage(error instanceof Error ? error.message : "Не удалось импортировать избранное."),
   });
   const spotifyExportMutation = useMutation({
-    mutationFn: importSpotifyLibraryExport,
+    mutationFn: async (selection: { path?: string; file?: File; trackIds: string[] }) => {
+      if (selection.file) return await spotifyFileImportV1(selection.file, "import", selection.trackIds.map((id) => splitTrackId(id).rawId)) as FavoritesImportResult;
+      if (!selection.path) throw new Error("Выберите файл выгрузки");
+      return importSpotifyLibraryExport({ path: selection.path, trackIds: selection.trackIds });
+    },
     onSuccess: (result) => {
-      if (!result) return;
       queryClient.invalidateQueries({ queryKey: ["favorites"] });
-      setMessage(`Импорт завершён: обработано ${result.imported} из ${result.found} треков; дубликаты пропущены.`);
+      setSpotifyPreview(null);
+      setLastResult(result);
+      setMessage(`Импорт завершён: найдено ${result.found}, добавлено ${result.imported}, уже было ${result.skipped}.`);
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : "Не удалось импортировать выгрузку Spotify."),
+  });
+  const spotifyPreviewMutation = useMutation({
+    mutationFn: previewSpotifyLibraryExport,
+    onSuccess: (result) => {
+      if (result) {
+        setSpotifyPreview(result);
+        setSelectedSpotifyIds(new Set(result.tracks.map((track) => track.id)));
+        setLastResult(null);
+        setMessage(null);
+      }
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Не удалось прочитать выгрузку Spotify."),
+  });
+  const mobileSpotifyPreview = useMutation({
+    mutationFn: async (file: File) => ({ file, tracks: mapTracks(await spotifyFileImportV1(file, "preview") as domain.Track[]) }),
+    onSuccess: (result) => {
+      setSpotifyPreview(result);
+      setSelectedSpotifyIds(new Set(result.tracks.map((track) => track.id)));
+      setLastResult(null);
+      setMessage(null);
+    },
+    onError: (error) => setMessage(error instanceof Error ? error.message : "Не удалось прочитать выгрузку Spotify."),
   });
 
   return (
@@ -544,19 +834,53 @@ function ImportFavoritesSection() {
           </div>
           <button
             type="button"
-            onClick={() => source === "spotify" ? spotifyExportMutation.mutate() : mutation.mutate()}
-            disabled={mutation.isPending || spotifyExportMutation.isPending}
+            onClick={() => source === "spotify" ? (hasNativeAndroidPlayer() ? spotifyFileInput.current?.click() : spotifyPreviewMutation.mutate()) : mutation.mutate()}
+            disabled={mutation.isPending || spotifyExportMutation.isPending || spotifyPreviewMutation.isPending || mobileSpotifyPreview.isPending}
             className="inline-flex items-center gap-2 rounded-lg bg-[#a855f7] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#9333ea] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Download size={16} />
-            {mutation.isPending || spotifyExportMutation.isPending ? "Импорт…" : source === "spotify" ? "Выбрать выгрузку" : "Импортировать"}
+            {mutation.isPending || spotifyExportMutation.isPending ? "Импорт…" : spotifyPreviewMutation.isPending ? "Читаем файл…" : source === "spotify" ? "Выбрать выгрузку" : "Импортировать"}
           </button>
         </div>
+        <input ref={spotifyFileInput} type="file" accept=".zip,.json,application/zip,application/json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) mobileSpotifyPreview.mutate(file); }} />
         <div className="flex gap-2">
           {(["yandex", "spotify"] as const).map((id) => <button key={id} type="button" onClick={() => { setSource(id); setMessage(null); }} disabled={mutation.isPending} className={cn("rounded-lg px-3 py-1.5 text-xs font-medium transition-colors", source === id ? "bg-white/15 text-white" : "bg-white/5 text-slate-400 hover:bg-white/10")}>{id === "yandex" ? "Yandex Music" : "Spotify"}</button>)}
         </div>
         {source === "spotify" && <p className="text-xs text-slate-500">В Spotify откройте Account → Privacy settings → Download your data. После получения архива выберите ZIP или файл YourLibrary.json.</p>}
-        {message && <p className={cn("text-sm", mutation.isError || spotifyExportMutation.isError ? "text-rose-300" : "text-emerald-300")}>{message}</p>}
+        {source === "spotify" && spotifyPreview && (
+          <div className="rounded-xl bg-black/20 p-3">
+            <p className="text-sm font-medium text-white">Найдено треков: {spotifyPreview.tracks.length}</p>
+            <p className="mt-1 text-xs text-slate-400">Отмечено: {selectedSpotifyIds.size}. Пока ничего не добавлено в избранное.</p>
+            <div className="mt-2 flex gap-3 text-xs text-slate-300">
+              <button type="button" onClick={() => setSelectedSpotifyIds(new Set(spotifyPreview.tracks.map((track) => track.id)))} className="hover:text-white">Выбрать все</button>
+              <button type="button" onClick={() => setSelectedSpotifyIds(new Set())} className="hover:text-white">Снять выбор</button>
+            </div>
+            <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-slate-300">
+              {spotifyPreview.tracks.map((track, index) => <li key={track.id + index}><label className="flex items-center gap-2 py-1"><input type="checkbox" checked={selectedSpotifyIds.has(track.id)} onChange={(event) => setSelectedSpotifyIds((previous) => { const next = new Set(previous); if (event.target.checked) next.add(track.id); else next.delete(track.id); return next; })} /><span className="min-w-0 flex-1 truncate">{track.artist} — {track.title}</span>{favoriteIds.has(track.id) && <span className="shrink-0 text-slate-500">Уже в избранном</span>}</label></li>)}
+            </ul>
+            <div className="mt-3 flex gap-2">
+              <button type="button" onClick={() => spotifyExportMutation.mutate({ path: spotifyPreview.path, file: spotifyPreview.file, trackIds: [...selectedSpotifyIds] })} disabled={spotifyExportMutation.isPending || selectedSpotifyIds.size === 0} className="rounded-lg bg-[#a855f7] px-3 py-2 text-sm text-white disabled:opacity-50">Добавить выбранные</button>
+              <button type="button" onClick={() => setSpotifyPreview(null)} disabled={spotifyExportMutation.isPending} className="rounded-lg bg-white/10 px-3 py-2 text-sm text-slate-300 disabled:opacity-50">Отмена</button>
+            </div>
+          </div>
+        )}
+        {message && <p className={cn("text-sm", mutation.isError || spotifyExportMutation.isError || spotifyPreviewMutation.isError || mobileSpotifyPreview.isError ? "text-rose-300" : "text-emerald-300")}>{message}</p>}
+        {lastResult && (
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg bg-black/15 p-2">
+              <div className="text-lg font-semibold text-white">{lastResult.found}</div>
+              <div className="text-[11px] text-slate-400">Найдено</div>
+            </div>
+            <div className="rounded-lg bg-black/15 p-2">
+              <div className="text-lg font-semibold text-emerald-300">{lastResult.imported}</div>
+              <div className="text-[11px] text-slate-400">Добавлено</div>
+            </div>
+            <div className="rounded-lg bg-black/15 p-2">
+              <div className="text-lg font-semibold text-slate-300">{lastResult.skipped}</div>
+              <div className="text-[11px] text-slate-400">Уже было</div>
+            </div>
+          </div>
+        )}
       </div>
     </Section>
   );

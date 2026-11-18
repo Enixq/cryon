@@ -10,22 +10,21 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"Cryon2/internal/domain"
 	"Cryon2/internal/logging"
 	"Cryon2/internal/store"
 )
 
 // Store — реализация store.Store на SQLite.
-// Используется чистый Go-драйвер modernc.org/sqlite (без CGO),
-// чтобы сборка .exe не требовала C-компилятора.
+// На desktop используется pure Go-драйвер, на Android — нативный SQLite.
 type Store struct {
 	dbPath string
 	db     *sql.DB
 }
 
 var _ store.Store = (*Store)(nil)
+
+const coreSchemaVersion = 2
 
 // New подготавливает путь к БД в каталоге данных приложения.
 func New(appName string) (*Store, error) {
@@ -42,7 +41,7 @@ func (s *Store) Init(ctx context.Context) error {
 	if s.db != nil {
 		return nil
 	}
-	db, err := sql.Open("sqlite", s.dbPath)
+	db, err := sql.Open(sqliteDriverName, s.dbPath)
 	if err != nil {
 		return err
 	}
@@ -71,9 +70,12 @@ func (s *Store) migrate(ctx context.Context) error {
 	if s.db == nil {
 		return errors.New("sqlite store не инициализирован")
 	}
-
 	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS favorites (
+		`CREATE TABLE IF NOT EXISTS schema_migrations (
+			name TEXT PRIMARY KEY,
+			version INTEGER NOT NULL,
+			applied_at INTEGER NOT NULL
+		);`, `CREATE TABLE IF NOT EXISTS favorites (
 			row_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			added_at INTEGER NOT NULL,
 			service TEXT NOT NULL,
@@ -188,7 +190,24 @@ func (s *Store) migrate(ctx context.Context) error {
 			is_guest INTEGER NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL
 		);`,
-	}
+		`CREATE TABLE IF NOT EXISTS jobs (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL,
+			state TEXT NOT NULL,
+			priority INTEGER NOT NULL DEFAULT 0,
+			payload_json TEXT NOT NULL DEFAULT '',
+			attempt INTEGER NOT NULL DEFAULT 0,
+			max_attempts INTEGER NOT NULL DEFAULT 3,
+			progress REAL NOT NULL DEFAULT 0,
+			message TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			run_after INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			started_at INTEGER,
+			finished_at INTEGER
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(state, run_after, priority DESC, created_at);`}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -196,10 +215,33 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	for _, stmt := range stmts {
+	if _, err := tx.ExecContext(ctx, stmts[0]); err != nil {
+		return fmt.Errorf("создание таблицы миграций: %w", err)
+	}
+	var currentVersion int
+	err = tx.QueryRowContext(ctx, `SELECT version FROM schema_migrations WHERE name = 'core'`).Scan(&currentVersion)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("чтение версии схемы: %w", err)
+	}
+	if currentVersion > coreSchemaVersion {
+		return fmt.Errorf("база создана более новой версией Cryon (версия %d, поддерживается до %d)", currentVersion, coreSchemaVersion)
+	}
+	if currentVersion == coreSchemaVersion {
+		return tx.Commit()
+	}
+
+	for _, stmt := range stmts[1:] {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("миграция: %w", err)
+			return fmt.Errorf("миграция схемы %d: %w", coreSchemaVersion, err)
 		}
+	}
+
+	now := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO schema_migrations(name, version, applied_at) VALUES ('core', ?, ?)
+		ON CONFLICT(name) DO UPDATE SET version = excluded.version, applied_at = excluded.applied_at
+	`, coreSchemaVersion, now); err != nil {
+		return fmt.Errorf("версия схемы: %w", err)
 	}
 	return tx.Commit()
 }
@@ -319,8 +361,7 @@ func (s *Store) FavoriteList(ctx context.Context) ([]domain.Track, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT service, track_id, title, artists_json, album, duration_ms, artwork_url, external_url, playable_kind
 		FROM favorites
-		ORDER BY added_at DESC
-		LIMIT 500;
+		ORDER BY added_at DESC;
 	`)
 	if err != nil {
 		return nil, err
@@ -1099,4 +1140,251 @@ func intOrNull64(v int64) any {
 		return nil
 	}
 	return v
+}
+
+// JobEnqueue persists a new background operation. Jobs default to queued and
+// three attempts so callers can provide only the semantic work description.
+func (s *Store) JobEnqueue(ctx context.Context, job store.Job) (store.Job, error) {
+	if s.db == nil {
+		return store.Job{}, errors.New("sqlite store не инициализирован")
+	}
+	job.Kind = strings.TrimSpace(job.Kind)
+	if job.Kind == "" {
+		return store.Job{}, errors.New("тип задания обязателен")
+	}
+	now := time.Now().UnixMilli()
+	if job.ID == "" {
+		job.ID = fmt.Sprintf("job_%d", time.Now().UnixNano())
+	}
+	if job.State == "" {
+		job.State = store.JobQueued
+	}
+	if job.MaxAttempts <= 0 {
+		job.MaxAttempts = 3
+	}
+	if job.RunAfterMs <= 0 {
+		job.RunAfterMs = now
+	}
+	job.CreatedAtMs = now
+	job.UpdatedAtMs = now
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO jobs(
+			id, kind, state, priority, payload_json, attempt, max_attempts, progress,
+			message, error, run_after, created_at, updated_at, started_at, finished_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, 0), NULLIF(?, 0))
+	`, job.ID, job.Kind, job.State, job.Priority, job.PayloadJSON, job.Attempt, job.MaxAttempts,
+		job.Progress, job.Message, job.Error, job.RunAfterMs, job.CreatedAtMs, job.UpdatedAtMs,
+		job.StartedAtMs, job.FinishedAtMs)
+	if err != nil {
+		return store.Job{}, fmt.Errorf("добавить задание: %w", err)
+	}
+	return job, nil
+}
+
+func (s *Store) JobList(ctx context.Context, limit int) ([]store.Job, error) {
+	if s.db == nil {
+		return nil, errors.New("sqlite store не инициализирован")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, kind, state, priority, payload_json, attempt, max_attempts, progress,
+		       message, error, run_after, created_at, updated_at, started_at, finished_at
+		FROM jobs
+		ORDER BY CASE state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 WHEN 'retrying' THEN 2 ELSE 3 END,
+		         priority DESC, created_at DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("список заданий: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]store.Job, 0)
+	for rows.Next() {
+		job, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// JobClaimNext atomically reserves the highest priority ready job for a worker.
+func (s *Store) JobClaimNext(ctx context.Context, nowMs int64) (store.Job, bool, error) {
+	if s.db == nil {
+		return store.Job{}, false, errors.New("sqlite store не инициализирован")
+	}
+	if nowMs <= 0 {
+		nowMs = time.Now().UnixMilli()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return store.Job{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT id, kind, state, priority, payload_json, attempt, max_attempts, progress,
+		       message, error, run_after, created_at, updated_at, started_at, finished_at
+		FROM jobs
+		WHERE state IN ('queued', 'retrying') AND run_after <= ?
+		ORDER BY priority DESC, created_at ASC
+		LIMIT 1
+	`, nowMs)
+	job, err := scanJob(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.Job{}, false, nil
+	}
+	if err != nil {
+		return store.Job{}, false, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE jobs
+		SET state = ?, attempt = attempt + 1, started_at = ?, updated_at = ?, error = ''
+		WHERE id = ? AND state IN ('queued', 'retrying')
+	`, store.JobRunning, nowMs, nowMs, job.ID)
+	if err != nil {
+		return store.Job{}, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return store.Job{}, false, err
+	}
+	if affected != 1 {
+		return store.Job{}, false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return store.Job{}, false, err
+	}
+	job.State = store.JobRunning
+	job.Attempt++
+	job.StartedAtMs = nowMs
+	job.UpdatedAtMs = nowMs
+	job.Error = ""
+	return job, true, nil
+}
+
+func (s *Store) JobProgress(ctx context.Context, id string, progress float64, message string) error {
+	if s.db == nil {
+		return errors.New("sqlite store не инициализирован")
+	}
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 1 {
+		progress = 1
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE jobs SET progress = ?, message = ?, updated_at = ?
+		WHERE id = ? AND state = 'running'
+	`, progress, strings.TrimSpace(message), time.Now().UnixMilli(), id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("активное задание %q не найдено", id)
+	}
+	return nil
+}
+
+func (s *Store) JobFinish(ctx context.Context, id string, state store.JobState, message, errorMessage string) error {
+	if s.db == nil {
+		return errors.New("sqlite store не инициализирован")
+	}
+	if state != store.JobCompleted && state != store.JobFailed && state != store.JobBlocked && state != store.JobRetrying {
+		return fmt.Errorf("недопустимое финальное состояние %q", state)
+	}
+	now := time.Now().UnixMilli()
+	finishedAt := any(now)
+	runAfter := any(nil)
+	if state == store.JobRetrying {
+		finishedAt = nil
+		// Back off retries so a broken provider cannot spin the worker and drain
+		// battery/network while the application is in the background.
+		runAfter = now + 5_000
+	}
+	progress := 0.0
+	if state == store.JobCompleted {
+		progress = 1
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE jobs
+		SET state = ?, progress = CASE WHEN ? = 1 THEN 1 ELSE progress END,
+		    message = ?, error = ?, updated_at = ?, finished_at = ?,
+		    run_after = CASE WHEN ? IS NULL THEN run_after ELSE ? END
+		WHERE id = ? AND state = 'running'
+	`, state, progress, strings.TrimSpace(message), strings.TrimSpace(errorMessage), now, finishedAt, runAfter, runAfter, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("активное задание %q не найдено", id)
+	}
+	return nil
+}
+
+func (s *Store) JobCancel(ctx context.Context, id string) error {
+	if s.db == nil {
+		return errors.New("sqlite store не инициализирован")
+	}
+	now := time.Now().UnixMilli()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE jobs
+		SET state = 'cancelled', updated_at = ?, finished_at = ?, message = 'Отменено пользователем'
+		WHERE id = ? AND state IN ('queued', 'retrying', 'blocked')
+	`, now, now, id)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("ожидающее задание %q не найдено", id)
+	}
+	return nil
+}
+
+type jobScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanJob(scanner jobScanner) (store.Job, error) {
+	var (
+		job                 store.Job
+		state               string
+		startedAt, finished sql.NullInt64
+	)
+	err := scanner.Scan(
+		&job.ID, &job.Kind, &state, &job.Priority, &job.PayloadJSON, &job.Attempt,
+		&job.MaxAttempts, &job.Progress, &job.Message, &job.Error, &job.RunAfterMs,
+		&job.CreatedAtMs, &job.UpdatedAtMs, &startedAt, &finished,
+	)
+	if err != nil {
+		return store.Job{}, err
+	}
+	job.State = store.JobState(state)
+	if startedAt.Valid {
+		job.StartedAtMs = startedAt.Int64
+	}
+	if finished.Valid {
+		job.FinishedAtMs = finished.Int64
+	}
+	return job, nil
 }

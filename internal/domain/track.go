@@ -67,3 +67,47 @@ type NewReleaser interface {
 type ArtistReleaser interface {
 	ArtistNewReleases(ctx context.Context, artist string, limit int) ([]Track, error)
 }
+
+// CanonicalTrack is a source-independent musical work used by library,
+// recommendation and playlist layers. Source-specific audio stays in
+// PlaybackCandidate records.
+type CanonicalTrack struct {
+	ID                 string    `json:"id"`
+	Title              string    `json:"title"`
+	NormalizedTitle    string    `json:"normalizedTitle"`
+	Artist             string    `json:"artist"`
+	NormalizedArtist   string    `json:"normalizedArtist"`
+	Album              string    `json:"album,omitempty"`
+	DurationMs         int       `json:"durationMs,omitempty"`
+	ArtworkURL         string    `json:"artworkUrl,omitempty"`
+	Explicit           bool      `json:"explicit"`
+	IdentityConfidence float64   `json:"identityConfidence"`
+	MetadataSource     ServiceID `json:"metadataSource"`
+}
+
+// VersionKind describes a recording variant so the resolver can avoid choosing
+// a live, cover or clean version when an original is available.
+type VersionKind string
+
+const (
+	VersionUnknown  VersionKind = "unknown"
+	VersionOriginal VersionKind = "original"
+	VersionLive     VersionKind = "live"
+	VersionCover    VersionKind = "cover"
+	VersionRemaster VersionKind = "remaster"
+	VersionClean    VersionKind = "clean"
+)
+
+// PlaybackCandidate binds one playable source item to a CanonicalTrack.
+type PlaybackCandidate struct {
+	ID                 string      `json:"id"`
+	CanonicalTrackID   string      `json:"canonicalTrackId"`
+	Track              Track       `json:"track"`
+	IdentityConfidence float64     `json:"identityConfidence"`
+	Version            VersionKind `json:"version"`
+	Explicit           bool        `json:"explicit"`
+	Official           bool        `json:"official"`
+	Availability       bool        `json:"availability"`
+	SourcePriority     int         `json:"sourcePriority"`
+	SelectionReason    string      `json:"selectionReason,omitempty"`
+}
