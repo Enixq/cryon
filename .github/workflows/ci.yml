@@ -24,6 +24,14 @@ jobs:
         # Корневой go.sum не лежит в репо (см. .gitignore) — как и в release.yml.
         run: go mod tidy
 
+      - name: Placeholder for go:embed
+        # main.go встраивает frontend/dist; в чистом чекауте его нет.
+        # Тестам содержимое не нужно — важно только, чтобы пакет компилировался.
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path frontend/dist -Force | Out-Null
+          Set-Content frontend/dist/index.html '<!doctype html>'
+
       - name: Vet
         run: go vet ./...
 
