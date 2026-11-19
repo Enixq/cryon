@@ -20,6 +20,10 @@ jobs:
           go-version: '1.26'
           cache: false
 
+      - name: Sync go.sum
+        # Корневой go.sum не лежит в репо (см. .gitignore) — как и в release.yml.
+        run: go mod tidy
+
       - name: Vet
         run: go vet ./...
 
