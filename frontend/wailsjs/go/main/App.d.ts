@@ -110,6 +110,8 @@ export function PlayerPause():Promise<void>;
 
 export function PlayerPlay(arg1:string,arg2:string):Promise<void>;
 
+export function PlayerPlayAt(arg1:string,arg2:string,arg3:number):Promise<void>;
+
 export function PlayerResume():Promise<void>;
 
 export function PlayerSeek(arg1:number):Promise<void>;
@@ -171,6 +173,8 @@ export function SetSetting(arg1:string,arg2:string):Promise<void>;
 export function SetSoundCloudClientID(arg1:string):Promise<void>;
 
 export function SetSpotifyCredentials(arg1:string,arg2:string):Promise<void>;
+
+export function SetTaskbarPlaybackState(arg1:boolean,arg2:boolean):Promise<void>;
 
 export function SetYandexToken(arg1:string):Promise<void>;
 

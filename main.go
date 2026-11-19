@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 
 	"Cryon2/internal/core"
@@ -19,6 +20,10 @@ var assets embed.FS
 // window.go.main.App.*. Методы *core.App промотируются в набор методов
 // обёртки автоматически.
 type App struct{ *core.App }
+
+func (a *App) SetTaskbarPlaybackState(playing, hasTrack bool) {
+	setTaskbarPlaybackState(playing, hasTrack)
+}
 
 func main() {
 	app := &App{core.NewApp()}
@@ -42,8 +47,14 @@ func main() {
 			Handler: app.AssetHandler(),
 		},
 		BackgroundColour: &options.RGBA{R: 8, G: 10, B: 25, A: 1},
-		OnStartup:        app.Startup,
-		OnShutdown:       app.Shutdown,
+		OnStartup: func(ctx context.Context) {
+			app.Startup(ctx)
+			startTaskbarControls(ctx)
+		},
+		OnShutdown: func(ctx context.Context) {
+			stopTaskbarControls()
+			app.Shutdown(ctx)
+		},
 		Bind: []interface{}{
 			app,
 		},

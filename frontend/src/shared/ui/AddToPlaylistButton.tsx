@@ -11,13 +11,15 @@ import { cn } from "../lib/cn";
 
 interface Props {
   track: Track;
+  opensUp?: boolean;
+  alwaysVisible?: boolean;
 }
 
 /**
  * Кнопка «+» рядом с треком: открывает меню пользовательских плейлистов,
  * позволяет добавить трек в существующий или создать новый плейлист.
  */
-export function AddToPlaylistButton({ track }: Props) {
+export function AddToPlaylistButton({ track, opensUp = false, alwaysVisible = false }: Props) {
   const [open, setOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [added, setAdded] = useState<string | null>(null);
@@ -76,7 +78,7 @@ export function AddToPlaylistButton({ track }: Props) {
         }}
         className={cn(
           "grid h-7 w-7 place-items-center rounded-full text-slate-400 transition-colors hover:bg-white/10 hover:text-white",
-          !open && "opacity-0 group-hover:opacity-100",
+          !open && !alwaysVisible && "opacity-0 group-hover:opacity-100",
         )}
         aria-label="Добавить в плейлист"
       >
@@ -85,7 +87,7 @@ export function AddToPlaylistButton({ track }: Props) {
 
       {open && (
         <div
-          className="absolute right-0 top-9 z-20 w-60 rounded-xl border border-white/10 bg-[#1a1a24] p-2 shadow-2xl"
+          className={cn("absolute right-0 z-20 w-60 rounded-xl border border-white/10 bg-[#1a1a24] p-2 shadow-2xl", opensUp ? "bottom-9" : "top-9")}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-2 py-1 text-xs uppercase tracking-wider text-slate-500">

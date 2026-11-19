@@ -74,7 +74,7 @@ const DEFAULT_PLAYBACK_PREFERENCES: PlaybackPreferencesV1 = {
   officialOnly: false,
   sourcePriority: {},
 };
-const PLAYBACK_SOURCE_ORDER: SourceId[] = ["local", "soundcloud", "yandex", "youtube"];
+const PLAYBACK_SOURCE_ORDER: SourceId[] = ["soundcloud", "youtube", "local", "yandex"];
 
 type SettingsTab = "music" | "connections" | "playback" | "diagnostics" | "general";
 

@@ -457,6 +457,7 @@ paths:
               properties:
                 trackId: { type: string }
                 streamUrl: { type: string }
+                positionS: { type: number, minimum: 0, description: Position at which playback starts, in seconds. }
       responses:
         '204': { description: Playback started. }
   /v1/playback/pause:
@@ -557,7 +558,7 @@ components:
       properties:
         backend: { type: string, enum: [mpv, none] }
         available: { type: boolean }
-        state: { type: string, enum: [idle, playing, paused] }
+        state: { type: string, enum: [idle, playing, paused, error] }
         trackId: { type: string }
         positionS: { type: number }
         durationS: { type: number }
@@ -695,6 +696,11 @@ components:
       properties:
         track: { $ref: '#/components/schemas/Track' }
         failedService: { type: string, description: Source whose stream failed. }
+        excludedCandidates:
+          type: array
+          maxItems: 32
+          description: Already attempted source and track IDs in the form source:trackId.
+          items: { type: string }
     PlaybackFallback:
       type: object
       required: [track, streamUrl, reason]

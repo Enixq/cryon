@@ -15,6 +15,7 @@ import { useEffect } from "react";
 import { usePlayerStore } from "../../store/playerStore";
 import { useTrackCover } from "./useTrackCover";
 import { hasNativeAndroidPlayer } from "./nativeAndroidPlayer";
+import { isWailsRuntime } from "../api/client";
 
 // Смещение перемотки по умолчанию для seekbackward/seekforward (сек).
 const SEEK_STEP = 10;
@@ -26,6 +27,31 @@ export function useMediaSession(): void {
   const progress = usePlayerStore((s) => s.progress);
   const duration = usePlayerStore((s) => s.effectiveDuration());
   const coverUrl = useTrackCover(track);
+
+  useEffect(() => {
+    if (!isWailsRuntime() || hasNativeAndroidPlayer()) return;
+    let active = true;
+    void import("../../../wailsjs/go/main/App").then((app) => {
+      if (active) void app.SetTaskbarPlaybackState(isPlaying, Boolean(track)).catch(() => {});
+    });
+    return () => { active = false; };
+  }, [isPlaying, Boolean(track)]);
+
+  useEffect(() => {
+    if (!isWailsRuntime() || hasNativeAndroidPlayer()) return;
+    let off = () => {};
+    let active = true;
+    void import("../../../wailsjs/runtime/runtime").then(({ EventsOn }) => {
+      if (!active) return;
+      off = EventsOn("desktop:media-command", (command: string) => {
+        const state = usePlayerStore.getState();
+        if (command === "toggle") state.togglePlay();
+        else if (command === "next") state.next();
+        else if (command === "previous") state.previous();
+      });
+    });
+    return () => { active = false; off(); };
+  }, []);
 
   // Обработчики действий ОС — регистрируем один раз. Внутри читаем актуальный
   // стор через getState(), поэтому пересоздавать их при смене трека не нужно.

@@ -14,6 +14,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { usePlayerStore } from "../store/playerStore";
 import { Slider } from "../shared/ui/Slider";
 import { Cover } from "../shared/ui/Cover";
@@ -84,14 +85,17 @@ export function PlayerBar() {
     <footer className="flex h-[88px] shrink-0 items-center gap-3 border-t border-white/5 bg-[#0c0e1a]/90 px-3 backdrop-blur-xl sm:gap-6 sm:px-6">
       {/* Слева: текущий трек. На узких экранах ширина ужимается, чтобы центр
           с транспортом не сжимался и не перекрывался. */}
-      <div className="flex w-[160px] items-center gap-3 lg:w-[280px]">
+      <div className="flex min-w-[250px] max-w-[440px] flex-[1_1_360px] items-center gap-2 lg:min-w-[350px]">
         {track ? (
           <>
             <Cover accent={track.accent} src={coverUrl} alt={track.title} className="h-14 w-14 shrink-0" iconSize={22} />
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-white">{track.title}</div>
-              <div className="truncate text-xs text-slate-400">
-                <ArtistLink name={track.artist} /> · {sourceName(track.source)}
+            <div className="min-w-0 flex-1">
+              <ScrollingTitle title={track.title} />
+              <div className="flex min-w-0 items-center gap-1 text-xs text-slate-400" title={`${track.artist} · ${sourceName(track.source)}`}>
+                <span className="min-w-0 truncate"><ArtistLink name={track.artist} /></span>
+                <span className="min-w-0 max-w-[45%] truncate border-l border-white/10 pl-1.5 text-slate-400">
+                  {sourceName(track.source)}
+                </span>
               </div>
             </div>
             <button
@@ -109,7 +113,7 @@ export function PlayerBar() {
       </div>
 
       {/* Центр: транспорт + полоска времени */}
-      <div className="flex flex-1 flex-col items-center gap-2">
+      <div className="flex min-w-0 flex-[2_1_480px] flex-col items-center gap-2">
         <div className="flex items-center gap-5">
           <button
             onClick={toggleShuffle}
@@ -210,5 +214,25 @@ export function PlayerBar() {
         </button>
       </div>
     </footer>
+  );
+}
+
+function ScrollingTitle({ title }: { title: string }) {
+  const container = useRef<HTMLDivElement>(null);
+  const text = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState(0);
+  useLayoutEffect(() => {
+    const update = () => setOverflow(Math.max(0, (text.current?.scrollWidth ?? 0) - (container.current?.clientWidth ?? 0)));
+    update();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    if (container.current) observer?.observe(container.current);
+    if (text.current) observer?.observe(text.current);
+    window.addEventListener("resize", update);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", update); };
+  }, [title]);
+  return (
+    <div ref={container} title={title} className="overflow-hidden text-sm font-semibold text-white">
+      <div ref={text} className={overflow > 1 ? "player-title-scroll" : undefined} style={overflow > 1 ? { "--title-overflow": `${overflow}px`, "--title-scroll-duration": `${Math.max(7, overflow / 20 + 4)}s` } as React.CSSProperties : undefined}>{title}</div>
+    </div>
   );
 }

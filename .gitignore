@@ -58,3 +58,4 @@ android/build/
 # Temporary files
 *.tmp
 *.temp
+frontend/.playwright-cli/

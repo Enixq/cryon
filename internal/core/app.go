@@ -828,12 +828,20 @@ func (a *App) ResolvePlayableTrack(track domain.Track) (domain.Track, error) {
 // the current playback candidate has actually failed. It deliberately runs only
 // on failure so normal playback does not wait for extra provider searches.
 func (a *App) ResolvePlaybackFallback(track domain.Track, failedService string) (domain.PlaybackCandidate, bool) {
+	return a.resolvePlaybackFallback(track, failedService, nil)
+}
+
+func (a *App) resolvePlaybackFallback(track domain.Track, failedService string, excludedCandidates []string) (domain.PlaybackCandidate, bool) {
 	query := strings.TrimSpace(strings.Join(append(append([]string{}, track.Artists...), track.Title), " "))
 	if query == "" {
 		return domain.PlaybackCandidate{}, false
 	}
 
 	failed := domain.ServiceID(failedService)
+	excluded := make(map[string]struct{}, len(excludedCandidates))
+	for _, candidate := range excludedCandidates {
+		excluded[candidate] = struct{}{}
+	}
 	sources := []domain.ServiceID{
 		domain.ServiceLocal,
 		domain.ServiceSoundCloud,
@@ -850,7 +858,7 @@ func (a *App) ResolvePlaybackFallback(track domain.Track, failedService string) 
 		wg      sync.WaitGroup
 	)
 	for _, source := range sources {
-		if source == failed {
+		if len(excluded) == 0 && source == failed {
 			continue
 		}
 		svc, ok := a.registry[source]
@@ -870,6 +878,9 @@ func (a *App) ResolvePlaybackFallback(track domain.Track, failedService string) 
 			}
 			for _, candidate := range candidates {
 				if candidate.PlayableKind != domain.PlayableStream || !sameTrack(track, candidate) {
+					continue
+				}
+				if _, tried := excluded[string(candidate.Service)+":"+candidate.ID]; tried {
 					continue
 				}
 				mu.Lock()
@@ -897,9 +908,13 @@ func (a *App) ResolvePlaybackFallback(track domain.Track, failedService string) 
 			continue
 		}
 		for _, candidate := range identity.RankCandidates(group.Candidates, preferences) {
-			if candidate.Track.Service != failed {
-				return candidate, true
+			if _, tried := excluded[string(candidate.Track.Service)+":"+candidate.Track.ID]; tried {
+				continue
 			}
+			if len(excluded) == 0 && candidate.Track.Service == failed {
+				continue
+			}
+			return candidate, true
 		}
 	}
 	return domain.PlaybackCandidate{}, false
@@ -1492,10 +1507,10 @@ func (a *App) SetSetting(key string, value string) error {
 
 func defaultPlaybackPreferences() identity.Preferences {
 	return identity.Preferences{SourcePriority: map[domain.ServiceID]int{
-		domain.ServiceLocal:      40,
-		domain.ServiceSoundCloud: 30,
-		domain.ServiceYandex:     20,
-		domain.ServiceYouTube:    10,
+		domain.ServiceLocal:      20,
+		domain.ServiceSoundCloud: 40,
+		domain.ServiceYouTube:    30,
+		domain.ServiceYandex:     0,
 	}}
 }
 
@@ -2189,6 +2204,10 @@ func (a *App) PlayerBackendAvailable() bool {
 // PlayerPlay начинает воспроизведение потока через mpv.
 func (a *App) PlayerPlay(trackID string, streamURL string) error {
 	return a.player.Play(trackID, streamURL)
+}
+
+func (a *App) PlayerPlayAt(trackID string, streamURL string, positionS float64) error {
+	return a.player.PlayAt(trackID, streamURL, positionS)
 }
 
 // PlayerPause ставит на паузу.

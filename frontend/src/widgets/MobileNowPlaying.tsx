@@ -73,13 +73,12 @@ export function MobileNowPlaying() {
   const lyrics = useLyrics(track);
   const activeLyric = activeLineIndex(lyrics.lines, progress);
 
-  if (!track) return null;
-
   // Свайп вниз закрывает плеер (жест «смахнуть лист»). Активен только в режиме
   // обложки: когда открыта очередь, вертикальный свайп нужен для её прокрутки.
   // Слайдер перемотки и транспорт помечены data-noswipe — горизонтальная
   // перемотка и тапы по кнопкам не должны превращаться в закрытие.
   const drag = useRef<{ startX: number; startY: number; active: boolean; y: number } | null>(null);
+  const coverDrag = useRef<{ x: number; y: number; delta: number; horizontal: boolean } | null>(null);
   const [dragY, setDragY] = useState(0);
   const [dragging, setDragging] = useState(false);
 
@@ -123,6 +122,34 @@ export function MobileNowPlaying() {
     }
     setDragY(0);
   }
+
+  function onCoverTouchStart(event: TouchEvent<HTMLDivElement>) {
+    const touch = event.touches[0];
+    if (touch) coverDrag.current = { x: touch.clientX, y: touch.clientY, delta: 0, horizontal: false };
+  }
+
+  function onCoverTouchMove(event: TouchEvent<HTMLDivElement>) {
+    const gesture = coverDrag.current;
+    const touch = event.touches[0];
+    if (!gesture || !touch) return;
+    const dx = touch.clientX - gesture.x;
+    const dy = touch.clientY - gesture.y;
+    if (!gesture.horizontal && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) gesture.horizontal = true;
+    if (gesture.horizontal) { gesture.delta = dx; event.stopPropagation(); }
+  }
+
+  function onCoverTouchEnd(event: TouchEvent<HTMLDivElement>) {
+    const gesture = coverDrag.current;
+    coverDrag.current = null;
+    if (!gesture?.horizontal || Math.abs(gesture.delta) < 55) return;
+    event.stopPropagation();
+    endDrag();
+    if (gesture.delta < 0) next();
+    else if (currentIndex > 0) playAt(currentIndex - 1);
+    else if (repeat === "all" && queue.length > 1) playAt(queue.length - 1);
+  }
+
+  if (!track) return null;
 
   const duration = track ? engineDuration || track.duration : 0;
 
@@ -194,7 +221,7 @@ export function MobileNowPlaying() {
               </div>
             </div>
           ) : (
-            <div className="flex min-h-0 flex-1 items-center justify-center">
+            <div role="group" aria-label="Обложка: свайп для смены трека" className="flex min-h-0 flex-1 items-center justify-center" style={{ touchAction: "pan-y" }} onTouchStart={onCoverTouchStart} onTouchMove={onCoverTouchMove} onTouchEnd={onCoverTouchEnd} onTouchCancel={() => { coverDrag.current = null; }}>
               <Cover
                 accent={track.accent}
                 src={coverUrl}

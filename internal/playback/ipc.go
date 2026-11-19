@@ -87,6 +87,10 @@ func (c *Controller) queryDurationLocked() (float64, error) {
 // queryEOFLocked проверяет свойство eof-reached mpv (конец трека достигнут).
 // Вызывается под c.mu.
 func (c *Controller) queryEOFLocked() (bool, error) {
+	return c.queryBoolLocked("eof-reached")
+}
+
+func (c *Controller) queryBoolLocked(property string) (bool, error) {
 	if strings.TrimSpace(c.ipcPath) == "" {
 		return false, errUnavailable
 	}
@@ -96,7 +100,7 @@ func (c *Controller) queryEOFLocked() (bool, error) {
 	}
 	defer conn.Close()
 
-	payload := map[string]any{"command": []any{"get_property", "eof-reached"}}
+	payload := map[string]any{"command": []any{"get_property", property}}
 	if err := json.NewEncoder(conn).Encode(payload); err != nil {
 		return false, err
 	}
@@ -105,10 +109,13 @@ func (c *Controller) queryEOFLocked() (bool, error) {
 	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&response); err != nil {
 		return false, err
 	}
+	if value, ok := response["error"].(string); ok && value != "success" {
+		return false, fmt.Errorf("mpv get_property %s завершился ошибкой: %s", property, value)
+	}
 	if v, ok := response["data"].(bool); ok {
 		return v, nil
 	}
-	return false, nil
+	return false, errors.New("нет логического значения в ответе mpv")
 }
 
 // waitForIPC ждёт готовности IPC-сокета mpv в течение timeout.

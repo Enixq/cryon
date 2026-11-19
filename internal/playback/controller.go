@@ -8,6 +8,7 @@ package playback
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,10 +51,11 @@ type Controller struct {
 	ipcPath string  // путь к IPC-сокету/пайпу
 	backend Backend // текущий движок
 
-	cmd     *exec.Cmd
-	state   string
-	trackID string
-	volume  int
+	cmd       *exec.Cmd
+	state     string
+	trackID   string
+	startedAt time.Time
+	volume    int
 	// eqInner — внутренние звенья фильтра эквалайзера (equalizer=...,equalizer=...)
 	// без обёртки lavfi[...] или "" (плоская АЧХ). Хранятся отдельно от
 	// нормализации, чтобы собирать общий граф af из включённых звеньев.
@@ -93,11 +95,18 @@ func (c *Controller) Available() bool {
 
 // Play запускает mpv на указанном URL/пути к файлу.
 func (c *Controller) Play(trackID, streamURL string) error {
+	return c.PlayAt(trackID, streamURL, 0)
+}
+
+func (c *Controller) PlayAt(trackID, streamURL string, positionS float64) error {
 	if !c.Available() {
 		return errUnavailable
 	}
 	if streamURL == "" {
 		return errors.New("пустой URL потока")
+	}
+	if math.IsNaN(positionS) || math.IsInf(positionS, 0) || positionS < 0 {
+		return errors.New("некорректная позиция воспроизведения")
 	}
 
 	c.mu.Lock()
@@ -106,7 +115,7 @@ func (c *Controller) Play(trackID, streamURL string) error {
 	c.stopProcessLocked()
 
 	_ = os.Remove(c.ipcPath)
-	cmd := exec.Command(c.mpvPath,
+	args := []string{
 		"--idle=yes",
 		"--no-terminal",
 		"--force-window=no",
@@ -114,10 +123,15 @@ func (c *Controller) Play(trackID, streamURL string) error {
 		// eof-reached=yes. Так фронтенд надёжно узнаёт об окончании и сам
 		// переходит к следующему треку, а процесс остаётся готов к новому Play.
 		"--keep-open=yes",
-		"--input-ipc-server="+c.ipcPath,
+		"--network-timeout=15",
+		"--input-ipc-server=" + c.ipcPath,
 		fmt.Sprintf("--volume=%d", c.volume),
-		streamURL,
-	)
+	}
+	if positionS > 0 {
+		args = append(args, fmt.Sprintf("--start=%.3f", positionS))
+	}
+	args = append(args, streamURL)
+	cmd := exec.Command(c.mpvPath, args...)
 	applyHideWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("запуск mpv не удался: %w", err)
@@ -132,6 +146,7 @@ func (c *Controller) Play(trackID, streamURL string) error {
 	c.cmd = cmd
 	c.trackID = trackID
 	c.state = "playing"
+	c.startedAt = time.Now()
 	// Новый процесс mpv стартует без фильтров — возвращаем звуковой граф
 	// (эквалайзер + нормализацию), если что-то включено. Ошибку не роняем:
 	// без фильтров трек всё равно играет.
@@ -326,6 +341,12 @@ func (c *Controller) Status() Status {
 		}
 		if eof, err := c.queryEOFLocked(); err == nil {
 			st.EOF = eof
+		}
+		if !st.EOF && time.Since(c.startedAt) > 3*time.Second {
+			if idle, err := c.queryBoolLocked("idle-active"); err == nil && idle {
+				st.State = "error"
+				st.Message = "Плеер не смог открыть аудиопоток"
+			}
 		}
 	}
 	return st

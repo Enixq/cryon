@@ -31,6 +31,7 @@ import {
 } from "../shared/api/client";
 import { notify } from "./notificationStore";
 import { recordPlaybackDiagnostic, usePlaybackDiagnosticsStore } from "./playbackDiagnosticsStore";
+import { PlaybackFallbackSession } from "./playbackFallback";
 import { rankRadioTracks, recordRadioSignal } from "./radioSession";
 import { useEqualizerStore, EQ_FREQS } from "./equalizerStore";
 import { usePlaybackSettingsStore, CROSSFADE_MS } from "./playbackSettingsStore";
@@ -74,9 +75,10 @@ export function useAudioEngine() {
   const nativeEndHandledRef = useRef<string | null>(null);
   // Защита от повторного запроса одной и той же неработающей версии и
   // позиция, с которой нужно продолжить на найденной альтернативе.
-  const fallbackRequestedRef = useRef(new Set<string>());
+  const fallbackSessionRef = useRef(new PlaybackFallbackSession());
   const fallbackPendingRef = useRef(new Map<string, number>());
   const fallbackStartPositionRef = useRef(new Map<string, number>());
+  const pendingSeekRef = useRef<{ trackId: string; position: number } | null>(null);
   const playbackGenerationRef = useRef(0);
   const playbackLoadRef = useRef<{ id: string; startedAt: number } | null>(null);
 
@@ -94,7 +96,20 @@ export function useAudioEngine() {
 
   const track = queue[currentIndex];
 
+  const acceptEnginePosition = (trackId: string, position: number) => {
+    const pending = pendingSeekRef.current;
+    if (!pending || pending.trackId !== trackId) return true;
+    if (Math.abs(position - pending.position) > 2) return false;
+    pendingSeekRef.current = null;
+    return true;
+  };
+
   const recordPlaybackStarted = (startedTrack: NonNullable<typeof track>) => {
+    const switched = fallbackSessionRef.current.started(startedTrack);
+    if (switched) {
+      recordPlaybackDiagnostic("fallback", switched.from, switched.position, switched.reason, startedTrack.source, switched.searchMs);
+      notify({ kind: "info", title: "Переключили источник", message: switched.reason });
+    }
     const load = playbackLoadRef.current;
     if (!load || load.id !== startedTrack.id) return;
     playbackLoadRef.current = null;
@@ -112,27 +127,29 @@ export function useAudioEngine() {
     positionSeconds: number,
     errorMessage?: string,
   ) => {
-    if (fallbackRequestedRef.current.has(failedTrack.id)) {
+    const session = fallbackSessionRef.current;
+    if (pendingSeekRef.current?.trackId === failedTrack.id) positionSeconds = pendingSeekRef.current.position;
+    if (!session.fail(failedTrack, positionSeconds)) {
       if (fallbackPendingRef.current.get(failedTrack.id) !== playbackGenerationRef.current) {
         usePlayerStore.getState().pause();
-        const message = errorMessage || `${failedTrack.artist} — ${failedTrack.title}: запасной источник не найден.`;
+        const message = `Не удалось найти работающую версию. ${errorMessage || `${failedTrack.artist} — ${failedTrack.title}.`}`;
         recordPlaybackDiagnostic("failed", failedTrack, positionSeconds, message);
         notify({ kind: "warning", title: "Не удалось воспроизвести трек", message });
       }
       return;
     }
+    fallbackStartPositionRef.current.delete(failedTrack.id);
 
-    fallbackRequestedRef.current.add(failedTrack.id);
     const generation = playbackGenerationRef.current;
     const fallbackStartedAt = performance.now();
     fallbackPendingRef.current.set(failedTrack.id, generation);
-    void resolvePlaybackFallbackV1(failedTrack, failedTrack.source)
+    void resolvePlaybackFallbackV1(session.anchor ?? failedTrack, failedTrack.source, [...session.attempted])
       .then((fallback) => {
         const latest = usePlayerStore.getState();
         if (playbackGenerationRef.current !== generation || latest.currentTrack()?.id !== failedTrack.id) return;
         if (!fallback) {
           latest.pause();
-          const message = errorMessage || `${failedTrack.artist} — ${failedTrack.title}: запасной источник не найден.`;
+          const message = `Не удалось найти работающую версию. ${errorMessage || `${failedTrack.artist} — ${failedTrack.title}.`}`;
           recordPlaybackDiagnostic("failed", failedTrack, positionSeconds, message, undefined, performance.now() - fallbackStartedAt);
           notify({
             kind: "warning",
@@ -141,22 +158,23 @@ export function useAudioEngine() {
           });
           return;
         }
-        const resumeAt = Number.isFinite(positionSeconds) ? Math.max(0, positionSeconds) : 0;
+        const resumeAt = session.resumePosition;
         fallbackStartPositionRef.current.set(fallback.track.id, resumeAt);
-        latest.replaceCurrentTrack(fallback.track);
+        if (resumeAt > 0) pendingSeekRef.current = { trackId: fallback.track.id, position: resumeAt };
         const message = fallback.reason || `${failedTrack.artist} — ${failedTrack.title}: найдена доступная версия.`;
-        recordPlaybackDiagnostic("fallback", failedTrack, resumeAt, message, fallback.track.source, performance.now() - fallbackStartedAt);
+        session.select(fallback.track, failedTrack, message, performance.now() - fallbackStartedAt);
+        latest.replaceCurrentTrack(fallback.track);
         notify({
           kind: "info",
-          title: "Переключили источник",
-          message,
+          title: "Пробуем другую версию",
+          message: `${fallback.track.artist} — ${fallback.track.title}`,
         });
       })
       .catch(() => {
         const latest = usePlayerStore.getState();
         if (playbackGenerationRef.current !== generation || latest.currentTrack()?.id !== failedTrack.id) return;
         latest.pause();
-        const message = errorMessage || `${failedTrack.artist} — ${failedTrack.title}: запасной источник не найден.`;
+        const message = `Не удалось выполнить поиск запасной версии. ${errorMessage || `${failedTrack.artist} — ${failedTrack.title}.`}`;
         recordPlaybackDiagnostic("failed", failedTrack, positionSeconds, message, undefined, performance.now() - fallbackStartedAt);
         notify({
           kind: "warning",
@@ -177,12 +195,13 @@ export function useAudioEngine() {
       const store = usePlayerStore.getState();
       const current = store.currentTrack();
       if (!current || current.id !== state.trackId) return;
-      if (state.playing) recordPlaybackStarted(current);
+      const acceptedPosition = acceptEnginePosition(current.id, state.positionMs / 1000);
+      if (state.playing && acceptedPosition) recordPlaybackStarted(current);
       if (state.durationMs > 0) store.setEngineDuration(current.id, state.durationMs / 1000);
-      store.setEnginePosition(state.positionMs / 1000);
+      if (acceptedPosition && (state.positionMs > 0 || !fallbackSessionRef.current.pending)) store.setEnginePosition(state.positionMs / 1000);
       if (state.state === "ready") nativeEndHandledRef.current = null;
       if (state.state === "error") {
-        requestPlaybackFallback(current, state.positionMs / 1000, state.error || `${current.artist} — ${current.title}: поток прерван.`);
+        requestPlaybackFallback(current, state.positionMs / 1000 || fallbackSessionRef.current.resumePosition, state.error || `${current.artist} — ${current.title}: поток прерван.`);
         return;
       }
       if (state.state !== "ended" || nativeEndHandledRef.current === current.id) return;
@@ -331,8 +350,9 @@ export function useAudioEngine() {
   useEffect(() => {
     if (!track) {
       playbackGenerationRef.current += 1;
-      fallbackRequestedRef.current.clear();
+      fallbackSessionRef.current.reset();
       fallbackStartPositionRef.current.clear();
+      pendingSeekRef.current = null;
       // Очередь могла стать пустой при удалении текущего трека. Явно
       // освобождаем оба движка, чтобы звук не продолжался "в фоне".
       loadedTrackIdRef.current = null;
@@ -356,8 +376,9 @@ export function useAudioEngine() {
     let cancelled = false;
     playbackGenerationRef.current += 1;
     if (!fallbackStartPositionRef.current.has(track.id)) {
-      fallbackRequestedRef.current.clear();
+      fallbackSessionRef.current.reset();
       fallbackStartPositionRef.current.clear();
+      if (pendingSeekRef.current?.trackId !== track.id) pendingSeekRef.current = null;
     }
     loadedTrackIdRef.current = track.id;
     playbackLoadRef.current = { id: track.id, startedAt: performance.now() };
@@ -454,7 +475,7 @@ export function useAudioEngine() {
           return;
         }
         const state = usePlayerStore.getState();
-        const startPositionSeconds = fallbackStartPositionRef.current.get(resolved.track.id) ?? 0;
+        const startPositionSeconds = pendingSeekRef.current?.trackId === resolved.track.id ? pendingSeekRef.current.position : fallbackStartPositionRef.current.get(resolved.track.id) ?? 0;
         fallbackStartPositionRef.current.delete(resolved.track.id);
         playNativeAndroidTrack(resolved.track, streamUrl, state.isPlaying, startPositionSeconds, resolved.mimeType);
         setNativeAndroidPlayerVolume(state.muted ? 0 : state.volume);
@@ -463,17 +484,16 @@ export function useAudioEngine() {
       }
 
       // mpv играет по абсолютному пути/прямому URL (getAudioStreamUrl).
-      if (mpvAvailableRef.current) {
+      if (mpvAvailableRef.current && track.source !== "youtube") {
         const mpvStream = await getAudioStreamInfo(track.id).catch(() => null);
         const mpvUrl = mpvStream?.url || null;
         if (cancelled) return;
         if (mpvUrl) {
           try {
-            await playerPlay(track.id, mpvUrl);
+            const startPositionSeconds = pendingSeekRef.current?.trackId === track.id ? pendingSeekRef.current.position : fallbackStartPositionRef.current.get(track.id) ?? 0;
+            await playerPlay(track.id, mpvUrl, startPositionSeconds);
             playingViaMpvRef.current = true;
-            const startPositionSeconds = fallbackStartPositionRef.current.get(track.id) ?? 0;
             fallbackStartPositionRef.current.delete(track.id);
-            if (startPositionSeconds > 0) await playerSeek(startPositionSeconds).catch(() => {});
             setEnginePosition(startPositionSeconds);
             // Пока поток подбирался, пользователь мог нажать «Пауза»: эффект
             // пауза/воспроизведение к тому моменту видел playingViaMpvRef=false
@@ -506,31 +526,43 @@ export function useAudioEngine() {
         const { volume, muted, isPlaying: shouldPlay } = usePlayerStore.getState();
         const cf = usePlaybackSettingsStore.getState().crossfade;
         const target = muted ? 0 : volume / 100;
-        const startPositionSeconds = fallbackStartPositionRef.current.get(track.id) ?? 0;
+        const startPositionSeconds = pendingSeekRef.current?.trackId === track.id ? pendingSeekRef.current.position : fallbackStartPositionRef.current.get(track.id) ?? 0;
         fallbackStartPositionRef.current.delete(track.id);
+        let html5RetryPending = false;
+        const retryHtml5Stream = (message: string) => {
+          if (html5RetryPending) {
+            requestPlaybackFallback(track, Math.max(usePlayerStore.getState().progress, el.currentTime || 0), message);
+            return;
+          }
+          html5RetryPending = true;
+          window.setTimeout(() => {
+            if (loadedTrackIdRef.current !== track.id) return;
+            const retryUrl = html5Url + (html5Url.includes("?") ? "&" : "?") + "retry=" + Date.now();
+            el.removeAttribute("src");
+            el.load();
+            el.src = retryUrl;
+            if (usePlayerStore.getState().isPlaying) void el.play().catch(() => requestPlaybackFallback(track, usePlayerStore.getState().progress, message));
+          }, 250);
+        };
         el.src = html5Url;
-        el.currentTime = startPositionSeconds;
         // Как только известны метаданные — сообщаем реальную длительность
         // (у локальных файлов теги её часто не содержат).
         const trackId = track.id;
         el.onloadedmetadata = () => {
           usePlayerStore.getState().setEngineDuration(trackId, el.duration);
-          if (startPositionSeconds > 0) {
-            el.currentTime = Math.min(startPositionSeconds, Number.isFinite(el.duration) ? el.duration : startPositionSeconds);
+          const position = pendingSeekRef.current?.trackId === trackId ? pendingSeekRef.current.position : startPositionSeconds;
+          if (position > 0) {
+            el.currentTime = Math.min(position, Number.isFinite(el.duration) ? el.duration : position);
           }
         };
         el.onplaying = () => {
-          if (loadedTrackIdRef.current === trackId) recordPlaybackStarted(track);
+          if (loadedTrackIdRef.current === trackId && acceptEnginePosition(trackId, el.currentTime)) recordPlaybackStarted(track);
         };
         el.onerror = () => {
           // Для уже сменившегося трека молчим: прежний элемент может отдать
           // error после отмены загрузки.
           if (loadedTrackIdRef.current !== trackId) return;
-          requestPlaybackFallback(
-            track,
-            Math.max(usePlayerStore.getState().progress, el.currentTime || 0),
-            `${track.artist} — ${track.title}: источник не отдал аудиопоток.`,
-          );
+          retryHtml5Stream(`${track.artist} — ${track.title}: источник не отдал аудиопоток.`);
         };
         setEnginePosition(startPositionSeconds);
         if (shouldPlay) {
@@ -542,10 +574,13 @@ export function useAudioEngine() {
             .then(() => {
               if (cf) fadeVolumeTo(el, target, CROSSFADE_MS);
             })
-            .catch(() => {
+            .catch((error: unknown) => {
               // Автозапуск может быть заблокирован до первого клика. Чтобы трек
               // потом не заиграл в тишину, возвращаем целевую громкость.
               el.volume = target;
+              if (error instanceof DOMException && error.name === "NotSupportedError" && loadedTrackIdRef.current === trackId) {
+                retryHtml5Stream("Встроенный плеер не поддерживает этот аудиопоток.");
+              }
             });
         } else {
           el.volume = target;
@@ -671,6 +706,10 @@ export function useAudioEngine() {
   useEffect(() => {
     if (seekNonce === seekReqRef.current) return;
     seekReqRef.current = seekNonce;
+    if (track) {
+      pendingSeekRef.current = { trackId: track.id, position: seekTarget };
+      if (fallbackSessionRef.current.anchor) fallbackSessionRef.current.resumePosition = seekTarget;
+    }
     if (hasNativeAndroidPlayer()) {
       seekNativeAndroidPlayer(seekTarget);
     } else if (playingViaMpvRef.current) {
@@ -761,17 +800,22 @@ export function useAudioEngine() {
         const store = usePlayerStore.getState();
         if (playingViaMpvRef.current) {
           const status = await playerStatus();
+          if (status?.state === "error") {
+            requestPlaybackFallback(track, store.progress, status.message || "Плеер не смог открыть аудиопоток.");
+            return;
+          }
           if (status?.eof) {
             await handleTrackEnd(store);
             return;
           }
           if (status) {
-            if (status.positionS > 0) recordPlaybackStarted(track);
+            const acceptedPosition = acceptEnginePosition(track.id, status.positionS);
+            if (status.positionS > 0 && acceptedPosition) recordPlaybackStarted(track);
             // Длительность сетевых потоков (YouTube/Yandex) известна только
             // после старта mpv — сообщаем её в стор, иначе полоска времени,
             // перемотка и форма волны не работают (duration=0 из поиска).
             if (status.durationS > 0) store.setEngineDuration(track.id, status.durationS);
-            store.setEnginePosition(status.positionS);
+            if (acceptedPosition) store.setEnginePosition(status.positionS);
           }
           return;
         }
@@ -780,7 +824,10 @@ export function useAudioEngine() {
         if (el.ended) {
           await handleTrackEnd(store);
         } else {
-          store.setEnginePosition(el.currentTime);
+          if (acceptEnginePosition(track.id, el.currentTime)) {
+            if (!el.paused && el.currentTime > 0) recordPlaybackStarted(track);
+            store.setEnginePosition(el.currentTime);
+          }
           // Плавный переход: у встроенного плеера за CROSSFADE_MS до конца
           // трека начинаем затухание. Запускаем один раз (fadingOutRef), иначе
           // тикер каждые 500 мс перезапускал бы анимацию с текущего уровня.

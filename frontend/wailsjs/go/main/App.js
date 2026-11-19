@@ -202,6 +202,10 @@ export function PlayerPlay(arg1, arg2) {
   return window['go']['main']['App']['PlayerPlay'](arg1, arg2);
 }
 
+export function PlayerPlayAt(arg1, arg2, arg3) {
+  return window['go']['main']['App']['PlayerPlayAt'](arg1, arg2, arg3);
+}
+
 export function PlayerResume() {
   return window['go']['main']['App']['PlayerResume']();
 }
@@ -324,6 +328,10 @@ export function SetSoundCloudClientID(arg1) {
 
 export function SetSpotifyCredentials(arg1, arg2) {
   return window['go']['main']['App']['SetSpotifyCredentials'](arg1, arg2);
+}
+
+export function SetTaskbarPlaybackState(arg1, arg2) {
+  return window['go']['main']['App']['SetTaskbarPlaybackState'](arg1, arg2);
 }
 
 export function SetYandexToken(arg1) {

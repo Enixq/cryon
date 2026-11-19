@@ -1191,17 +1191,18 @@ export async function playerBackendAvailable(): Promise<boolean> {
   }
 }
 
-export async function playerPlay(compositeId: string, streamUrl: string): Promise<void> {
+export async function playerPlay(compositeId: string, streamUrl: string, positionS = 0): Promise<void> {
   if (!isWailsRuntime()) return;
   if (hasApiV1Runtime()) {
     try {
-      await playbackPlayV1(compositeId, streamUrl);
+      await playbackPlayV1(compositeId, streamUrl, positionS);
       return;
     } catch {
       // Compatibility fallback below.
     }
   }
-  await App.PlayerPlay(compositeId, streamUrl);
+  if (positionS > 0) await App.PlayerPlayAt(compositeId, streamUrl, positionS);
+  else await App.PlayerPlay(compositeId, streamUrl);
 }
 
 export async function playerPause(): Promise<void> {
@@ -1297,6 +1298,7 @@ export async function playerStatus(): Promise<{
   positionS: number;
   durationS: number;
   eof: boolean;
+  message?: string;
 } | null> {
   if (!isWailsRuntime()) return null;
   if (hasApiV1Runtime()) {
@@ -1307,6 +1309,7 @@ export async function playerStatus(): Promise<{
         positionS: status.positionS,
         durationS: status.durationS,
         eof: status.eof,
+        message: status.message,
       };
     } catch {
       // Compatibility fallback below.
@@ -1319,6 +1322,7 @@ export async function playerStatus(): Promise<{
       positionS: status?.positionS ?? 0,
       durationS: status?.durationS ?? 0,
       eof: status?.eof ?? false,
+      message: status?.message,
     };
   } catch {
     return null;

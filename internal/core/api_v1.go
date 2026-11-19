@@ -88,8 +88,9 @@ type apiPlaybackResolveResponse struct {
 }
 
 type apiPlaybackFallbackRequest struct {
-	Track         domain.Track `json:"track"`
-	FailedService string       `json:"failedService"`
+	Track              domain.Track `json:"track"`
+	FailedService      string       `json:"failedService"`
+	ExcludedCandidates []string     `json:"excludedCandidates,omitempty"`
 }
 
 type apiPlaybackFallbackResponse struct {
@@ -99,8 +100,9 @@ type apiPlaybackFallbackResponse struct {
 }
 
 type apiPlaybackPlayRequest struct {
-	TrackID   string `json:"trackId"`
-	StreamURL string `json:"streamUrl"`
+	TrackID   string  `json:"trackId"`
+	StreamURL string  `json:"streamUrl"`
+	PositionS float64 `json:"positionS,omitempty"`
 }
 
 type apiPlaybackSeekRequest struct {
@@ -707,7 +709,11 @@ func (a *App) handleAPIPlaybackFallback(w http.ResponseWriter, r *http.Request) 
 	if strings.TrimSpace(req.FailedService) == "" {
 		req.FailedService = string(req.Track.Service)
 	}
-	candidate, ok := a.ResolvePlaybackFallback(req.Track, req.FailedService)
+	if len(req.ExcludedCandidates) > 32 {
+		writeAPIError(w, http.StatusBadRequest, "слишком много исключённых версий")
+		return
+	}
+	candidate, ok := a.resolvePlaybackFallback(req.Track, req.FailedService, req.ExcludedCandidates)
 	if !ok {
 		writeAPIError(w, http.StatusNotFound, "запасная версия трека не найдена")
 		return
@@ -773,7 +779,11 @@ func (a *App) handleAPIPlaybackCommand(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusBadRequest, "trackId и streamUrl обязательны")
 			return
 		}
-		err = a.PlayerPlay(req.TrackID, req.StreamURL)
+		if math.IsNaN(req.PositionS) || math.IsInf(req.PositionS, 0) || req.PositionS < 0 {
+			writeAPIError(w, http.StatusBadRequest, "positionS должен быть неотрицательным числом")
+			return
+		}
+		err = a.PlayerPlayAt(req.TrackID, req.StreamURL, req.PositionS)
 	case "pause":
 		err = a.PlayerPause()
 	case "resume":

@@ -1,10 +1,13 @@
 package core
+
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -80,7 +83,7 @@ var streamProxyClient = &http.Client{
 // как есть (возможно, gzip), а Content-Encoding обратно мы не копируем — браузер
 // принял бы сжатые байты за аудио. Без него транспорт сам прозрачно разожмёт
 // (для уже сжатых медиапотоков это в любом случае no-op).
-var streamProxyHeaders = []string{"Range", "If-Range", "Accept"}
+var streamProxyHeaders = []string{"Range", "If-Range", "Accept", "Referer", "Origin"}
 
 // streamProxyResponseHeaders — заголовки ответа, нужные <audio> для перемотки
 // и корректного декодирования.
@@ -270,48 +273,80 @@ func (h *localAssetHandler) serveRemoteStream(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Ссылку на поток сервис подписывает на время, и на середине трека она может
-	// истечь — апстрим отвечает 403/410. Переоткрываем её и пробуем снова с
-	// небольшим нарастающим бэкоффом: одиночного ретрая не хватало при флапе CDN,
-	// когда и свежая ссылка принимается не сразу. Первая попытка идёт из кэша,
-	// повторные — с принудительным переоткрытием.
-	const maxStreamAttempts = 3
-	var resp *http.Response
-	force := false
-	for attempt := 1; ; attempt++ {
-		streamURL, err := h.resolveStreamURL(service, trackID, force)
-		if err != nil {
-			logging.L().Warn("прокси потока: не удалось получить ссылку", "service", service, "attempt", attempt, "err", err)
+	start, requestedEnd, segmented, requestedRange := youtubeSegmentedRange(service, r.Header.Get("Range"))
+	upstreamRequest := r
+	if segmented {
+		upstreamRequest = r.Clone(r.Context())
+		upstreamRequest.Header = r.Header.Clone()
+		firstEnd := start + youtubeStreamChunkSize - 1
+		if requestedEnd >= 0 && requestedEnd < firstEnd {
+			firstEnd = requestedEnd
+		}
+		upstreamRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, firstEnd))
+	}
+	resp, err := h.fetchStreamResponse(upstreamRequest, service, trackID)
+	if err != nil {
+		if r.Context().Err() == nil {
 			http.Error(w, "поток недоступен", http.StatusBadGateway)
-			return
 		}
-		resp, err = h.fetchUpstream(r, streamURL)
-		if err != nil {
-			logging.L().Warn("прокси потока: апстрим недоступен", "service", service, "attempt", attempt, "err", err)
-			http.Error(w, "поток недоступен", http.StatusBadGateway)
-			return
-		}
-		// Успех и неретраибельные статусы отдаём как есть.
-		if resp.StatusCode != http.StatusForbidden && resp.StatusCode != http.StatusGone {
-			break
-		}
-		resp.Body.Close()
-		if attempt >= maxStreamAttempts {
-			logging.L().Warn("прокси потока: апстрим отвергает ссылку после ретраев", "service", service, "status", resp.StatusCode, "attempts", attempt)
-			http.Error(w, "поток недоступен", http.StatusBadGateway)
-			return
-		}
-		// Следующая попытка — с принудительно переоткрытой ссылкой.
-		invalidateStreamURL(service, trackID)
-		force = true
-		select {
-		case <-time.After(time.Duration(attempt*250) * time.Millisecond):
-		case <-r.Context().Done():
-			// Клиент ушёл (переключил трек/перемотал) — не спим впустую.
-			return
-		}
+		return
 	}
 	defer resp.Body.Close()
+
+	if segmented && resp.StatusCode == http.StatusPartialContent {
+		var first, last, total int64
+		if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes %d-%d/%d", &first, &last, &total); err == nil && first == start && last >= first && last < total && (requestedEnd < 0 || last <= requestedEnd) {
+			finalEnd := total - 1
+			if requestedEnd >= 0 && requestedEnd < finalEnd {
+				finalEnd = requestedEnd
+			}
+			for _, name := range streamProxyResponseHeaders {
+				if v := resp.Header.Get(name); v != "" {
+					w.Header().Set(name, v)
+				}
+			}
+			w.Header().Set("Accept-Ranges", "bytes")
+			w.Header().Set("Content-Length", strconv.FormatInt(finalEnd-start+1, 10))
+			if requestedRange {
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, finalEnd, total))
+				w.WriteHeader(http.StatusPartialContent)
+			} else {
+				w.Header().Del("Content-Range")
+				w.WriteHeader(http.StatusOK)
+			}
+			if _, err := io.Copy(w, resp.Body); err != nil {
+				return
+			}
+			for next := last + 1; next <= finalEnd; {
+				end := next + youtubeStreamChunkSize - 1
+				if end > finalEnd {
+					end = finalEnd
+				}
+				segmentRequest := r.Clone(r.Context())
+				segmentRequest.Header = r.Header.Clone()
+				segmentRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", next, end))
+				segment, err := h.fetchStreamResponse(segmentRequest, service, trackID)
+				if err != nil {
+					return
+				}
+				var segmentStart, segmentEnd, segmentTotal int64
+				_, parseErr := fmt.Sscanf(segment.Header.Get("Content-Range"), "bytes %d-%d/%d", &segmentStart, &segmentEnd, &segmentTotal)
+				if segment.StatusCode != http.StatusPartialContent || parseErr != nil || segmentStart != next || segmentEnd < next || segmentEnd > end || segmentTotal != total {
+					segment.Body.Close()
+					return
+				}
+				_, copyErr := io.Copy(w, segment.Body)
+				segment.Body.Close()
+				if copyErr != nil {
+					return
+				}
+				next = segmentEnd + 1
+			}
+			return
+		}
+		http.Error(w, "некорректный ответ источника", http.StatusBadGateway)
+		return
+	}
 
 	if resp.StatusCode >= 400 {
 		logging.L().Warn("прокси потока: апстрим отказал", "service", service, "status", resp.StatusCode)
@@ -327,14 +362,90 @@ func (h *localAssetHandler) serveRemoteStream(w http.ResponseWriter, r *http.Req
 	}
 	w.WriteHeader(resp.StatusCode)
 	if _, err := io.Copy(w, resp.Body); err != nil {
-		// Обрыв — обычное дело: пользователь переключил трек или перемотал.
 		logging.L().Debug("прокси потока: копирование прервано", "service", service, "err", err)
 	}
 }
 
+const youtubeStreamChunkSize int64 = 1 << 18
+
+func youtubeSegmentedRange(service, header string) (int64, int64, bool, bool) {
+	if service != "youtube" {
+		return 0, 0, false, false
+	}
+	if header == "" {
+		return 0, -1, true, false
+	}
+	if !strings.HasPrefix(header, "bytes=") {
+		return 0, 0, false, false
+	}
+	startText, endText, ok := strings.Cut(strings.TrimPrefix(header, "bytes="), "-")
+	if !ok || startText == "" {
+		return 0, 0, false, false
+	}
+	start, err := strconv.ParseInt(startText, 10, 64)
+	if err != nil || start < 0 || start > (1<<63-1)-youtubeStreamChunkSize {
+		return 0, 0, false, false
+	}
+	if endText == "" {
+		return start, -1, true, true
+	}
+	end, err := strconv.ParseInt(endText, 10, 64)
+	if err != nil || end < start || end-start < youtubeStreamChunkSize {
+		return 0, 0, false, false
+	}
+	return start, end, true, true
+}
+
+func (h *localAssetHandler) fetchStreamResponse(r *http.Request, service, trackID string) (*http.Response, error) {
+	const maxStreamAttempts = 3
+	var resp *http.Response
+	force := false
+	for attempt := 1; ; attempt++ {
+		streamURL, err := h.resolveStreamURL(service, trackID, force)
+		if err != nil {
+			logging.L().Warn("прокси потока: не удалось получить ссылку", "service", service, "attempt", attempt, "err", err)
+			return nil, err
+		}
+		resp, err = h.fetchUpstream(r, streamURL, service)
+		if err != nil {
+			if r.Context().Err() != nil {
+				return nil, r.Context().Err()
+			}
+			var urlError *url.Error
+			if errors.As(err, &urlError) {
+				err = urlError.Err
+			}
+			logging.L().Warn("прокси потока: апстрим недоступен", "service", service, "attempt", attempt, "err", err)
+			if attempt >= maxStreamAttempts {
+				return nil, err
+			}
+		} else if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusGone {
+			resp.Body.Close()
+			if attempt >= maxStreamAttempts {
+				logging.L().Warn("прокси потока: апстрим отвергает ссылку после ретраев", "service", service, "status", resp.StatusCode, "attempts", attempt)
+				return nil, fmt.Errorf("апстрим отверг поток: HTTP %d", resp.StatusCode)
+			}
+			invalidateStreamURL(service, trackID)
+			force = true
+		} else if attempt < maxStreamAttempts && (resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500) {
+			resp.Body.Close()
+			force = false
+		} else {
+			break
+		}
+		select {
+		case <-time.After(time.Duration(attempt*250) * time.Millisecond):
+		case <-r.Context().Done():
+			// Клиент ушёл (переключил трек/перемотал) — не спим впустую.
+			return nil, r.Context().Err()
+		}
+	}
+	return resp, nil
+}
+
 // fetchUpstream выполняет запрос к источнику потока, передавая наверх
 // заголовки клиента (в первую очередь Range — от него зависит перемотка).
-func (h *localAssetHandler) fetchUpstream(r *http.Request, streamURL string) (*http.Response, error) {
+func (h *localAssetHandler) fetchUpstream(r *http.Request, streamURL, service string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, streamURL, nil)
 	if err != nil {
 		return nil, err
@@ -346,5 +457,13 @@ func (h *localAssetHandler) fetchUpstream(r *http.Request, streamURL string) (*h
 	}
 	// Свой User-Agent: часть CDN отвечает 403 на пустой.
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	if service == "youtube" {
+		if req.Header.Get("Referer") == "" {
+			req.Header.Set("Referer", "https://www.youtube.com/")
+		}
+		if req.Header.Get("Origin") == "" {
+			req.Header.Set("Origin", "https://www.youtube.com")
+		}
+	}
 	return streamProxyClient.Do(req)
 }

@@ -390,6 +390,40 @@ func (s apiStaticMusicService) Search(context.Context, string) ([]domain.Track, 
 	return s.tracks, nil
 }
 
+func TestAPIPlaybackFallbackTriesMultipleVersionsBeforeYandex(t *testing.T) {
+	makeTrack := func(service domain.ServiceID, id string) domain.Track {
+		return domain.Track{ID: id, Service: service, Title: "Same Song", Artists: []string{"Artist"}, DurationMs: 180000, PlayableKind: domain.PlayableStream}
+	}
+	app := &App{ctx: context.Background(), registry: map[domain.ServiceID]domain.MusicService{
+		domain.ServiceYouTube:    apiStaticMusicService{id: domain.ServiceYouTube, tracks: []domain.Track{makeTrack(domain.ServiceYouTube, "one"), makeTrack(domain.ServiceYouTube, "two")}},
+		domain.ServiceSoundCloud: apiStaticMusicService{id: domain.ServiceSoundCloud, tracks: []domain.Track{makeTrack(domain.ServiceSoundCloud, "one")}},
+		domain.ServiceYandex:     apiStaticMusicService{id: domain.ServiceYandex, tracks: []domain.Track{makeTrack(domain.ServiceYandex, "one")}},
+	}}
+	original := makeTrack(domain.ServiceYouTube, "one")
+	excluded := []string{"youtube:one"}
+	for _, expected := range []string{"soundcloud:one", "youtube:two", "yandex:one"} {
+		body, err := json.Marshal(apiPlaybackFallbackRequest{Track: original, FailedService: "youtube", ExcludedCandidates: excluded})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/v1/playback/fallback", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		app.APIHandler().ServeHTTP(rec, req)
+		var response apiPlaybackFallbackResponse
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &response) != nil {
+			t.Fatalf("fallback: status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		got := string(response.Track.Service) + ":" + response.Track.ID
+		if got != expected {
+			t.Fatalf("got %s, want %s", got, expected)
+		}
+		excluded = append(excluded, got)
+	}
+	if _, ok := app.resolvePlaybackFallback(original, "youtube", excluded); ok {
+		t.Fatal("reused an already failed version")
+	}
+}
+
 func TestAPIPlaybackFallbackReturnsEquivalentTrack(t *testing.T) {
 	app := &App{
 		ctx: context.Background(),

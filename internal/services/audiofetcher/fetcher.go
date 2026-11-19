@@ -3,11 +3,15 @@ package audiofetcher
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os/exec"
+	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,10 +28,6 @@ type AudioStream struct {
 	Duration int64  `json:"duration"`
 }
 
-// ytClient переиспользуется между вызовами: youtube.Client безопасен для
-// конкурентного использования, и один экземпляр не пересоздаёт http-клиент на
-// каждый трек (а также переиспользует внутреннее состояние библиотеки).
-//
 // HTTPClient задан явно с КОНЕЧНЫМИ таймаутами. По умолчанию kkdai/youtube
 // берёт http.DefaultClient (Timeout: 0) — из-за этого зависший запрос к
 // InnerTube/странице YouTube (медленный TLS под VPN, троттлинг, обрыв сети)
@@ -35,7 +35,7 @@ type AudioStream struct {
 // ждущие Range-запросы плеера). Это и была одна из причин «музыка не всегда
 // включается»: плеер бесконечно буферизовал без ошибки. Бюджеты разнесены по
 // фазам под медленный VPN, но общий предел конечен.
-var ytClient = youtube.Client{HTTPClient: newYouTubeMetadataClient()}
+var ytHTTPClient = newYouTubeMetadataClient()
 
 func newYouTubeMetadataClient() *http.Client {
 	return &http.Client{
@@ -58,6 +58,11 @@ func newYouTubeMetadataClient() *http.Client {
 }
 
 const minimumAudioBitrate = 96000
+
+// streamProbeBytes — размер контрольного блока при проверке потока.
+// Запрашивается в начале (0-1023) и в конце файла (total-1024..total-1).
+// 1024 байт — достаточный размер для валидации аудиоформата.
+const streamProbeBytes = 1024
 
 type audioStreamAttempt struct {
 	name    string
@@ -109,12 +114,9 @@ func raceAudioStreams(ctx context.Context, attempts []audioStreamAttempt) (*Audi
 }
 
 // GetYouTubeAudioStream извлекает прямой аудиопоток видео YouTube по его ID.
-// Работает без API-ключа. Первичная попытка (kkdai/youtube) ограничена
-// собственным под-дедлайном: даже если она зависнет или упадёт, у резолвера
-// останется бюджет на бесключевые фолбэки (InnerTube → Piped → yt-dlp) в
-// пределах общего дедлайна, который ставит вызывающий код (core.GetAudioStream).
+// Работает без API-ключа и параллельно проверяет доступные маршруты.
 func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, error) {
-	stream, primaryErr := raceAudioStreams(ctx, []audioStreamAttempt{
+	attempts := []audioStreamAttempt{
 		{
 			name:    "metadata",
 			timeout: 18 * time.Second,
@@ -125,42 +127,109 @@ func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, e
 		{
 			name:    "innertube",
 			timeout: 18 * time.Second,
-			resolve: func(ctx context.Context) (*AudioStream, error) {
+			resolve: verifyResolver(func(ctx context.Context) (*AudioStream, error) {
 				return getYouTubeAudioStreamWithInnerTube(ctx, videoID)
-			},
+			}),
 		},
-	})
-	if primaryErr == nil {
-		return stream, nil
-	}
-
-	fallback, fallbackErr := raceAudioStreams(ctx, []audioStreamAttempt{
 		{
 			name:    "piped",
 			timeout: 12 * time.Second,
-			resolve: func(ctx context.Context) (*AudioStream, error) {
+			resolve: verifyResolver(func(ctx context.Context) (*AudioStream, error) {
 				return getYouTubeAudioStreamWithPiped(ctx, videoID)
-			},
+			}),
 		},
-		{
-			name:    "yt-dlp",
-			timeout: 20 * time.Second,
-			resolve: func(ctx context.Context) (*AudioStream, error) {
-				return getYouTubeAudioStreamWithYtDlp(ctx, videoID)
-			},
-		},
-	})
-	if fallbackErr == nil {
-		return fallback, nil
 	}
-	return nil, fmt.Errorf("не удалось получить аудиопоток YouTube: основной путь: %v; резервный путь: %w", primaryErr, fallbackErr)
+	if runtime.GOOS != "android" {
+		attempts = append(attempts,
+			audioStreamAttempt{
+				name:    "yt-dlp",
+				timeout: 20 * time.Second,
+				resolve: verifyResolver(func(ctx context.Context) (*AudioStream, error) {
+					return getYouTubeAudioStreamWithYtDlp(ctx, videoID)
+				}),
+			},
+			audioStreamAttempt{
+				name:    "yt-dlp-seekable",
+				timeout: 20 * time.Second,
+				resolve: verifyResolver(func(ctx context.Context) (*AudioStream, error) {
+					return getSeekableYouTubeAudioStreamWithYtDlp(ctx, videoID)
+				}),
+			},
+		)
+	}
+	return raceAudioStreams(ctx, attempts)
 }
 
-// getYouTubeAudioStreamPrimary — первичный путь через kkdai/youtube (клиент
-// ANDROID_VR по умолчанию: InnerTube-плеер, прямые URL без расшифровки сигнатур).
-// Никаких фолбэков внутри не делает — ими управляет GetYouTubeAudioStream, чтобы
-// цепочка была единой и предсказуемой по времени.
+func verifyResolver(resolve func(context.Context) (*AudioStream, error)) func(context.Context) (*AudioStream, error) {
+	return func(ctx context.Context) (*AudioStream, error) {
+		stream, err := resolve(ctx)
+		if err != nil || stream == nil || stream.URL == "" {
+			return stream, err
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+		defer cancel()
+		// known — длина потока, если она уже известна по предыдущей проверке
+		// (0 — ещё нет). Конец контрольного запроса никогда не выходит за конец
+		// файла: googlevideo отвечает 403 на Range за пределами файла вместо
+		// корректного 416, и такой запрос отбраковывал заведомо рабочий поток.
+		probe := func(position, known int64) (int64, error) {
+			end := position + streamProbeBytes - 1
+			if known > 0 && end > known-1 {
+				end = known - 1
+			}
+			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, stream.URL, nil)
+			if err != nil {
+				return 0, err
+			}
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", position, end))
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+			req.Header.Set("Referer", "https://www.youtube.com/")
+			req.Header.Set("Origin", "https://www.youtube.com")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				var urlError *url.Error
+				if errors.As(err, &urlError) {
+					err = urlError.Err
+				}
+				return 0, fmt.Errorf("проверка аудиопотока: %w", err)
+			}
+			defer resp.Body.Close()
+			contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 || strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/json") {
+				return 0, fmt.Errorf("аудиопоток недоступен: HTTP %d", resp.StatusCode)
+			}
+			var sample [1]byte
+			if _, err := io.ReadFull(resp.Body, sample[:]); err != nil {
+				return 0, fmt.Errorf("пустой аудиопоток: %w", err)
+			}
+			var first, last, total int64
+			if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes %d-%d/%d", &first, &last, &total); err == nil && resp.StatusCode == http.StatusPartialContent && first == position && last >= first {
+				return total, nil
+			}
+			if position > 0 {
+				return 0, fmt.Errorf("источник не поддерживает перемотку")
+			}
+			if resp.ContentLength > 0 {
+				return resp.ContentLength, nil
+			}
+			return 0, nil
+		}
+		total, err := probe(0, 0)
+		if err != nil {
+			return nil, err
+		}
+		if total > streamProbeBytes {
+			if _, err := probe(total-streamProbeBytes, total); err != nil {
+				return nil, fmt.Errorf("аудиопоток недоступен после начала: %w", err)
+			}
+		}
+		return stream, nil
+	}
+}
+
+// getYouTubeAudioStreamPrimary получает и проверяет форматы через kkdai/youtube.
 func getYouTubeAudioStreamPrimary(ctx context.Context, videoID string) (*AudioStream, error) {
+	ytClient := youtube.Client{HTTPClient: ytHTTPClient}
 	video, err := ytClient.GetVideoContext(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("не удалось получить данные видео YouTube: %w", err)
@@ -171,39 +240,53 @@ func getYouTubeAudioStreamPrimary(ctx context.Context, videoID string) (*AudioSt
 		return nil, fmt.Errorf("подходящих аудиоформатов не нашлось")
 	}
 
-	// Предпочитаем аудио-only поток (mimeType "audio/..."): он в разы легче
-	// комбинированного видео+аудио, поэтому запускается быстрее. Среди аудио
-	// берём вариант с наибольшим битрейтом. Если аудио-only нет — первый доступный.
-	format := formats[0]
-	var bestAudio *youtube.Format
+	return selectYouTubeAudioFormat(ctx, formats, func(ctx context.Context, format *youtube.Format) (*AudioStream, error) {
+		streamURL, err := ytClient.GetStreamURLContext(ctx, video, format)
+		if err != nil {
+			return nil, err
+		}
+		return &AudioStream{
+			URL:      streamURL,
+			Format:   format.AudioQuality,
+			Quality:  fmt.Sprintf("%dbps", format.Bitrate),
+			Duration: int64(video.Duration.Seconds()),
+		}, nil
+	})
+}
+
+func selectYouTubeAudioFormat(ctx context.Context, formats []youtube.Format, resolve func(context.Context, *youtube.Format) (*AudioStream, error)) (*AudioStream, error) {
+	if len(formats) == 0 {
+		return nil, fmt.Errorf("подходящих аудиоформатов не нашлось")
+	}
+	var candidates []youtube.Format
 	for i := range formats {
-		if !strings.HasPrefix(formats[i].MimeType, "audio/") {
-			continue
-		}
-		if formats[i].Bitrate < minimumAudioBitrate {
-			continue
-		}
-		if bestAudio == nil || formats[i].Bitrate > bestAudio.Bitrate {
-			bestAudio = &formats[i]
+		if strings.HasPrefix(formats[i].MimeType, "audio/") && formats[i].Bitrate >= minimumAudioBitrate {
+			candidates = append(candidates, formats[i])
 		}
 	}
-	if bestAudio != nil {
-		format = *bestAudio
-	} else if format.Bitrate < minimumAudioBitrate {
+	if len(candidates) == 0 && formats[0].Bitrate >= minimumAudioBitrate {
+		candidates = append(candidates, formats[0])
+	}
+	if len(candidates) == 0 {
 		return nil, fmt.Errorf("качество аудиопотока YouTube ниже 96 кбит/с")
 	}
-
-	streamURL, err := ytClient.GetStreamURLContext(ctx, video, &format)
-	if err != nil {
-		return nil, fmt.Errorf("не удалось получить URL аудиопотока YouTube: %w", err)
+	sort.SliceStable(candidates, func(left, right int) bool { return candidates[left].Bitrate > candidates[right].Bitrate })
+	var failures []string
+	for index := range candidates {
+		format := &candidates[index]
+		stream, err := verifyResolver(func(ctx context.Context) (*AudioStream, error) { return resolve(ctx, format) })(ctx)
+		if err == nil && stream != nil && stream.URL != "" {
+			return stream, nil
+		}
+		if err == nil {
+			err = errors.New("пустая ссылка на поток")
+		}
+		failures = append(failures, fmt.Sprintf("формат %d: %v", format.ItagNo, err))
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 	}
-
-	return &AudioStream{
-		URL:      streamURL,
-		Format:   format.AudioQuality,
-		Quality:  fmt.Sprintf("%dbps", format.Bitrate),
-		Duration: int64(video.Duration.Seconds()),
-	}, nil
+	return nil, fmt.Errorf("не удалось получить работающий аудиоформат YouTube (%s)", strings.Join(failures, "; "))
 }
 
 // ParseTrackFromURL определяет источник и ID трека по ссылке.
@@ -327,7 +410,31 @@ func getYouTubeAudioStreamWithPiped(ctx context.Context, videoID string) (*Audio
 }
 
 func getYouTubeAudioStreamWithYtDlp(ctx context.Context, videoID string) (*AudioStream, error) {
-	cmd := exec.CommandContext(ctx, "yt-dlp", "--no-warnings", "--no-playlist", "--socket-timeout", "15", "--retries", "2", "-f", "bestaudio[abr>=96]/bestaudio", "--get-url", "https://www.youtube.com/watch?v="+videoID)
+	return getYtDlpStream(ctx, videoID, "", "bestaudio[abr>=96]/bestaudio")
+}
+
+// getSeekableYouTubeAudioStreamWithYtDlp получает ссылку клиентом ANDROID.
+// Ссылки клиента по умолчанию (ANDROID_VR) Google отдаёт только до первого
+// МиБ: Range с offset >= 1 МиБ отвечает 403, из-за чего трек начинался и
+// замолкал, а перемотка не работала. ANDROID отдаёт полный файл.
+func getSeekableYouTubeAudioStreamWithYtDlp(ctx context.Context, videoID string) (*AudioStream, error) {
+	return getYtDlpStream(ctx, videoID, "android", "bestaudio[abr>=96]/best")
+}
+
+// getYtDlpStream получает ссылку на поток через yt-dlp с заданным клиентом
+// и форматом.
+func getYtDlpStream(ctx context.Context, videoID, playerClient, format string) (*AudioStream, error) {
+	args := []string{
+		"--no-warnings", "--no-playlist",
+		"--socket-timeout", "15", "--retries", "2",
+		"-f", format, "--get-url",
+		"https://www.youtube.com/watch?v=" + videoID,
+	}
+	if playerClient != "" {
+		args = append([]string{"--extractor-args", "youtube:player_client=" + playerClient}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
+	hideConsole(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

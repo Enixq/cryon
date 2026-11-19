@@ -3,6 +3,7 @@ package soundcloud
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -136,36 +137,18 @@ func (s *Service) ResolveStream(ctx context.Context, trackRef string) (*StreamIn
 	}
 
 	track, err := s.fetchTrack(ctx, trackRef, clientID)
+	var statusErr *soundcloudHTTPError
+	if errors.As(err, &statusErr) && (statusErr.status == http.StatusUnauthorized || statusErr.status == http.StatusForbidden) {
+		if fresh, refreshErr := s.refreshClientID(ctx); refreshErr == nil && fresh != "" && fresh != clientID {
+			clientID = fresh
+			track, err = s.fetchTrack(ctx, trackRef, clientID)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	// Выбираем прогрессивный поток (обычный HTTP mp3). HLS требует доп.
-	// проигрывателя, поэтому используем его только как запасной вариант.
-	var progressive, hls *transcoding
-	for i := range track.Media.Transcodings {
-		t := &track.Media.Transcodings[i]
-		switch t.Format.Protocol {
-		case "progressive":
-			if progressive == nil {
-				progressive = t
-			}
-		case "hls":
-			if hls == nil {
-				hls = t
-			}
-		}
-	}
-
-	chosen := progressive
-	if chosen == nil {
-		chosen = hls
-	}
-	if chosen == nil {
-		return nil, fmt.Errorf("soundcloud: у трека нет доступных потоков")
-	}
-
-	streamURL, err := s.resolveTranscoding(ctx, chosen.URL, clientID)
+	chosen, streamURL, err := s.resolveAvailableTranscoding(ctx, track.Media.Transcodings, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +160,58 @@ func (s *Service) ResolveStream(ctx context.Context, trackRef string) (*StreamIn
 		DurationMs: track.DurationMs,
 		ArtworkURL: normalizeArtwork(track.ArtworkURL, s.ensureArtworkHost(ctx)),
 	}, nil
+}
+
+func (s *Service) resolveAvailableTranscoding(ctx context.Context, transcodings []transcoding, clientID string) (*transcoding, string, error) {
+	var failures []string
+	for _, protocol := range []string{"progressive", "hls"} {
+		for index := range transcodings {
+			candidate := &transcodings[index]
+			if candidate.Format.Protocol != protocol || candidate.URL == "" {
+				continue
+			}
+			streamURL, err := s.resolveTranscoding(ctx, candidate.URL, clientID)
+			if err == nil {
+				err = s.verifyStream(ctx, streamURL)
+			}
+			if err == nil {
+				return candidate, streamURL, nil
+			}
+			failures = append(failures, protocol+": "+err.Error())
+			if ctx.Err() != nil {
+				return nil, "", ctx.Err()
+			}
+		}
+	}
+	if len(failures) == 0 {
+		return nil, "", fmt.Errorf("soundcloud: у трека нет доступных потоков")
+	}
+	return nil, "", fmt.Errorf("soundcloud: потоки недоступны (%s)", strings.Join(failures, "; "))
+}
+
+func (s *Service) verifyStream(ctx context.Context, streamURL string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, streamURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Range", "bytes=0-0")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || strings.Contains(contentType, "text/html") || strings.Contains(contentType, "application/json") {
+		return fmt.Errorf("поток вернул HTTP %d", resp.StatusCode)
+	}
+	var sample [1]byte
+	if _, err := io.ReadFull(resp.Body, sample[:]); err != nil {
+		return fmt.Errorf("пустой поток: %w", err)
+	}
+	return nil
 }
 
 // artworkHosts — взаимозаменяемые зеркала CDN обложек SoundCloud: по одному и
@@ -303,6 +338,15 @@ func (s *Service) resolveTranscoding(ctx context.Context, transcodingURL, client
 }
 
 // fetchText выполняет GET и возвращает тело как строку.
+type soundcloudHTTPError struct {
+	status int
+	body   string
+}
+
+func (e *soundcloudHTTPError) Error() string {
+	return fmt.Sprintf("статус %d: %s", e.status, e.body)
+}
+
 func (s *Service) fetchText(ctx context.Context, rawURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -321,7 +365,7 @@ func (s *Service) fetchText(ctx context.Context, rawURL string) (string, error) 
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("статус %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", &soundcloudHTTPError{status: resp.StatusCode, body: strings.TrimSpace(string(body))}
 	}
 	return string(body), nil
 }

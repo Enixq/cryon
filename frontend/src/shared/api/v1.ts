@@ -48,7 +48,7 @@ export type BackgroundJob = {
 export type PlaybackStatusV1 = {
   backend: "mpv" | "none";
   available: boolean;
-  state: "idle" | "playing" | "paused";
+  state: "idle" | "playing" | "paused" | "error";
   trackId?: string;
   positionS: number;
   durationS: number;
@@ -232,11 +232,12 @@ export async function resolvePlaybackV1(track: Track, native = false): Promise<{
 export async function resolvePlaybackFallbackV1(
   track: Track,
   failedService = track.source,
+  excludedCandidates: string[] = [],
 ): Promise<{ track: Track; streamUrl: string; reason: string } | null> {
   const response = await request<PlaybackFallbackResponse>("/v1/playback/fallback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ track: toBackendTrack(track), failedService }),
+    body: JSON.stringify({ track: toBackendTrack(track), failedService, excludedCandidates }),
   });
   if (!response.streamUrl) return null;
   return { track: mapTrack(response.track), streamUrl: response.streamUrl, reason: response.reason };
@@ -266,8 +267,8 @@ async function playbackCommandV1(path: string, body?: unknown): Promise<void> {
   });
 }
 
-export function playbackPlayV1(trackId: string, streamUrl: string): Promise<void> {
-  return playbackCommandV1("/v1/playback/play", { trackId, streamUrl });
+export function playbackPlayV1(trackId: string, streamUrl: string, positionS = 0): Promise<void> {
+  return playbackCommandV1("/v1/playback/play", { trackId, streamUrl, positionS });
 }
 
 export function playbackPauseV1(): Promise<void> {
