@@ -29,32 +29,38 @@ type thumbButton struct {
 }
 
 var (
-	taskbarUpdates            = make(chan taskbarState, 1)
-	taskbarStop               = make(chan struct{})
-	taskbarStartOnce          sync.Once
-	taskbarStopOnce           sync.Once
-	user32                    = windows.NewLazySystemDLL("user32.dll")
-	enumWindows               = user32.NewProc("EnumWindows")
-	getWindowThreadProcessID  = user32.NewProc("GetWindowThreadProcessId")
-	isWindowVisible           = user32.NewProc("IsWindowVisible")
-	getWindowText             = user32.NewProc("GetWindowTextW")
-	setWindowLongPtr          = user32.NewProc("SetWindowLongPtrW")
-	getWindowLongPtr          = user32.NewProc("GetWindowLongPtrW")
-	callWindowProc            = user32.NewProc("CallWindowProcW")
-	registerWindowMessage     = user32.NewProc("RegisterWindowMessageW")
-	createIcon                = user32.NewProc("CreateIcon")
-	destroyIcon               = user32.NewProc("DestroyIcon")
-	findTaskbarWindowCallback = syscall.NewCallback(func(hwnd, result uintptr) uintptr {
+	taskbarUpdates           = make(chan taskbarState, 1)
+	taskbarStop              = make(chan struct{})
+	taskbarStartOnce         sync.Once
+	taskbarStopOnce          sync.Once
+	user32                   = windows.NewLazySystemDLL("user32.dll")
+	enumWindows              = user32.NewProc("EnumWindows")
+	getWindowThreadProcessID = user32.NewProc("GetWindowThreadProcessId")
+	isWindowVisible          = user32.NewProc("IsWindowVisible")
+	getWindowText            = user32.NewProc("GetWindowTextW")
+	setWindowLongPtr         = user32.NewProc("SetWindowLongPtrW")
+	getWindowLongPtr         = user32.NewProc("GetWindowLongPtrW")
+	callWindowProc           = user32.NewProc("CallWindowProcW")
+	registerWindowMessage    = user32.NewProc("RegisterWindowMessageW")
+	createIcon               = user32.NewProc("CreateIcon")
+	destroyIcon              = user32.NewProc("DestroyIcon")
+	// foundHwnd пишет callback EnumWindows; findTaskbarWindow обнуляет его
+	// перед вызовом. Обход окон синхронный, гонки нет.
+	foundHwnd                 uintptr
+	findTaskbarWindowCallback = syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
+		visible, _, _ := isWindowVisible.Call(hwnd)
+		if visible == 0 {
+			return 1
+		}
 		var processID uint32
 		getWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&processID)))
-		visible, _, _ := isWindowVisible.Call(hwnd)
-		if processID != uint32(os.Getpid()) || visible == 0 {
+		if processID != uint32(os.Getpid()) {
 			return 1
 		}
 		var title [256]uint16
 		getWindowText.Call(hwnd, uintptr(unsafe.Pointer(&title[0])), uintptr(len(title)))
 		if windows.UTF16ToString(title[:]) == "Cryon2" {
-			*(*uintptr)(unsafe.Pointer(result)) = hwnd
+			foundHwnd = hwnd
 			return 0
 		}
 		return 1
@@ -80,9 +86,9 @@ func setTaskbarPlaybackState(playing, hasTrack bool) {
 }
 
 func findTaskbarWindow() uintptr {
-	var found uintptr
-	enumWindows.Call(findTaskbarWindowCallback, uintptr(unsafe.Pointer(&found)))
-	return found
+	foundHwnd = 0
+	enumWindows.Call(findTaskbarWindowCallback, 0)
+	return foundHwnd
 }
 
 func taskbarIcon(kind string) uintptr {
