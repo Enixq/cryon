@@ -1,12 +1,17 @@
 package core
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,12 +74,29 @@ func (h *localAssetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // /stream/<service>/<trackID>.
 const streamPrefix = "/stream/"
 
-// streamProxyClient — клиент для прокачки аудио. Без общего таймаута: тело
+// streamProxyClient — клиент для прокачки аудиопотока. Без общего таймаута: тело
 // потока читается всё время воспроизведения трека, и таймаут его бы обрывал.
 var streamProxyClient = &http.Client{
 	Timeout: 0,
 	// Редиректы googlevideo/сервисов проходим сами — заголовок Range должен
 	// уехать и на конечный хост.
+	CheckRedirect: func(*http.Request, []*http.Request) error { return nil },
+}
+
+// streamDownloadClient — клиент скачивания потока в кэш. Фазовые таймауты, а не
+// общий: трек может качаться долго на медленном соединении, но зависнуть на
+// одном чанке он не должен. ResponseHeaderTimeout ловит «соединение есть, а
+// байты не идут».
+var streamDownloadClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 25 * time.Second,
+		ExpectContinueTimeout: 2 * time.Second,
+		MaxIdleConns:          8,
+		IdleConnTimeout:       90 * time.Second,
+	},
 	CheckRedirect: func(*http.Request, []*http.Request) error { return nil },
 }
 
@@ -113,6 +135,57 @@ var streamURLCache = struct {
 	sync.Mutex
 	m map[string]cachedStreamURL
 }{m: map[string]cachedStreamURL{}}
+
+// streamFileCache — кэш ПОЛНОСТЬЮ скачанных потоков в локальные файлы.
+//
+// Зачем: потоковая раздача чанками (как было раньше) обрывала трек на середине,
+// если любой чанк после первого получал 403/503 от googlevideo (rate-limit,
+// протухание ссылки, троттлинг). Браузер видел обрезанный файл и молча
+// останавливал воспроизведение — пользователь получал «то играет, то нет».
+// Скачивание всего файла в кэш один раз (с ретраями и докачкой по Range) и
+// последующая отдача через http.ServeContent делает перемотку и воспроизведение
+// независимыми от нестабильности CDN: данные локальны и всегда полны.
+type cachedStreamFile struct {
+	path string
+	size int64
+	at   time.Time
+}
+
+var streamFileCache = struct {
+	sync.Mutex
+	m    map[string]cachedStreamFile
+	infl map[string]*streamFileCall
+}{m: map[string]cachedStreamFile{}, infl: map[string]*streamFileCall{}}
+
+// streamFileCall дедуплицирует одновременные загрузки одного потока: при старте
+// трека <audio> шлёт несколько Range-запросов почти одновременно, и каждый не
+// должен запускать отдельное скачивание.
+type streamFileCall struct {
+	done chan struct{}
+	path string
+	size int64
+	err  error
+}
+
+// streamFileTTL — сколько держим скачанный файл. Долго: перескачивать трек при
+// повторном прослушивании в рамках сеанса незачем.
+const streamFileTTL = 2 * time.Hour
+
+// streamFileMaxBytes — предохранитель от скачивания гигантских/livestream-видео.
+const streamFileMaxBytes = 200 << 20
+
+// streamDownloadDir — каталог для кэша скачанных потоков.
+func streamDownloadDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "Cryon2", "streams")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
 
 type cachedStreamURL struct {
 	url string
@@ -254,7 +327,7 @@ func parseStreamPath(escapedPath string) (service, trackID string, ok bool) {
 	return service, trackID, true
 }
 
-// serveRemoteStream проксирует аудиопоток внешнего сервиса через собственный
+// serveRemoteStream отдаёт аудиопоток внешнего сервиса через собственный
 // ассет-сервер приложения.
 //
 // Зачем прокси, а не прямая ссылка в <audio src>. Прямые ссылки внешних
@@ -266,6 +339,16 @@ func parseStreamPath(escapedPath string) (service, trackID string, ok bool) {
 // same-origin: перемотка (Range) работает, отказы видны в логе, а Web
 // Audio-граф эквалайзера не получает «испорченный» кросс-доменный источник
 // (иначе он играет тишину).
+//
+// Стратегия раздачи. Раньше поток стримился чанками по 256КБ прямо из
+// googlevideo. Любой чанк после первого, получивший 403/503 (rate-limit,
+// троттлинг, протухание ссылки), обрывал раздачу посередине: браузер видел
+// неполный файл и останавливал воспроизведение — отсюда «то играет, то нет».
+// Теперь файл скачивается в локальный кэш ЦЕЛИКОМ (с ретраями и докачкой по
+// Range), а затем отдаётся через http.ServeContent. Данные локальны и всегда
+// полны, поэтому перемотка и воспроизведение больше не зависят от капризов
+// CDN. Цена — задержка на полное скачивание трека (единицы секунд), что для
+// музыки предпочтительнее срывов на середине.
 func (h *localAssetHandler) serveRemoteStream(w http.ResponseWriter, r *http.Request) {
 	service, trackID, ok := parseStreamPath(r.URL.EscapedPath())
 	if !ok {
@@ -273,97 +356,343 @@ func (h *localAssetHandler) serveRemoteStream(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	start, requestedEnd, segmented, requestedRange := youtubeSegmentedRange(service, r.Header.Get("Range"))
-	upstreamRequest := r
-	if segmented {
-		upstreamRequest = r.Clone(r.Context())
-		upstreamRequest.Header = r.Header.Clone()
-		firstEnd := start + youtubeStreamChunkSize - 1
-		if requestedEnd >= 0 && requestedEnd < firstEnd {
-			firstEnd = requestedEnd
-		}
-		upstreamRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, firstEnd))
-	}
-	resp, err := h.fetchStreamResponse(upstreamRequest, service, trackID)
+	file, contentType, err := h.ensureStreamFile(r.Context(), service, trackID)
 	if err != nil {
 		if r.Context().Err() == nil {
+			logging.L().Warn("прокси потока: не удалось скачать", "service", service, "track", trackID, "err", err)
 			http.Error(w, "поток недоступен", http.StatusBadGateway)
 		}
 		return
 	}
-	defer resp.Body.Close()
+	defer file.Close()
 
-	if segmented && resp.StatusCode == http.StatusPartialContent {
-		var first, last, total int64
-		if _, err := fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes %d-%d/%d", &first, &last, &total); err == nil && first == start && last >= first && last < total && (requestedEnd < 0 || last <= requestedEnd) {
-			finalEnd := total - 1
-			if requestedEnd >= 0 && requestedEnd < finalEnd {
-				finalEnd = requestedEnd
-			}
-			for _, name := range streamProxyResponseHeaders {
-				if v := resp.Header.Get(name); v != "" {
-					w.Header().Set(name, v)
-				}
-			}
-			w.Header().Set("Accept-Ranges", "bytes")
-			w.Header().Set("Content-Length", strconv.FormatInt(finalEnd-start+1, 10))
-			if requestedRange {
-				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, finalEnd, total))
-				w.WriteHeader(http.StatusPartialContent)
-			} else {
-				w.Header().Del("Content-Range")
-				w.WriteHeader(http.StatusOK)
-			}
-			if _, err := io.Copy(w, resp.Body); err != nil {
-				return
-			}
-			for next := last + 1; next <= finalEnd; {
-				end := next + youtubeStreamChunkSize - 1
-				if end > finalEnd {
-					end = finalEnd
-				}
-				segmentRequest := r.Clone(r.Context())
-				segmentRequest.Header = r.Header.Clone()
-				segmentRequest.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", next, end))
-				segment, err := h.fetchStreamResponse(segmentRequest, service, trackID)
-				if err != nil {
-					return
-				}
-				var segmentStart, segmentEnd, segmentTotal int64
-				_, parseErr := fmt.Sscanf(segment.Header.Get("Content-Range"), "bytes %d-%d/%d", &segmentStart, &segmentEnd, &segmentTotal)
-				if segment.StatusCode != http.StatusPartialContent || parseErr != nil || segmentStart != next || segmentEnd < next || segmentEnd > end || segmentTotal != total {
-					segment.Body.Close()
-					return
-				}
-				_, copyErr := io.Copy(w, segment.Body)
-				segment.Body.Close()
-				if copyErr != nil {
-					return
-				}
-				next = segmentEnd + 1
-			}
-			return
-		}
-		http.Error(w, "некорректный ответ источника", http.StatusBadGateway)
+	info, err := file.Stat()
+	if err != nil {
+		http.Error(w, "кэш недоступен", http.StatusInternalServerError)
 		return
 	}
-
-	if resp.StatusCode >= 400 {
-		logging.L().Warn("прокси потока: апстрим отказал", "service", service, "status", resp.StatusCode)
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
 	}
+	http.ServeContent(w, r, "", info.ModTime(), file)
+}
 
-	for _, name := range streamProxyResponseHeaders {
-		if v := resp.Header.Get(name); v != "" {
-			w.Header().Set(name, v)
+// ensureStreamFile возвращает открытый файл скачанного потока и его Content-Type,
+// при необходимости скачивая поток в кэш (с дедупликацией одновременных
+// запросов). Файл остаётся открытым для чтения вызывающим кодом.
+func (h *localAssetHandler) ensureStreamFile(ctx context.Context, service, trackID string) (*os.File, string, error) {
+	key := service + "\x00" + trackID
+
+	// Быстрый путь: файл уже в кэше.
+	streamFileCache.Lock()
+	if hit, ok := streamFileCache.m[key]; ok && time.Since(hit.at) < streamFileTTL {
+		streamFileCache.Unlock()
+		if f, err := os.Open(hit.path); err == nil {
+			if ct := readStreamFileContentType(hit.path); ct != "" {
+				return f, ct, nil
+			}
+			f.Close()
+		}
+		// Файл пропал (очистка ОС) — перескачиваем.
+		delete(streamFileCache.m, key)
+	} else if ok {
+		delete(streamFileCache.m, key)
+	}
+	// Дедупликация: присоединяемся к идущему скачиванию.
+	if call, infl := streamFileCache.infl[key]; infl {
+		streamFileCache.Unlock()
+		select {
+		case <-call.done:
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		}
+		streamFileCache.Lock()
+		hit := streamFileCache.m[key]
+		streamFileCache.Unlock()
+		if call.err != nil {
+			return nil, "", call.err
+		}
+		f, err := os.Open(hit.path)
+		if err != nil {
+			return nil, "", err
+		}
+		return f, readStreamFileContentType(hit.path), nil
+	}
+	call := &streamFileCall{done: make(chan struct{})}
+	streamFileCache.infl[key] = call
+	streamFileCache.Unlock()
+
+	call.path, call.size, call.err = h.downloadStreamToFile(ctx, service, trackID, key)
+
+	streamFileCache.Lock()
+	delete(streamFileCache.infl, key)
+	if call.err == nil {
+		streamFileCache.m[key] = cachedStreamFile{path: call.path, size: call.size, at: time.Now()}
+		h.pruneStreamFileCacheLocked()
+	}
+	streamFileCache.Unlock()
+	close(call.done)
+
+	if call.err != nil {
+		return nil, "", call.err
+	}
+	f, err := os.Open(call.path)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, readStreamFileContentType(call.path), nil
+}
+
+// downloadStreamToFile скачивает поток в файл внутри кэша. Устойчив к
+// прерываниям: при обрыве на середине докачивает остаток по Range с нового
+// разрешённого URL, а не начинает с нуля и не отдаёт обрезанный файл.
+func (h *localAssetHandler) downloadStreamToFile(ctx context.Context, service, trackID, key string) (string, int64, error) {
+	dir, err := streamDownloadDir()
+	if err != nil {
+		return "", 0, err
+	}
+	sum := sha256.Sum256([]byte(key))
+	base := hex.EncodeToString(sum[:])[:24]
+	finalPath := filepath.Join(dir, base)
+	partPath := finalPath + ".part"
+
+	const maxDownloadAttempts = 5
+	var contentType string
+	// forceNext=true требует свежей ссылки: ставим только после 403/410
+	// (источник отверг именно ссылку). При 5xx/сетевом сбое ссылка цела —
+	// переиспользуем её из кэша, не устраивая дорогой повторный резолв.
+	forceNext := false
+	for attempt := 1; attempt <= maxDownloadAttempts; attempt++ {
+		if ctx.Err() != nil {
+			break
+		}
+		// Сколько уже скачано — точка докачки.
+		var have int64
+		if fi, err := os.Stat(partPath); err == nil {
+			have = fi.Size()
+		}
+
+		streamURL, err := h.resolveStreamURL(service, trackID, forceNext)
+		if err != nil {
+			// Не удалось получить ссылку — чистим partial и пробуем снова.
+			_ = os.Remove(partPath)
+			have = 0
+			h.backoff(ctx, attempt)
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
+		if err != nil {
+			return "", 0, err
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		if service == "youtube" {
+			req.Header.Set("Referer", "https://www.youtube.com/")
+			req.Header.Set("Origin", "https://www.youtube.com")
+		}
+		if have > 0 {
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", have))
+		}
+
+		resp, err := streamDownloadClient.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				break
+			}
+			_ = os.Remove(partPath)
+			h.backoff(ctx, attempt)
+			continue
+		}
+
+		// 403/410 — ссылка протухла: инвалидируем кэш URL, убираем partial
+		// (докачка по протухшей ссылке невозможна) и повторяем с новой ссылкой.
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusGone {
+			resp.Body.Close()
+			invalidateStreamURL(service, trackID)
+			_ = os.Remove(partPath)
+			have = 0
+			forceNext = true
+			h.backoff(ctx, attempt)
+			continue
+		}
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			h.backoff(ctx, attempt)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			resp.Body.Close()
+			return "", 0, fmt.Errorf("источник вернул HTTP %d", resp.StatusCode)
+		}
+		if contentType == "" {
+			contentType = resp.Header.Get("Content-Type")
+		}
+
+		// Если сервер не принял Range (дал 200 вместо 206), а у нас уже есть
+		// хвост — начинаем файл заново, иначе допишем дубликаты.
+		shouldTruncate := have > 0 && resp.StatusCode == http.StatusOK
+		f, err := h.appendOrWriteFile(partPath, have, shouldTruncate)
+		if err != nil {
+			resp.Body.Close()
+			return "", 0, err
+		}
+		written, err := h.copyWithLimit(f, resp.Body, streamFileMaxBytes)
+		closeErr := f.Close()
+		resp.Body.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if written >= streamFileMaxBytes {
+			return "", 0, fmt.Errorf("поток превышает допустимый размер")
+		}
+
+		// Определяем полную длину и проверяем полноту файла.
+		expected := expectedStreamLength(resp, have, shouldTruncate)
+		fi, statErr := os.Stat(partPath)
+		if err == nil && statErr == nil && (expected <= 0 || fi.Size() >= expected) {
+			// Скачивание завершено.
+			if rmErr := os.Remove(finalPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				return "", 0, rmErr
+			}
+			if err := os.Rename(partPath, finalPath); err != nil {
+				return "", 0, err
+			}
+			h.writeStreamFileContentType(finalPath, contentType)
+			return finalPath, fi.Size(), nil
+		}
+		if err != nil && ctx.Err() != nil {
+			break
+		}
+		// Прервано/неполно — оставим partial для докачки на следующем заходе.
+		h.backoff(ctx, attempt)
+	}
+	_ = os.Remove(partPath)
+	if ctx.Err() != nil {
+		return "", 0, ctx.Err()
+	}
+	return "", 0, fmt.Errorf("не удалось скачать поток за %d попыток", maxDownloadAttempts)
+}
+
+// appendOrWriteFile открывает partial-файл для докачки с позиции have.
+func (h *localAssetHandler) appendOrWriteFile(partPath string, have int64, truncate bool) (*os.File, error) {
+	if truncate || have <= 0 {
+		f, err := os.OpenFile(partPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		return f, nil
+	}
+	f, err := os.OpenFile(partPath, os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := f.Seek(have, io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// copyWithLimit копирует поток, останавливаясь на streamFileMaxBytes.
+func (h *localAssetHandler) copyWithLimit(dst io.Writer, src io.Reader, limit int64) (int64, error) {
+	return io.Copy(dst, io.LimitReader(src, limit))
+}
+
+// expectedStreamLength вычисляет ожидаемый полный размер файла.
+func expectedStreamLength(resp *http.Response, have int64, truncated bool) int64 {
+	if truncated {
+		have = 0
+	}
+	if resp.StatusCode == http.StatusPartialContent {
+		_, _, total, ok := parseContentRangeTotal(resp.Header.Get("Content-Range"))
+		if ok {
+			return total
 		}
 	}
-	if w.Header().Get("Accept-Ranges") == "" {
-		w.Header().Set("Accept-Ranges", "bytes")
+	if resp.ContentLength > 0 {
+		return have + resp.ContentLength
 	}
-	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		logging.L().Debug("прокси потока: копирование прервано", "service", service, "err", err)
+	return 0
+}
+
+// backoff — пауза перед повторной попыткой; учтён уход клиента.
+func (h *localAssetHandler) backoff(ctx context.Context, attempt int) {
+	select {
+	case <-time.After(time.Duration(attempt*300) * time.Millisecond):
+	case <-ctx.Done():
 	}
+}
+
+// pruneStreamFileCacheLocked чистит кэш файлов по TTL и предельному размеру.
+// Вызывается под streamFileCache.Lock.
+func (h *localAssetHandler) pruneStreamFileCacheLocked() {
+	const maxCachedFiles = 64
+	stale := time.Now().Add(-streamFileTTL)
+	for k, v := range streamFileCache.m {
+		if v.at.Before(stale) {
+			_ = os.Remove(v.path)
+			delete(streamFileCache.m, k)
+		}
+	}
+	for len(streamFileCache.m) > maxCachedFiles {
+		var oldestKey string
+		var oldestAt time.Time
+		first := true
+		for k, v := range streamFileCache.m {
+			if first || v.at.Before(oldestAt) {
+				oldestKey, oldestAt, first = k, v.at, false
+			}
+		}
+		if oldestKey == "" {
+			break
+		}
+		_ = os.Remove(streamFileCache.m[oldestKey].path)
+		delete(streamFileCache.m, oldestKey)
+	}
+}
+
+// contentTypeName — имя файла, где держим Content-Type скачанного потока.
+func contentTypeSidecar(path string) string { return path + ".type" }
+
+func (h *localAssetHandler) writeStreamFileContentType(path, contentType string) {
+	if contentType == "" {
+		return
+	}
+	_ = os.WriteFile(contentTypeSidecar(path), []byte(contentType), 0o600)
+}
+
+func readStreamFileContentType(path string) string {
+	b, err := os.ReadFile(contentTypeSidecar(path))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// parseContentRangeTotal разбирает «bytes 0-99/12345» и возвращает total.
+func parseContentRangeTotal(header string) (int64, int64, int64, bool) {
+	if !strings.HasPrefix(header, "bytes ") {
+		return 0, 0, 0, false
+	}
+	spec := strings.TrimPrefix(header, "bytes ")
+	rangePart, totalPart, found := strings.Cut(spec, "/")
+	if !found {
+		return 0, 0, 0, false
+	}
+	total, err := strconv.ParseInt(strings.TrimSpace(totalPart), 10, 64)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	first, last, found := strings.Cut(rangePart, "-")
+	if !found {
+		return 0, 0, total, true
+	}
+	f, err1 := strconv.ParseInt(strings.TrimSpace(first), 10, 64)
+	l, err2 := strconv.ParseInt(strings.TrimSpace(last), 10, 64)
+	if err1 != nil || err2 != nil {
+		return 0, 0, total, true
+	}
+	return f, l, total, true
 }
 
 const youtubeStreamChunkSize int64 = 1 << 18

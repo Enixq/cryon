@@ -126,7 +126,7 @@ func GetYouTubeAudioStream(ctx context.Context, videoID string) (*AudioStream, e
 		},
 		{
 			name:    "innertube",
-			timeout: 18 * time.Second,
+			timeout: 30 * time.Second,
 			resolve: verifyResolver(func(ctx context.Context) (*AudioStream, error) {
 				return getYouTubeAudioStreamWithInnerTube(ctx, videoID)
 			}),
@@ -166,17 +166,23 @@ func verifyResolver(resolve func(context.Context) (*AudioStream, error)) func(co
 		if err != nil || stream == nil || stream.URL == "" {
 			return stream, err
 		}
-		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-		defer cancel()
 		// known — длина потока, если она уже известна по предыдущей проверке
 		// (0 — ещё нет). Конец контрольного запроса никогда не выходит за конец
 		// файла: googlevideo отвечает 403 на Range за пределами файла вместо
 		// корректного 416, и такой запрос отбраковывал заведомо рабочий поток.
-		probe := func(position, known int64) (int64, error) {
+		//
+		// Таймаут задаётся НА КАЖДЫЙ контрольный запрос, а не на всю проверку:
+		// раньше общий 6-секундный бюджет делился между началом и концом файла,
+		// и при медленном начале (VPN, троттлинг) на проверку хвоста оставалось
+		// меньше секунды. Рабочий поток отбраковывался с «context deadline
+		// exceeded» — это и была основная причина «то играет, то нет».
+		probe := func(position, known int64, timeout time.Duration) (int64, error) {
 			end := position + streamProbeBytes - 1
 			if known > 0 && end > known-1 {
 				end = known - 1
 			}
+			probeCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
 			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, stream.URL, nil)
 			if err != nil {
 				return 0, err
@@ -214,17 +220,59 @@ func verifyResolver(resolve func(context.Context) (*AudioStream, error)) func(co
 			}
 			return 0, nil
 		}
-		total, err := probe(0, 0)
+		total, err := probe(0, 0, streamProbeTimeoutStart)
 		if err != nil {
 			return nil, err
 		}
 		if total > streamProbeBytes {
-			if _, err := probe(total-streamProbeBytes, total); err != nil {
-				return nil, fmt.Errorf("аудиопоток недоступен после начала: %w", err)
+			if _, err := probe(total-streamProbeBytes, total, streamProbeTimeoutTail); err != nil {
+				// Хвост не ответил. Различаем два принципиально разных случая:
+				//  - HTTP 403/404/не-Range ответ: источник правда не отдаёт
+				//    перемотку — такой поток отдавать нельзя, он замолкнет;
+				//  - таймаут/сетевая ошибка: googlevideo троттлит дальний чанк.
+				//    Пробуем середину файла; если она отвечает — поток годен.
+				if !isTransientProbeError(err) {
+					return nil, fmt.Errorf("аудиопоток недоступен после начала: %w", err)
+				}
+				if _, errMid := probe(total/2, total, streamProbeTimeoutStart); errMid != nil && !isTransientProbeError(errMid) {
+					return nil, fmt.Errorf("аудиопоток недоступен после начала: %w", errMid)
+				}
 			}
 		}
 		return stream, nil
 	}
+}
+
+// streamProbeTimeout — бюджет на один контрольный Range-запрос.
+// start-проверка обычно мгновенна (5с достаточно); tail — медленнее (12с).
+const streamProbeTimeoutStart = 5 * time.Second
+const streamProbeTimeoutTail = 12 * time.Second
+
+// isTransientProbeError сообщает, что проверка не получила ответа из-за сети
+// или временной ошибки сервера (перегрузка, rate-limit). Такие ошибки
+// не означают, что источник не поддерживает перемотку — трек будет работать.
+func isTransientProbeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "deadline exceeded") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "no such host") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "HTTP 429") ||
+		strings.Contains(msg, "HTTP 500") ||
+		strings.Contains(msg, "HTTP 502") ||
+		strings.Contains(msg, "HTTP 503") ||
+		strings.Contains(msg, "HTTP 504")
 }
 
 // getYouTubeAudioStreamPrimary получает и проверяет форматы через kkdai/youtube.
@@ -334,7 +382,7 @@ type pipedStreamsResponse struct {
 
 func getYouTubeAudioStreamFallback(ctx context.Context, videoID string) (*AudioStream, error) {
 	// Порядок фолбэков — от самого надёжного бесключевого к внешнему бинарнику.
-	// InnerTube (клиент IOS) и Piped работают на Android; yt-dlp — только на
+	// InnerTube (клиент ANDROID) и Piped работают на Android; yt-dlp — только на
 	// десктопе (на телефоне его нет).
 	if stream, err := getYouTubeAudioStreamWithInnerTube(ctx, videoID); err == nil {
 		return stream, nil

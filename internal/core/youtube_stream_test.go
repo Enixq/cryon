@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,9 +16,8 @@ func TestYouTubeProxyCombinesSegmentsAndSupportsSeeking(t *testing.T) {
 	var requests atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		if strings.HasSuffix(r.Header.Get("Range"), "-") || r.Header.Get("Range") == "" {
-			t.Errorf("unbounded upstream range: %q", r.Header.Get("Range"))
-		}
+		w.Header().Set("Content-Type", "audio/webm")
+		w.Header().Set("Accept-Ranges", "bytes")
 		http.ServeContent(w, r, "audio.webm", time.Time{}, bytes.NewReader(data))
 	}))
 	defer upstream.Close()
@@ -28,6 +26,7 @@ func TestYouTubeProxyCombinesSegmentsAndSupportsSeeking(t *testing.T) {
 	streamURLCache.m["youtube\x00"+id] = cachedStreamURL{url: upstream.URL, at: time.Now()}
 	streamURLCache.Unlock()
 	defer invalidateStreamURL("youtube", id)
+	defer cleanupStreamFile("youtube", id)
 	server := httptest.NewServer(&localAssetHandler{app: &App{}})
 	defer server.Close()
 	for _, interval := range []struct{ start, end int }{{0, -1}, {12345, -1}, {12345, 400000}} {
@@ -63,7 +62,7 @@ func TestYouTubeProxyCombinesSegmentsAndSupportsSeeking(t *testing.T) {
 			t.Fatalf("seek status=%d range=%q", resp.StatusCode, resp.Header.Get("Content-Range"))
 		}
 	}
-	if requests.Load() < 6 {
-		t.Fatalf("expected several upstream segments, got %d", requests.Load())
+	if requests.Load() != 1 {
+		t.Fatalf("ожидался 1 upstream-запрос (скачать целиком), получен %d", requests.Load())
 	}
 }

@@ -14,21 +14,15 @@ import (
 )
 
 // InnerTube-плеер — бесключевой путь получения аудиопотока напрямую из
-// youtubei/v1/player, независимый от kkdai/youtube. Используем клиент IOS:
-// он отдаёт прямые URL потоков без сигнатурного шифра (расшифровка n/sig не
-// нужна), на момент написания не требует PoToken и работает на Android (чистый
-// net/http, без yt-dlp). Ключ — публичный статический ключ клиента YouTube,
-// не секрет и не привязан к аккаунту (см. пояснение в youtube/innertube.go).
-//
-// Этот путь — дополнительный слой в цепочке фолбэков (kkdai → InnerTube →
-// Piped → yt-dlp): он выполняется, только когда основной путь уже не сработал,
-// поэтому не может ухудшить работающее воспроизведение.
+// youtubei/v1/player. Клиент ANDROID отдаёт прогрессивный формат (itag=18) с
+// прямым URL и полным Range-доступом без расшифровки сигнатур. Работает на
+// Windows и Android (чистый net/http, без yt-dlp). Ключ — публичный
+// статический ключ клиента YouTube, не секрет (см. youtube/innertube.go).
 const (
-	innertubeIOSKey           = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-	innertubeIOSClientName    = "IOS"
-	innertubeIOSClientVersion = "19.45.4"
-	innertubeIOSDeviceModel   = "iPhone16,2"
-	innertubeIOSUserAgent     = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)"
+	innertubeAndroidKey           = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+	innertubeAndroidClientName    = "ANDROID"
+	innertubeAndroidClientVersion = "21.02.35"
+	innertubeAndroidUserAgent     = "com.google.android.youtube/21.02.35 (Linux; U; Android 11) gzip"
 )
 
 // innertubeHTTPClient — отдельный HTTP-клиент InnerTube-плеера с конечными
@@ -63,11 +57,13 @@ type innertubePlayerContext struct {
 }
 
 type innertubePlayerClient struct {
-	ClientName    string `json:"clientName"`
-	ClientVersion string `json:"clientVersion"`
-	DeviceModel   string `json:"deviceModel,omitempty"`
-	HL            string `json:"hl"`
-	GL            string `json:"gl"`
+	ClientName        string `json:"clientName"`
+	ClientVersion     string `json:"clientVersion"`
+	AndroidSdkVersion int    `json:"androidSdkVersion,omitempty"`
+	OsName            string `json:"osName,omitempty"`
+	OsVersion         string `json:"osVersion,omitempty"`
+	HL                string `json:"hl"`
+	GL                string `json:"gl"`
 }
 
 type innertubePlayerResponse struct {
@@ -95,11 +91,13 @@ func getYouTubeAudioStreamWithInnerTube(ctx context.Context, videoID string) (*A
 	reqBody := innertubePlayerRequest{
 		Context: innertubePlayerContext{
 			Client: innertubePlayerClient{
-				ClientName:    innertubeIOSClientName,
-				ClientVersion: innertubeIOSClientVersion,
-				DeviceModel:   innertubeIOSDeviceModel,
-				HL:            "en",
-				GL:            "US",
+				ClientName:        innertubeAndroidClientName,
+				ClientVersion:     innertubeAndroidClientVersion,
+				AndroidSdkVersion: 30,
+				OsName:            "Android",
+				OsVersion:         "11",
+				HL:                "en",
+				GL:                "US",
 			},
 		},
 		VideoID:        videoID,
@@ -111,17 +109,17 @@ func getYouTubeAudioStreamWithInnerTube(ctx context.Context, videoID string) (*A
 		return nil, err
 	}
 
-	endpoint := "https://www.youtube.com/youtubei/v1/player?key=" + innertubeIOSKey + "&prettyPrint=false"
+	endpoint := "https://www.youtube.com/youtubei/v1/player?key=" + innertubeAndroidKey + "&prettyPrint=false"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", innertubeIOSUserAgent)
+	req.Header.Set("User-Agent", innertubeAndroidUserAgent)
 	req.Header.Set("Origin", "https://www.youtube.com")
-	req.Header.Set("X-Youtube-Client-Name", "5")
-	req.Header.Set("X-Youtube-Client-Version", innertubeIOSClientVersion)
+	req.Header.Set("X-Youtube-Client-Name", "3")
+	req.Header.Set("X-Youtube-Client-Version", innertubeAndroidClientVersion)
 
 	resp, err := innertubeHTTPClient.Do(req)
 	if err != nil {
@@ -146,7 +144,7 @@ func getYouTubeAudioStreamWithInnerTube(ctx context.Context, videoID string) (*A
 
 	best := pickBestInnerTubeAudio(parsed.StreamingData.AdaptiveFormats)
 	if best == nil {
-		best = pickBestInnerTubeAudio(parsed.StreamingData.Formats)
+		best = pickBestInnerTubeProgressive(parsed.StreamingData.Formats)
 	}
 	if best == nil || best.URL == "" {
 		return nil, fmt.Errorf("youtube innertube player returned no audio stream")
@@ -171,6 +169,29 @@ func pickBestInnerTubeAudio(formats []innertubeFormat) *innertubeFormat {
 	for i := range formats {
 		f := &formats[i]
 		if f.URL == "" || !strings.HasPrefix(f.MimeType, "audio/") {
+			continue
+		}
+		if f.Bitrate < minimumAudioBitrate {
+			continue
+		}
+		if best == nil || f.Bitrate > best.Bitrate {
+			best = f
+		}
+	}
+	return best
+}
+
+// pickBestInnerTubeProgressive выбирает прогрессивный формат (видео+аудио) с
+// наибольшим битрейтом. ANDROID-клиент InnerTube отдаёт audio-only форматы
+// только через sigCipher, а прогрессивные — с прямым URL (itag=18).
+func pickBestInnerTubeProgressive(formats []innertubeFormat) *innertubeFormat {
+	var best *innertubeFormat
+	for i := range formats {
+		f := &formats[i]
+		if f.URL == "" {
+			continue
+		}
+		if !strings.Contains(f.MimeType, "mp4a") {
 			continue
 		}
 		if f.Bitrate < minimumAudioBitrate {

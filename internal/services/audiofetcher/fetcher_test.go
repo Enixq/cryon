@@ -148,6 +148,63 @@ func TestVerifiedResolverSkipsForbiddenAndEmptyStreams(t *testing.T) {
 	}
 }
 
+// TestVerifiedResolverToleratesTransientTailFailure — googlevideo отвечает 503
+// на дальний чанк при перегрузке/лимитировании. Раньше это отбраковывало
+// заведомо рабочий поток, и трек «не воспроизводился» хотя ссылка была годной.
+// Теперь transient-ошибка хвоста не убивает резолвер.
+func TestVerifiedResolverToleratesTransientTailFailure(t *testing.T) {
+	const total = 8 << 20
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start, _, ok := parseTestRange(r.Header.Get("Range"), total)
+		if !ok {
+			http.Error(w, "bad range", http.StatusBadRequest)
+			return
+		}
+		if start >= total-2*streamProbeBytes {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		serveTestRange(w, r, total)
+	}))
+	defer server.Close()
+
+	stream, err := verifyResolver(func(context.Context) (*AudioStream, error) {
+		return &AudioStream{URL: server.URL}, nil
+	})(context.Background())
+	if err != nil {
+		t.Fatalf("transient 503 на хвосте отбраковал рабочий поток: %v", err)
+	}
+	if stream == nil || stream.URL == "" {
+		t.Fatal("поток не возвращён")
+	}
+}
+
+// TestVerifiedResolverRejectsForbiddenTail — 403 на хвосте означает, что
+// источник отдаёт только начало файла (классика ANDROID_VR-ссылок до 1 МиБ).
+// Такой поток обязан быть отбракован, иначе трек замолкнет при перемотке.
+func TestVerifiedResolverRejectsForbiddenTail(t *testing.T) {
+	const total = 8 << 20
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start, _, ok := parseTestRange(r.Header.Get("Range"), total)
+		if !ok {
+			http.Error(w, "bad range", http.StatusBadRequest)
+			return
+		}
+		if start >= 1<<20 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		serveTestRange(w, r, total)
+	}))
+	defer server.Close()
+
+	if _, err := verifyResolver(func(context.Context) (*AudioStream, error) {
+		return &AudioStream{URL: server.URL}, nil
+	})(context.Background()); err == nil {
+		t.Fatal("поток, обрывающийся на 1 МиБ, принят как рабочий")
+	}
+}
+
 func TestRaceAudioStreamsReturnsAttemptErrors(t *testing.T) {
 	_, err := raceAudioStreams(context.Background(), []audioStreamAttempt{
 		{name: "first", timeout: time.Second, resolve: func(context.Context) (*AudioStream, error) { return nil, errors.New("first failure") }},
@@ -155,5 +212,35 @@ func TestRaceAudioStreamsReturnsAttemptErrors(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected resolver error")
+	}
+}
+
+// TestPickBestInnerTubeProgressiveSelectsItag18 — ANDROID InnerTube отдаёт
+// прогрессивный формат (video+audio) с прямым URL; аудио-only форматы
+// шифрованы sigCipher (URL пустой). pickBestInnerTubeProgressive должен выбрать
+// itag=18.
+func TestPickBestInnerTubeProgressiveSelectsItag18(t *testing.T) {
+	formats := []innertubeFormat{
+		{URL: "https://example/itag18", MimeType: `video/mp4; codecs="avc1.42001E, mp4a.40.2"`, Bitrate: 500000},
+		{URL: "", MimeType: `video/mp4; codecs="avc1.42001E, mp4a.40.2"`, Bitrate: 800000}, // без URL — sigCipher
+	}
+	best := pickBestInnerTubeProgressive(formats)
+	if best == nil {
+		t.Fatal("pickBestInnerTubeProgressive вернул nil")
+	}
+	if best.URL != "https://example/itag18" {
+		t.Fatalf("itag=%q, want itag18", best.URL)
+	}
+}
+
+// TestPickBestInnerTubeAudioSkipsEncrypted — аудио-only форматы ANDROID имеют
+// пустой URL (sigCipher). pickBestInnerTubeAudio должен их пропустить.
+func TestPickBestInnerTubeAudioSkipsEncrypted(t *testing.T) {
+	formats := []innertubeFormat{
+		{URL: "", MimeType: `audio/mp4; codecs="mp4a.40.2"`, Bitrate: 128000},
+		{URL: "", MimeType: `audio/webm; codecs="opus"`, Bitrate: 160000},
+	}
+	if best := pickBestInnerTubeAudio(formats); best != nil {
+		t.Fatalf("nil ожидался, получен %+v", best)
 	}
 }
