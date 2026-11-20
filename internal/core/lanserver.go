@@ -50,6 +50,7 @@ func setCORS(w http.ResponseWriter) {
 	hdr.Set("Access-Control-Allow-Origin", "*")
 	hdr.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 	hdr.Set("Access-Control-Allow-Headers", "Content-Type, Range")
+	hdr.Set("Access-Control-Allow-Private-Network", "true")
 	hdr.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
 }
 

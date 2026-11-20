@@ -664,9 +664,33 @@ function MobileServerSection() {
   const [busy, setBusy] = useState(false);
   const [devices, setDevices] = useState<Array<{ id: string; name: string; url: string; version?: string }>>([]);
   const [discovering, setDiscovering] = useState(false);
-  const apply = () => {
-    setConfiguredBaseUrl(url);
-    setBusy(false);
+  const [connectionMessage, setConnectionMessage] = useState("");
+  const apply = async () => {
+    const address = url.trim().replace(/\/+$/, "");
+    if (!address) {
+      setConfiguredBaseUrl("");
+      setConnectionMessage("Синхронизация отключена.");
+      return;
+    }
+    setBusy(true);
+    setConnectionMessage("");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const parsed = new URL(address);
+      if (parsed.protocol !== "http:" || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) throw new Error("Укажите адрес устройства в формате http://192.168.1.50:8899.");
+      const response = await fetch(parsed.origin + "/v1/system/health", { signal: controller.signal });
+      if (!response.ok) throw new Error("Устройство не ответило на проверку Cryon.");
+      const health = await response.json() as { status?: string; api?: string };
+      if (health.status !== "ok" || health.api !== "v1") throw new Error("По этому адресу не найдено работающее приложение Cryon.");
+      setConfiguredBaseUrl(parsed.origin);
+      setConnectionMessage("Устройство подключено. Синхронизация включена.");
+    } catch (error) {
+      setConnectionMessage(error instanceof Error && error.name !== "AbortError" && !/fetch|network/i.test(error.message) ? error.message : "Не удалось связаться с устройством. Проверьте Wi‑Fi, VPN и доступ Cryon к локальной сети.");
+    } finally {
+      window.clearTimeout(timeout);
+      setBusy(false);
+    }
   };
   const trimmed = url.trim();
   const discover = async () => {
@@ -702,12 +726,13 @@ function MobileServerSection() {
         />
         <button
           type="button"
-          onClick={apply}
+          onClick={() => void apply()}
           disabled={busy}
           className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm text-slate-200 transition-colors hover:border-[var(--app-accent)] hover:text-white disabled:opacity-60"
         >
-          {busy ? "Перезапуск…" : trimmed ? "Подключиться и синхронизировать" : "Отключить синхронизацию"}
+          {busy ? "Проверяем соединение…" : trimmed ? "Подключиться и синхронизировать" : "Отключить синхронизацию"}
         </button>
+        {connectionMessage && <p role="status" className="text-sm text-slate-300">{connectionMessage}</p>}
       </div>
     </Section>
   );

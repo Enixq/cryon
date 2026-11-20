@@ -93,23 +93,24 @@ var notifCounter uint64
 // и локальное хранилище. Методы с большой буквы доступны фронтенду
 // через Wails-биндинги.
 type App struct {
-	ctx           context.Context
-	startupError  string
-	workerCancel  context.CancelFunc
-	workerDone    chan struct{}
-	cfg           config.Config
-	registry      map[domain.ServiceID]domain.MusicService
-	local         *local.Service
-	player        *playback.Controller
-	store         store.Store
-	reco          *recommendations.Engine
-	lyrics        *lyrics.Client
-	mu            sync.Mutex
-	eventsMu      sync.Mutex
-	statusMu      sync.RWMutex
-	remoteStateMu sync.RWMutex
-	remoteState   []byte
-	events        *apiEventHub
+	ctx            context.Context
+	startupError   string
+	workerCancel   context.CancelFunc
+	workerDone     chan struct{}
+	cfg            config.Config
+	registry       map[domain.ServiceID]domain.MusicService
+	local          *local.Service
+	player         *playback.Controller
+	store          store.Store
+	reco           *recommendations.Engine
+	lyrics         *lyrics.Client
+	mu             sync.Mutex
+	eventsMu       sync.Mutex
+	statusMu       sync.RWMutex
+	remoteStateMu  sync.RWMutex
+	remoteState    []byte
+	remoteRevision uint64
+	events         *apiEventHub
 	// validationErrors хранит только результат явной проверки API в текущем
 	// запуске. Это не подменяет конфигурационный статус, а дополняет его.
 	validationErrors map[domain.ServiceID]string

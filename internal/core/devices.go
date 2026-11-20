@@ -41,7 +41,15 @@ func (a *App) handleAPIDeviceState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.remoteStateMu.Lock()
-	a.remoteState = append(a.remoteState[:0], body...)
+	a.remoteRevision++
+	probe["revision"] = a.remoteRevision
+	encoded, err := json.Marshal(probe)
+	if err != nil {
+		a.remoteStateMu.Unlock()
+		writeAPIError(w, http.StatusBadRequest, "некорректное состояние устройства")
+		return
+	}
+	a.remoteState = append(a.remoteState[:0], encoded...)
 	a.remoteStateMu.Unlock()
 	w.WriteHeader(204)
 }
@@ -158,6 +166,7 @@ func discoverDevices(ctx context.Context, wifiIPv4 string) []discoveredDevice {
 	probed := make(chan discoveredDevice, 256)
 	var probes sync.WaitGroup
 	sem := make(chan struct{}, 64)
+	probeClient := &http.Client{Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
 	for address := range localIPs {
 		ip := net.ParseIP(address).To4()
 		if ip == nil || !ip.IsPrivate() {
@@ -184,7 +193,7 @@ func discoverDevices(ctx context.Context, wifiIPv4 string) []discoveredDevice {
 				if err != nil {
 					return
 				}
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := probeClient.Do(req)
 				if err != nil {
 					return
 				}

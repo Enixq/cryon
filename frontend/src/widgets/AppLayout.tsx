@@ -91,8 +91,8 @@ export function AppLayout() {
   // после выбора устройства в настройках и не требует общего аккаунта.
   useEffect(() => {
     const configured = configuredBaseUrl();
-    const isDesktop = Boolean((window as Window & { go?: { main?: { App?: unknown } }; CryonAndroid?: unknown }).go?.main?.App) && !(window as Window & { CryonAndroid?: unknown }).CryonAndroid;
-    const remote = configured || (isDesktop ? "http://127.0.0.1:8899" : "");
+    const native = Boolean((window as Window & { go?: { main?: { App?: unknown } }; CryonAndroid?: unknown }).go?.main?.App);
+    const remote = configured || (native ? "http://127.0.0.1:8899" : "");
     if (!remote) return;
     let deviceId = "";
     try {
@@ -134,9 +134,9 @@ export function AppLayout() {
       try {
         const response = await fetch(remote + "/v1/devices/state");
         if (!response.ok) return;
-        const incoming = await response.json() as { deviceId?: string; updatedAtMs?: number; queue?: Track[]; currentIndex?: number; isPlaying?: boolean; progress?: number; volume?: number; muted?: boolean };
+        const incoming = await response.json() as { deviceId?: string; updatedAtMs?: number; revision?: number; queue?: Track[]; currentIndex?: number; isPlaying?: boolean; progress?: number; volume?: number; muted?: boolean };
         if (!incoming.deviceId || incoming.deviceId === deviceId || !Array.isArray(incoming.queue)) return;
-        const timestamp = Number(incoming.updatedAtMs || 0);
+        const timestamp = Number(incoming.revision ?? incoming.updatedAtMs ?? 0);
         if (timestamp <= lastRemoteTimestamp) return;
         lastRemoteTimestamp = timestamp;
         suppressPublishUntil = Date.now() + 1800;
