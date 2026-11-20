@@ -20,6 +20,15 @@ export type PlaylistV1 = {
   coverUrls?: string[];
 };
 
+export type RemotePlaylistV1 = {
+  id: string;
+  service: string;
+  name: string;
+  tracksTotal: number;
+  artworkUrl?: string;
+  externalUrl?: string;
+};
+
 export type SourceStatusV1 = {
   id: string;
   connected: boolean;
@@ -99,6 +108,16 @@ export async function searchV1(query: string, service?: string): Promise<Track[]
   if (service && service !== "all") params.set("service", service);
   const response = await request<SearchResponse>(`/v1/search?${params}`);
   return mapTracks(response.tracks);
+}
+
+export async function searchRemotePlaylistsV1(query: string, service: string): Promise<RemotePlaylistV1[]> {
+  const params = new URLSearchParams({ q: query, service });
+  const response = await request<{ playlists?: RemotePlaylistV1[] }>(`/v1/catalog/playlists/search?${params}`);
+  return response.playlists ?? [];
+}
+
+export async function remotePlaylistTracksV1(service: string, id: string): Promise<Track[]> {
+  return mapTracks(await request<domain.Track[]>(`/v1/catalog/playlists/${encodeURIComponent(service)}/${encodeURIComponent(id)}/tracks`));
 }
 
 function recommendationPath(path: string, limit: number): string {

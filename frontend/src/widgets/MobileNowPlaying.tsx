@@ -81,6 +81,8 @@ export function MobileNowPlaying() {
   const coverDrag = useRef<{ x: number; y: number; delta: number; horizontal: boolean } | null>(null);
   const [dragY, setDragY] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [coverOffset, setCoverOffset] = useState(0);
+  const [coverAnimating, setCoverAnimating] = useState(false);
 
   function onTouchStart(e: TouchEvent<HTMLDivElement>) {
     if (showQueue) return;
@@ -135,18 +137,37 @@ export function MobileNowPlaying() {
     const dx = touch.clientX - gesture.x;
     const dy = touch.clientY - gesture.y;
     if (!gesture.horizontal && Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.2) gesture.horizontal = true;
-    if (gesture.horizontal) { gesture.delta = dx; event.stopPropagation(); }
+    if (gesture.horizontal) {
+      gesture.delta = dx;
+      setCoverOffset(Math.max(-180, Math.min(180, dx)));
+      event.stopPropagation();
+    }
   }
 
   function onCoverTouchEnd(event: TouchEvent<HTMLDivElement>) {
     const gesture = coverDrag.current;
     coverDrag.current = null;
-    if (!gesture?.horizontal || Math.abs(gesture.delta) < 55) return;
+    if (!gesture?.horizontal || Math.abs(gesture.delta) < 55) {
+      setCoverAnimating(true);
+      setCoverOffset(0);
+      window.setTimeout(() => setCoverAnimating(false), 220);
+      return;
+    }
     event.stopPropagation();
     endDrag();
-    if (gesture.delta < 0) next();
+    const direction = gesture.delta < 0 ? -1 : 1;
+    setCoverAnimating(true);
+    setCoverOffset(direction * -Math.max(window.innerWidth, 320));
+    if (direction < 0) next();
     else if (currentIndex > 0) playAt(currentIndex - 1);
     else if (repeat === "all" && queue.length > 1) playAt(queue.length - 1);
+    window.setTimeout(() => {
+      setCoverOffset(direction * Math.max(window.innerWidth, 320));
+      requestAnimationFrame(() => {
+        setCoverAnimating(false);
+        setCoverOffset(0);
+      });
+    }, 180);
   }
 
   if (!track) return null;
@@ -200,7 +221,7 @@ export function MobileNowPlaying() {
           {/* Середина: обложка ИЛИ очередь */}
           {showLyrics ? (
             <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl bg-white/[0.03] px-4 py-5">
-              {lyrics.loading ? <div className="grid min-h-[220px] place-items-center text-sm text-slate-500">Загрузка текста…</div> : lyrics.instrumental ? <div className="grid min-h-[220px] place-items-center text-sm text-slate-500">Инструментальная композиция</div> : lyrics.lines.length > 0 ? <div className="space-y-3">{lyrics.lines.map((line, index) => <button key={`${line.time}-${index}`} type="button" onClick={() => seek(line.time)} className={cn("block w-full text-left text-lg font-semibold transition-colors", index === activeLyric ? "text-white" : "text-slate-500")}>{line.text || "…"}</button>)}</div> : <div className="grid min-h-[220px] place-items-center text-center text-sm text-slate-500">{lyrics.found && lyrics.plain ? lyrics.plain : "Текст не найден"}</div>}
+              {lyrics.loading ? <div className="grid min-h-[220px] place-items-center text-sm text-slate-500">Загрузка текста…</div> : lyrics.instrumental ? <div className="grid min-h-[220px] place-items-center text-sm text-slate-500">Инструментальная композиция</div> : lyrics.lines.length > 0 ? <div className="space-y-3">{lyrics.lines.map((line, index) => <button key={`${line.time}-${index}`} type="button" onClick={() => seek(line.time)} className={cn("block w-full text-left text-lg font-semibold transition-colors", index === activeLyric ? "text-white" : "text-slate-500")}>{line.text || "…"}</button>)}</div> : <div className="grid min-h-[220px] place-items-center whitespace-pre-wrap text-center text-sm text-slate-500">{lyrics.found && lyrics.plain ? lyrics.plain : "Текст не найден"}</div>}
             </div>
           ) : showQueue ? (
             <div className="flex min-h-0 flex-1 flex-col">
@@ -221,7 +242,7 @@ export function MobileNowPlaying() {
               </div>
             </div>
           ) : (
-            <div role="group" aria-label="Обложка: свайп для смены трека" className="flex min-h-0 flex-1 items-center justify-center" style={{ touchAction: "pan-y" }} onTouchStart={onCoverTouchStart} onTouchMove={onCoverTouchMove} onTouchEnd={onCoverTouchEnd} onTouchCancel={() => { coverDrag.current = null; }}>
+            <div role="group" aria-label="Обложка: свайп для смены трека" className="flex min-h-0 flex-1 items-center justify-center overflow-hidden" style={{ touchAction: "pan-y" }} onTouchStart={onCoverTouchStart} onTouchMove={onCoverTouchMove} onTouchEnd={onCoverTouchEnd} onTouchCancel={() => { coverDrag.current = null; setCoverOffset(0); }}>
               <Cover
                 accent={track.accent}
                 src={coverUrl}
@@ -229,6 +250,11 @@ export function MobileNowPlaying() {
                 className="aspect-square w-full max-w-[300px] shadow-2xl sm:max-w-[340px]"
                 rounded="rounded-[28px]"
                 iconSize={80}
+                style={{
+                  transform: `translate3d(${coverOffset}px, 0, 0) rotate(${coverOffset / 45}deg)`,
+                  opacity: Math.max(0.35, 1 - Math.abs(coverOffset) / 260),
+                  transition: coverAnimating ? "transform 180ms ease, opacity 180ms ease" : "none",
+                }}
               />
             </div>
           )}

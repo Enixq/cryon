@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"Cryon2/internal/logging"
+	"Cryon2/internal/services/audiofetcher"
 )
 
 // localAssetHandler отдаёт локальные аудиофайлы фронтенду по HTTP-пути
@@ -89,8 +90,11 @@ var streamProxyClient = &http.Client{
 // байты не идут».
 var streamDownloadClient = &http.Client{
 	Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: audiofetcher.GoogleDialContext(&net.Dialer{
+			Timeout:   15 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}),
 		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 25 * time.Second,
 		ExpectContinueTimeout: 2 * time.Second,
@@ -176,11 +180,16 @@ const streamFileMaxBytes = 200 << 20
 
 // streamDownloadDir — каталог для кэша скачанных потоков.
 func streamDownloadDir() (string, error) {
-	base, err := os.UserCacheDir()
+	// On Android os.UserCacheDir/os.TempDir may resolve to a system directory
+	// outside the application's sandbox.  mobile.Start already points the
+	// shared data directory at Context.getFilesDir(), so use that directory for
+	// stream files as well.  It is writable on every supported platform and
+	// keeps the stream cache next to the database/configuration.
+	base, err := logging.DataDir("Cryon2")
 	if err != nil {
-		base = os.TempDir()
+		return "", err
 	}
-	dir := filepath.Join(base, "Cryon2", "streams")
+	dir := filepath.Join(base, "streams")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

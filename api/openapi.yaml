@@ -76,6 +76,50 @@ paths:
                 $ref: '#/components/schemas/SearchResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
+  /v1/catalog/playlists/search:
+    get:
+      operationId: searchCatalogPlaylists
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: service
+          in: query
+          required: true
+          schema: { type: string, enum: [youtube, soundcloud, yandex] }
+      responses:
+        '200':
+          description: Public playlists found in the selected music source.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [playlists]
+                properties:
+                  playlists:
+                    type: array
+                    items: { $ref: '#/components/schemas/RemotePlaylist' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/catalog/playlists/{service}/{playlistId}/tracks:
+    get:
+      operationId: getCatalogPlaylistTracks
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema: { type: string }
+        - name: playlistId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Tracks in a public playlist.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrackList' }
   /v1/recommendations:
     get:
       operationId: listRecommendations
@@ -619,6 +663,16 @@ components:
         coverUrls:
           type: array
           items: { type: string }
+    RemotePlaylist:
+      type: object
+      required: [id, service, name, tracksTotal]
+      properties:
+        id: { type: string }
+        service: { type: string }
+        name: { type: string }
+        tracksTotal: { type: integer, minimum: 0 }
+        artworkUrl: { type: string }
+        externalUrl: { type: string }
     TrackRequest:
       type: object
       required: [track]

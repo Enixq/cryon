@@ -10,6 +10,7 @@ const SearchPage = lazy(async () => ({ default: (await import("./pages/SearchPag
 const LibraryPage = lazy(async () => ({ default: (await import("./pages/LibraryPage")).LibraryPage }));
 const PlaylistsPage = lazy(async () => ({ default: (await import("./pages/PlaylistsPage")).PlaylistsPage }));
 const PlaylistDetailPage = lazy(async () => ({ default: (await import("./pages/PlaylistDetailPage")).PlaylistDetailPage }));
+const RemotePlaylistPage = lazy(() => import("./pages/RemotePlaylistPage"));
 const AlbumDetailPage = lazy(() => import("./pages/AlbumDetailPage"));
 const LocalMusicPage = lazy(async () => ({ default: (await import("./pages/LocalMusicPage")).LocalMusicPage }));
 const FavoritesPage = lazy(async () => ({ default: (await import("./pages/FavoritesPage")).FavoritesPage }));
@@ -59,6 +60,7 @@ function App() {
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/playlists" element={<PlaylistsPage />} />
           <Route path="/playlists/:id" element={<PlaylistDetailPage />} />
+          <Route path="/remote-playlists/:source/:id" element={<RemotePlaylistPage />} />
           <Route path="/albums/:id" element={<AlbumDetailPage />} />
           <Route path="/local" element={<LocalMusicPage />} />
           <Route path="/favorites" element={<FavoritesPage />} />

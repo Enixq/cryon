@@ -49,7 +49,10 @@ class CryonPlaybackService : MediaSessionService() {
         )
         val dataSourceFactory = CacheDataSource.Factory()
             .setCache(requireNotNull(cache))
-            .setUpstreamDataSourceFactory(DefaultHttpDataSource.Factory())
+            // The local server downloads and verifies the complete remote file
+            // before responding. Media3's default read timeout is too short for
+            // that first request, especially over a VPN.
+            .setUpstreamDataSourceFactory(DefaultHttpDataSource.Factory().setReadTimeoutMs(120_000))
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
         player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))

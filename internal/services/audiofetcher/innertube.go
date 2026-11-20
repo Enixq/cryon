@@ -31,10 +31,10 @@ var innertubeHTTPClient = &http.Client{
 	Timeout: 20 * time.Second,
 	Transport: &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
+		DialContext: googleDialContext(&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
-		}).DialContext,
+		}),
 		TLSHandshakeTimeout:   12 * time.Second,
 		ResponseHeaderTimeout: 15 * time.Second,
 		ExpectContinueTimeout: 2 * time.Second,

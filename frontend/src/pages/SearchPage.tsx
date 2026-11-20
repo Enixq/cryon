@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useUiStore } from "../store/uiStore";
 import { useTrackListPlayer } from "../store/playerStore";
-import { listPlaylists, search } from "../shared/api/client";
+import { listPlaylists, search, searchRemotePlaylists, type RemotePlaylistDto } from "../shared/api/client";
 import { SOURCES } from "../shared/sources";
 import { genres } from "../shared/data/genres";
 import { TrackRow } from "../shared/ui/TrackRow";
@@ -124,6 +124,31 @@ export function SearchPage() {
     queryFn: listPlaylists,
   });
 
+  const remotePlaylistQueries = useQueries({
+    queries: (["youtube", "soundcloud", "yandex"] as SourceId[]).map((source) => ({
+      queryKey: ["remotePlaylists", trimmed, source],
+      queryFn: () => searchRemotePlaylists(trimmed, source),
+      retry: 0,
+      enabled: trimmed.length > 0,
+    })),
+  });
+  const remotePlaylistSignature = remotePlaylistQueries.map((query) => query.dataUpdatedAt).join("|");
+  const remotePlaylists = useMemo(() => {
+    const seen = new Set<string>();
+    const out: RemotePlaylistDto[] = [];
+    for (const query of remotePlaylistQueries) {
+      for (const playlist of query.data ?? []) {
+        const key = `${playlist.source}:${playlist.id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push(playlist);
+        }
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remotePlaylistSignature]);
+
   // Производные сущности строим только из реальной выдачи. Внешние сервисы
   // отдают треки, поэтому отдельного API каталога альбомов/артистов не нужно.
   // Артистов сортируем по числу треков — самый заметный идёт в «геро»-карточку.
@@ -193,9 +218,12 @@ export function SearchPage() {
       tracks,
       albums: [...albumsByKey.values()],
       artists,
-      playlists: userPlaylists.filter((p) => p.title.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)),
+      playlists: [
+        ...remotePlaylists,
+        ...userPlaylists.filter((p) => p.title.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)),
+      ],
     };
-  }, [q, foundTracks, userPlaylists]);
+  }, [q, foundTracks, userPlaylists, remotePlaylists]);
 
   // Источники, реально присутствующие в выдаче (для ряда чипсов-фильтров), с
   // числом треков у каждого. Порядок — по убыванию количества.
@@ -463,7 +491,11 @@ export function SearchPage() {
                   <h2 className="mb-3 text-xl font-bold text-white">Плейлисты</h2>
                   <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-5 lg:grid-cols-2">
                     {view?.playlists.map((p) => (
-                      <PlaylistCard key={p.id} playlist={p} onOpen={() => navigate(`/playlists/${p.id}`)} />
+                      <PlaylistCard
+                        key={`${"source" in p ? p.source : "local"}:${p.id}`}
+                        playlist={p}
+                        onOpen={() => "source" in p ? navigate(`/remote-playlists/${p.source}/${encodeURIComponent(p.id)}`, { state: { playlist: p } }) : navigate(`/playlists/${p.id}`)}
+                      />
                     ))}
                   </div>
                 </section>

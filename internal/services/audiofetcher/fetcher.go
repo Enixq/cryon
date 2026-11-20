@@ -42,10 +42,10 @@ func newYouTubeMetadataClient() *http.Client {
 		Timeout: 25 * time.Second,
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
-			DialContext: (&net.Dialer{
+			DialContext: googleDialContext(&net.Dialer{
 				Timeout:   12 * time.Second,
 				KeepAlive: 30 * time.Second,
-			}).DialContext,
+			}),
 			TLSHandshakeTimeout:   15 * time.Second,
 			ResponseHeaderTimeout: 20 * time.Second,
 			ExpectContinueTimeout: 2 * time.Second,
@@ -58,6 +58,25 @@ func newYouTubeMetadataClient() *http.Client {
 }
 
 const minimumAudioBitrate = 96000
+
+// streamProbeClient — контрольный Range-запрос к googlevideo при проверке
+// потока. Идёт через google-транспорт, чтобы на Android (VPN не пускает Cryon
+// в туннель) проба не падала на прямой блокировке youtube/googlevideo.
+var streamProbeClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: googleDialContext(&net.Dialer{
+			Timeout:   8 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}),
+		TLSHandshakeTimeout:   12 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+		ExpectContinueTimeout: 2 * time.Second,
+		MaxIdleConns:          8,
+		IdleConnTimeout:       90 * time.Second,
+		ForceAttemptHTTP2:     true,
+	},
+}
 
 // streamProbeBytes — размер контрольного блока при проверке потока.
 // Запрашивается в начале (0-1023) и в конце файла (total-1024..total-1).
@@ -191,7 +210,7 @@ func verifyResolver(resolve func(context.Context) (*AudioStream, error)) func(co
 			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 			req.Header.Set("Referer", "https://www.youtube.com/")
 			req.Header.Set("Origin", "https://www.youtube.com")
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := streamProbeClient.Do(req)
 			if err != nil {
 				var urlError *url.Error
 				if errors.As(err, &urlError) {
@@ -277,7 +296,10 @@ func isTransientProbeError(err error) bool {
 
 // getYouTubeAudioStreamPrimary получает и проверяет форматы через kkdai/youtube.
 func getYouTubeAudioStreamPrimary(ctx context.Context, videoID string) (*AudioStream, error) {
-	ytClient := youtube.Client{HTTPClient: ytHTTPClient}
+	// 2AMB is the current opaque Android player parameter recommended by the
+	// library for media access. It improves format availability for some
+	// Android/VPN combinations without changing the public API or playback URL.
+	ytClient := youtube.Client{HTTPClient: ytHTTPClient, PlayerParams: "2AMB"}
 	video, err := ytClient.GetVideoContext(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("не удалось получить данные видео YouTube: %w", err)

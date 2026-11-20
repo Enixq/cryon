@@ -19,6 +19,7 @@ import android.widget.Toast
 import android.content.pm.PackageManager
 import android.window.OnBackInvokedDispatcher
 import androidx.appcompat.app.AppCompatActivity
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.documentfile.provider.DocumentFile
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -187,6 +188,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private inner class AndroidBridge {
+        @JavascriptInterface
+        fun openTokenBrowser(url: String) {
+            runOnUiThread {
+                try {
+                    CustomTabsIntent.Builder().build().launchUrl(this@MainActivity, Uri.parse(url))
+                } catch (_: Exception) {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun readClipboard(): String {
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+            return clipboard?.primaryClip?.getItemAt(0)?.coerceToText(this@MainActivity)?.toString().orEmpty()
+        }
+
         @JavascriptInterface
         fun pickMusicFolder() { runOnUiThread { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), folderRequestCode) } }
 
@@ -440,6 +458,14 @@ class MainActivity : AppCompatActivity() {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setContentIntent(PendingIntent.getActivity(
+                this,
+                7001,
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0,
+            ))
             .apply { currentArtwork?.let { setLargeIcon(it) } }
             .setProgress(progressMax, progressValue, false)
             .addAction(NotificationCompat.Action(android.R.drawable.ic_media_previous, "Previous", MediaButtonReceiver.buildMediaButtonPendingIntent(this, PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)))

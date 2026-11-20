@@ -18,6 +18,8 @@ import {
   hasApiV1Runtime,
   listHistoryV1,
   listPlaylistsV1,
+  remotePlaylistTracksV1,
+  searchRemotePlaylistsV1,
   localFoldersV1,
   localTracksV1,
   dailyMixV1,
@@ -1016,6 +1018,35 @@ export interface UserPlaylistDto {
   trackCount: number;
   /** Обложки первых треков (до 4) для коллажа на карточке плейлиста. */
   coverUrls: string[];
+}
+
+export interface RemotePlaylistDto {
+  id: string;
+  source: Track["source"];
+  title: string;
+  description: string;
+  trackCount: number;
+  coverUrl?: string;
+  externalUrl?: string;
+}
+
+export async function searchRemotePlaylists(query: string, source: Track["source"]): Promise<RemotePlaylistDto[]> {
+  if (!isWailsRuntime() || !hasApiV1Runtime()) return [];
+  const rows = await searchRemotePlaylistsV1(query, source);
+  return rows.map((row) => ({
+    id: row.id,
+    source,
+    title: row.name,
+    description: "Публичный плейлист",
+    trackCount: row.tracksTotal ?? 0,
+    coverUrl: row.artworkUrl,
+    externalUrl: row.externalUrl,
+  }));
+}
+
+export async function remotePlaylistTracks(source: Track["source"], id: string): Promise<Track[]> {
+  if (!isWailsRuntime() || !hasApiV1Runtime()) return [];
+  return remotePlaylistTracksV1(source, id);
 }
 
 function mapPlaylist(p: {

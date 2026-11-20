@@ -1,5 +1,6 @@
 import { Music4 } from "lucide-react";
 import { useState } from "react";
+import type { CSSProperties } from "react";
 import type { AccentColor } from "../types";
 import { accentStyle } from "./accents";
 import { cn } from "../lib/cn";
@@ -15,6 +16,7 @@ interface CoverProps {
   iconSize?: number;
   /** Неоновое свечение-рамка в стиле приложения (вместо белой обводки). */
   neon?: boolean;
+  style?: CSSProperties;
 }
 
 /**
@@ -30,6 +32,7 @@ export function Cover({
   rounded = "rounded-2xl",
   iconSize = 28,
   neon = false,
+  style,
 }: CoverProps) {
   const [failed, setFailed] = useState(false);
   const showImage = Boolean(src) && !failed;
@@ -37,7 +40,7 @@ export function Cover({
   return (
     <div
       className={cn("relative grid place-items-center overflow-hidden", neon && "neon-frame", rounded, className)}
-      style={accentStyle(accent)}
+      style={{ ...accentStyle(accent), ...style }}
     >
       {showImage ? (
         <img

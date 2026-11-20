@@ -28,6 +28,8 @@ func (a *App) APIHandler() http.Handler {
 	mux.HandleFunc("/v1/sources", a.handleAPISources)
 	mux.HandleFunc("/v1/sources/", a.handleAPISourceByID)
 	mux.HandleFunc("/v1/search", a.handleAPISearch)
+	mux.HandleFunc("/v1/catalog/playlists/search", a.handleAPICatalogPlaylistSearch)
+	mux.HandleFunc("/v1/catalog/playlists/", a.handleAPICatalogPlaylistTracks)
 	mux.HandleFunc("/v1/recommendations", a.handleAPIRecommendations)
 	mux.HandleFunc("/v1/recommendations/", a.handleAPIRecommendationByKind)
 	mux.HandleFunc("/v1/library/favorites", a.handleAPIFavorites)
@@ -74,6 +76,10 @@ type apiSearchResponse struct {
 	Query   string         `json:"query"`
 	Service string         `json:"service,omitempty"`
 	Tracks  []domain.Track `json:"tracks"`
+}
+
+type apiCatalogPlaylistSearchResponse struct {
+	Playlists []domain.Playlist `json:"playlists"`
 }
 
 type apiPlaybackResolveRequest struct {
@@ -287,6 +293,49 @@ func (a *App) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		tracks = []domain.Track{}
 	}
 	writeAPIJSON(w, http.StatusOK, apiSearchResponse{Query: query, Service: service, Tracks: tracks})
+}
+
+func (a *App) handleAPICatalogPlaylistSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "требуется GET")
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	service := strings.TrimSpace(r.URL.Query().Get("service"))
+	if query == "" || service == "" {
+		writeAPIError(w, http.StatusBadRequest, "q и service обязательны")
+		return
+	}
+	playlists, err := a.SearchPlaylists(service, query)
+	if err != nil {
+		writeAPIAppError(w, err)
+		return
+	}
+	writeAPIJSON(w, http.StatusOK, apiCatalogPlaylistSearchResponse{Playlists: playlists})
+}
+
+func (a *App) handleAPICatalogPlaylistTracks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "требуется GET")
+		return
+	}
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/catalog/playlists/"), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeAPIError(w, http.StatusBadRequest, "нужны service и playlistId")
+		return
+	}
+	service, err1 := url.PathUnescape(parts[0])
+	playlistID, err2 := url.PathUnescape(parts[1])
+	if err1 != nil || err2 != nil {
+		writeAPIError(w, http.StatusBadRequest, "некорректный идентификатор плейлиста")
+		return
+	}
+	tracks, err := a.GetPlaylistTracks(service, playlistID)
+	if err != nil {
+		writeAPIAppError(w, err)
+		return
+	}
+	writeAPIJSON(w, http.StatusOK, tracks)
 }
 
 func (a *App) handleAPIRecommendations(w http.ResponseWriter, r *http.Request) {

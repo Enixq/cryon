@@ -6,6 +6,7 @@ type Playlist struct {
 	Service     ServiceID `json:"service"`
 	Name        string    `json:"name"`
 	TracksTotal int       `json:"tracksTotal"`
+	ArtworkURL  string    `json:"artworkUrl,omitempty"`
 	ExternalURL string    `json:"externalUrl,omitempty"`
 }
 

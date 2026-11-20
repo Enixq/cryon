@@ -280,6 +280,11 @@ export function installHttpBridge(): boolean {
   // (на Android — системный intent). Подписка заодно поднимает поток /api/events.
   eventsOnMultiple("browser:open", (url) => {
     if (typeof url === "string" && url) {
+      const android = (window as Window & { CryonAndroid?: { openTokenBrowser?: (url: string) => void } }).CryonAndroid;
+      if (url.includes("ym-token.marshal.dev") && typeof android?.openTokenBrowser === "function") {
+        android.openTokenBrowser(url);
+        return;
+      }
       try {
         window.open(url, "_blank", "noopener,noreferrer");
       } catch {

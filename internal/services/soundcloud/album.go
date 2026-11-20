@@ -13,18 +13,63 @@ import (
 )
 
 var _ domain.AlbumResolver = (*Service)(nil)
+var _ domain.PlaylistBrowser = (*Service)(nil)
+
+func (s *Service) SearchPlaylists(ctx context.Context, query string, limit int) ([]domain.Playlist, error) {
+	clientID, err := s.ensureClientID(ctx)
+	if err != nil {
+		return []domain.Playlist{}, nil
+	}
+	rows, err := s.searchAlbums(ctx, strings.TrimSpace(query), clientID)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > len(rows) {
+		limit = len(rows)
+	}
+	out := make([]domain.Playlist, 0, limit)
+	for i := 0; i < limit; i++ {
+		row := rows[i]
+		out = append(out, domain.Playlist{
+			ID: strconv.FormatInt(row.ID, 10), Service: domain.ServiceSoundCloud,
+			Name: row.Title, TracksTotal: row.TrackCount,
+			ArtworkURL: normalizeArtwork(row.ArtworkURL, ""), ExternalURL: row.Permalink,
+		})
+	}
+	return out, nil
+}
+
+func (s *Service) PlaylistTracks(ctx context.Context, playlistID string) ([]domain.Track, error) {
+	id, err := strconv.ParseInt(strings.TrimSpace(playlistID), 10, 64)
+	if err != nil || id <= 0 {
+		return []domain.Track{}, nil
+	}
+	clientID, err := s.ensureClientID(ctx)
+	if err != nil {
+		return []domain.Track{}, nil
+	}
+	rows, err := s.fetchText(ctx, "https://api-v2.soundcloud.com/playlists/"+strconv.FormatInt(id, 10)+"?client_id="+url.QueryEscape(clientID))
+	if err != nil {
+		return nil, err
+	}
+	var playlist scPlaylist
+	if err := json.Unmarshal([]byte(rows), &playlist); err != nil {
+		return nil, err
+	}
+	return s.expandPlaylistTracks(ctx, &playlist, clientID), nil
+}
 
 // scFullTrack — полная карточка трека SoundCloud (из /search/tracks,
 // /tracks?ids=… и массива tracks внутри альбома). Общая для поиска и альбомов,
 // чтобы маппинг в domain.Track жил в одном месте.
 type scFullTrack struct {
-	ID         int64  `json:"id"`
-	Title      string `json:"title"`
-	DurationMs   int `json:"duration"` // api-v2 отдаёт длительность в мс
-	PlaybackCount int `json:"playback_count"`
-	ArtworkURL string `json:"artwork_url"`
-	Permalink  string `json:"permalink_url"`
-	User       struct {
+	ID            int64  `json:"id"`
+	Title         string `json:"title"`
+	DurationMs    int    `json:"duration"` // api-v2 отдаёт длительность в мс
+	PlaybackCount int    `json:"playback_count"`
+	ArtworkURL    string `json:"artwork_url"`
+	Permalink     string `json:"permalink_url"`
+	User          struct {
 		Username string `json:"username"`
 		// AvatarURL — обложка аккаунта. У большой части треков artwork_url пустой
 		// (SoundCloud сам показывает в таком случае аватар автора), и без этого
@@ -69,7 +114,7 @@ func (t scFullTrack) toDomain(album, artworkHost string) domain.Track {
 		Artists:      artists,
 		Album:        album,
 		DurationMs:   t.DurationMs,
-		PlayCount:  t.PlaybackCount,
+		PlayCount:    t.PlaybackCount,
 		ArtworkURL:   normalizeArtwork(artwork, artworkHost),
 		ExternalURL:  t.Permalink,
 		PlayableKind: domain.PlayableStream,

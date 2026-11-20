@@ -49,6 +49,13 @@ type MusicService interface {
 	Search(ctx context.Context, query string) ([]Track, error)
 }
 
+// PlaylistBrowser exposes source playlists without requiring a user account.
+// Sources that only support local/user playlists simply do not implement it.
+type PlaylistBrowser interface {
+	SearchPlaylists(ctx context.Context, query string, limit int) ([]Playlist, error)
+	PlaylistTracks(ctx context.Context, playlistID string) ([]Track, error)
+}
+
 // NewReleaser — опциональная возможность адаптера отдавать свежие релизы
 // («Радар новинок»). Реализуют её только источники, у которых есть доступ к
 // каталогу новинок (Yandex с токеном, Spotify с ключами); остальные адаптеры

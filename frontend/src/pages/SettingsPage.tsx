@@ -932,6 +932,20 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
     }
   };
 
+  const pasteFromClipboard = async () => {
+    let value = "";
+    try {
+      value = await navigator.clipboard.readText();
+    } catch {
+      const bridge = (window as Window & { CryonAndroid?: { readClipboard?: () => string } }).CryonAndroid;
+      value = bridge?.readClipboard?.() ?? "";
+    }
+    if (value.trim()) {
+      setToken(value.trim());
+      setAwaitingPaste(true);
+    }
+  };
+
   const disconnect = async () => {
     setSaving(true);
     try {
@@ -1015,6 +1029,13 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
             className="rounded-lg bg-[#a855f7] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#9333ea] disabled:opacity-40"
           >
             {saving ? "Сохранение…" : "Сохранить"}
+          </button>
+          <button
+            onClick={pasteFromClipboard}
+            type="button"
+            className="rounded-lg bg-white/10 px-3 py-2.5 text-xs font-medium text-slate-300 transition-colors hover:bg-white/15"
+          >
+            Вставить из буфера
           </button>
           {connected && (
             <button

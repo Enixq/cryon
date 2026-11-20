@@ -65,6 +65,11 @@ func (s *Service) cachedAlbumTracks(id string) ([]domain.Track, bool) {
 // обложками и трек-листами. Топ-треки намеренно не заполняем — их доклеивает
 // агрегатор (app.go) из мультипоиска с приоритетом нецензурных версий.
 func (s *Service) GetArtist(ctx context.Context, name string) (domain.ArtistInfo, error) {
+	// Android APKs intentionally do not bundle yt-dlp. Use the public Music
+	// InnerTube catalog there so artist pages still contain real releases.
+	if _, err := exec.LookPath("yt-dlp"); err != nil {
+		return s.getArtistInnerTube(ctx, name)
+	}
 	info := domain.ArtistInfo{Name: name, Service: domain.ServiceYouTube}
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -113,6 +118,13 @@ func (s *Service) AlbumTracks(ctx context.Context, albumID string) ([]domain.Tra
 	}
 	if tracks, ok := s.cachedAlbumTracks(albumID); ok {
 		return tracks, nil
+	}
+	if _, err := exec.LookPath("yt-dlp"); err != nil || strings.HasPrefix(albumID, "MPREb_") {
+		tracks, _, _, err := s.catalogAlbumTracks(ctx, albumID, "")
+		if err == nil {
+			s.cacheAlbum(albumID, tracks)
+			return tracks, nil
+		}
 	}
 	_, tracks, ok := s.fetchAlbum(ctx, albumID, "")
 	if !ok {

@@ -2274,7 +2274,7 @@ func (a *App) GetArtist(name string) (domain.ArtistInfo, error) {
 	// 1. Структурированный каталог: альбомы/синглы/фото/реальный топ.
 	//    Приоритет: Yandex (богатый каталог по токену) → YouTube Music (через
 	//    yt-dlp, без токенов) → Spotify. Берём первый, отдавший релизы.
-	for _, id := range []domain.ServiceID{domain.ServiceYandex, domain.ServiceYouTube, domain.ServiceSpotify} {
+	for _, id := range []domain.ServiceID{domain.ServiceYandex, domain.ServiceYouTube, domain.ServiceSoundCloud, domain.ServiceSpotify} {
 		svc, ok := a.registry[id]
 		if !ok {
 			continue
@@ -2289,6 +2289,17 @@ func (a *App) GetArtist(name string) (domain.ArtistInfo, error) {
 			continue
 		}
 		if len(cat.TopTracks) == 0 && len(cat.Albums) == 0 && len(cat.Singles) == 0 {
+			continue
+		}
+		// A provider may know the artist's top tracks but have no structured
+		// releases. Keep those tracks as a fallback and continue looking for a
+		// real catalog in the next provider (YouTube Music/SoundCloud).
+		if len(cat.Albums) == 0 && len(cat.Singles) == 0 {
+			if len(info.TopTracks) == 0 {
+				info.Name = firstNonEmptyStr(cat.Name, info.Name)
+				info.ArtworkURL = cat.ArtworkURL
+				info.TopTracks = cat.TopTracks
+			}
 			continue
 		}
 		info.Name = firstNonEmptyStr(cat.Name, info.Name)
