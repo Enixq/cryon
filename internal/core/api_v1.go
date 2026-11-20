@@ -62,7 +62,7 @@ func (a *App) handleAPIDeviceDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	writeAPIJSON(w, http.StatusOK, discoverDevices(ctx))
+	writeAPIJSON(w, http.StatusOK, discoverDevices(ctx, r.URL.Query().Get("ipv4")))
 }
 
 func (a *App) handleAPIUpdate(w http.ResponseWriter, r *http.Request) {

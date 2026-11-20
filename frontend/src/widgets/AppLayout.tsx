@@ -112,6 +112,7 @@ export function AppLayout() {
         progress: Math.round(state.progress * 10) / 10,
         volume: state.volume,
         muted: state.muted,
+        seekNonce: state.seekNonce,
       };
     };
     const publish = async () => {
@@ -139,7 +140,6 @@ export function AppLayout() {
         if (timestamp <= lastRemoteTimestamp) return;
         lastRemoteTimestamp = timestamp;
         suppressPublishUntil = Date.now() + 1800;
-        lastSignature = JSON.stringify({ queue: incoming.queue, currentIndex: Number(incoming.currentIndex || 0), isPlaying: Boolean(incoming.isPlaying), progress: undefined, volume: Number(incoming.volume ?? 68), muted: Boolean(incoming.muted) });
         usePlayerStore.getState().replaceRemoteState({
           queue: incoming.queue,
           currentIndex: Number(incoming.currentIndex || 0),
@@ -148,6 +148,7 @@ export function AppLayout() {
           volume: Number(incoming.volume ?? 68),
           muted: Boolean(incoming.muted),
         });
+        lastSignature = JSON.stringify({ ...snapshot(), progress: undefined });
       } catch { /* сеть пропала — не прерываем локальное воспроизведение */ }
     };
     let polling = false;

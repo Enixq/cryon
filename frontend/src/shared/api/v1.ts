@@ -174,7 +174,10 @@ export async function listSourcesV1(): Promise<SourceStatusV1[]> {
 }
 
 export function discoverDevicesV1(): Promise<DiscoveredDeviceV1[]> {
-  return request<DiscoveredDeviceV1[]>("/v1/devices/discover");
+  const android = (window as Window & { CryonAndroid?: { wifiIPv4?: () => string } }).CryonAndroid;
+  const ip = android?.wifiIPv4?.() || "";
+  const query = ip ? `?ipv4=${encodeURIComponent(ip)}` : "";
+  return request<DiscoveredDeviceV1[]>("/v1/devices/discover" + query);
 }
 
 export async function validateSourceV1(id: string): Promise<void> {

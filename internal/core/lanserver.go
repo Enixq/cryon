@@ -12,62 +12,23 @@ import (
 // lanServerPort — фиксированный порт LAN-сервера для доступа с телефона.
 const lanServerPort = 8899
 
-// startLANServer поднимает второй HTTP-сервер на всех интерфейсах (0.0.0.0),
-// чтобы приложение на телефоне (Capacitor WebView в той же Wi-Fi-сети) вызывало
-// те же методы App по HTTP, а звук тянуло через уже существующий прокси
-// /stream. Сервер включён в обычную desktop-сборку: адрес можно ввести в
-// Android в Настройки → Сервер Cryon.
-//
-// ЛЕГАСИ: этот режим (телефон → ПК по локальной сети) заменён на автономный
-// встроенный сервер на устройстве (mobileserver.go, тег `cryonmobile`), который
-// работает и через мобильную сеть, и без включённого ПК. Оставлен для отладки в
-// доверенной домашней сети. Рефлексивный RPC-мост (serveRPC) — общий, см.
-// rpcbridge.go.
-//
-// Безопасность: сервер отдаёт данные локального App; ключи/секреты остаются на
-// ПК и по сети НЕ передаются (телефон хранит только введённый адрес). Поднимать
-// только в доверенной домашней сети.
+// startLANServer exposes the narrow device-sync surface to the local network.
+// Catalog, credentials, file access and reflective RPC stay on the local app.
 func (a *App) startLANServer() {
 	startDeviceDiscoveryResponder()
-	h := &localAssetHandler{app: a}
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("/api/call", func(w http.ResponseWriter, r *http.Request) {
-		setCORS(w)
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
+	handle := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			setCORS(w)
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next(w, r)
 		}
-		if r.Method != http.MethodPost {
-			writeRPCError(w, "только POST", http.StatusMethodNotAllowed)
-			return
-		}
-		a.serveRPC(w, r)
-	})
-
-	// API v1 работает параллельно с legacy RPC и нужен нативным клиентам.
-	apiHandler := a.APIHandler()
-	mux.Handle("/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setCORS(w)
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		apiHandler.ServeHTTP(w, r)
-	}))
-
-	// Аудио и локальные файлы — переиспользуем существующий обработчик, добавив
-	// заголовки CORS (кросс-доменный <audio> + Web Audio-граф эквалайзера).
-	streamHandler := func(w http.ResponseWriter, r *http.Request) {
-		setCORS(w)
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		h.ServeHTTP(w, r)
 	}
-	mux.HandleFunc("/local/", streamHandler)
-	mux.HandleFunc("/stream/", streamHandler)
+	mux.HandleFunc("/v1/system/health", handle(a.handleAPIHealth))
+	mux.HandleFunc("/v1/devices/state", handle(a.handleAPIDeviceState))
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("0.0.0.0:%d", lanServerPort),

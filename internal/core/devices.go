@@ -117,7 +117,7 @@ func sameIPv4Subnet(a, b net.IP) bool {
 	return a4 != nil && b4 != nil && a4[0] == b4[0] && a4[1] == b4[1] && a4[2] == b4[2]
 }
 
-func discoverDevices(ctx context.Context) []discoveredDevice {
+func discoverDevices(ctx context.Context, wifiIPv4 string) []discoveredDevice {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return nil
@@ -127,6 +127,9 @@ func discoverDevices(ctx context.Context) []discoveredDevice {
 	_ = conn.SetReadBuffer(4096)
 	_, _ = conn.WriteToUDP([]byte(discoveryMagic), &net.UDPAddr{IP: net.IPv4bcast, Port: deviceDiscoveryPort})
 	localIPs := map[string]bool{}
+	if ip := net.ParseIP(wifiIPv4).To4(); ip != nil && ip.IsPrivate() {
+		localIPs[ip.String()] = true
+	}
 	if addrs, err := net.InterfaceAddrs(); err == nil {
 		for _, addr := range addrs {
 			ip, network, parseErr := net.ParseCIDR(addr.String())

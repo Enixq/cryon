@@ -278,7 +278,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const currentIndex = clamp(state.currentIndex, 0, Math.max(0, queue.length - 1));
     const sameTrack = old.currentTrack()?.id === queue[currentIndex]?.id;
     const target = Math.max(0, state.progress);
-    const needsSeek = sameTrack && Math.abs(old.progress - target) > 3;
+    const needsSeek = sameTrack ? Math.abs(old.progress - target) > 3 : target > 0;
     return {
       queue, currentIndex, isPlaying: state.isPlaying,
       progress: sameTrack && !needsSeek ? old.progress : target,

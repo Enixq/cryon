@@ -203,6 +203,15 @@ class MainActivity : AppCompatActivity() {
 
     private inner class AndroidBridge {
         @JavascriptInterface
+        fun wifiIPv4(): String {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return ""
+            @Suppress("DEPRECATION")
+            val ip = wifi.connectionInfo?.ipAddress ?: return ""
+            if (ip == 0) return ""
+            return listOf(ip and 255, ip shr 8 and 255, ip shr 16 and 255, ip shr 24 and 255).joinToString(".")
+        }
+
+        @JavascriptInterface
         fun openTokenBrowser(url: String) {
             runOnUiThread {
                 try {
