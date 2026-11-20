@@ -54,12 +54,12 @@ export function TrackRow({
     <div
       onClick={() => onPlay(track)}
       className={cn(
-        "group grid min-w-0 grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-xl px-2 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_12%,transparent)] active:bg-[color-mix(in_srgb,var(--app-accent)_16%,transparent)] sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:gap-4 sm:px-3",
+        "group grid min-w-0 grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-1 rounded-xl px-2 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_12%,transparent)] active:bg-[color-mix(in_srgb,var(--app-accent)_16%,transparent)] sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:gap-4 sm:px-3",
         active && "bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--app-accent)_28%,transparent)]",
       )}
     >
       {/* Номер / кнопка воспроизведения */}
-      <div className="grid h-10 w-10 place-items-center">
+      <div className="grid h-8 w-5 place-items-center sm:h-10 sm:w-10">
         {index !== undefined && (
           <span className={cn("text-sm tabular-nums text-slate-500", active && "text-[#a855f7]")}>
             {index + 1}
@@ -82,7 +82,7 @@ export function TrackRow({
       </div>
 
       {/* Обложка + название */}
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
         <Cover
           accent={track.accent}
           src={coverUrl}
@@ -115,7 +115,7 @@ export function TrackRow({
         {onRate && (
           <div
             className={cn(
-              "flex items-center gap-1 transition-opacity",
+              "hidden items-center gap-1 transition-opacity sm:flex",
               liked || disliked ? "opacity-100" : "opacity-0 group-hover:opacity-100",
             )}
           >
@@ -172,6 +172,10 @@ export function TrackRow({
           <span className="w-9 text-right text-[13px] tabular-nums text-slate-400 sm:w-10 sm:text-sm">{formatDuration(track.duration)}</span>
         </div>
       </div>
+      {onRate && <div className="col-start-2 col-end-4 flex gap-2 sm:hidden" onClick={(event) => event.stopPropagation()}>
+        <button type="button" onClick={() => onRate(track, 1)} disabled={rateDisabled} aria-label="Нравится — больше такого" aria-pressed={liked} className={cn("grid h-8 w-10 place-items-center rounded-full", liked ? "text-[#c084fc]" : "text-slate-400")}><ThumbsUp size={16} /></button>
+        <button type="button" onClick={() => onRate(track, -1)} disabled={rateDisabled} aria-label="Не нравится — меньше такого" aria-pressed={disliked} className={cn("grid h-8 w-10 place-items-center rounded-full", disliked ? "text-rose-400" : "text-slate-400")}><ThumbsDown size={16} /></button>
+      </div>}
     </div>
   );
 }

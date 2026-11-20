@@ -123,7 +123,7 @@ func catalogItemColumn(value any, index int) string {
 			}
 		}
 	}
-	return catalogText(value)
+	return ""
 }
 
 func catalogHeaderTitle(value any) string {
@@ -235,7 +235,7 @@ func (s *Service) getArtistInnerTube(ctx context.Context, name string) (domain.A
 		if videoID != "" && !seenTracks[videoID] && len(info.TopTracks) < 20 {
 			seenTracks[videoID] = true
 			info.TopTracks = append(info.TopTracks, domain.Track{
-				ID: videoID, Service: domain.ServiceYouTube, Title: catalogText(item),
+				ID: videoID, Service: domain.ServiceYouTube, Title: catalogItemTitle(item),
 				Artists: []string{name}, ArtworkURL: catalogThumb(item),
 				ExternalURL:  "https://music.youtube.com/watch?v=" + videoID,
 				PlayableKind: domain.PlayableStream,

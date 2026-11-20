@@ -12,6 +12,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { usePlayerStore } from "../../store/playerStore";
 import { getSetting, setSetting } from "../api/client";
 import type { Track } from "../types";
+import { cleanTrackArtist } from "../api/mappers";
 
 const KEY_VOLUME = "player.volume";
 const KEY_MUTED = "player.muted";
@@ -62,7 +63,7 @@ export function usePlayerPersistence() {
         try {
           const parsed = JSON.parse(session) as Partial<PersistedSession>;
           if (Array.isArray(parsed.queue) && parsed.queue.length > 0) {
-            patch.queue = parsed.queue as Track[];
+            patch.queue = (parsed.queue as Track[]).map((track) => ({ ...track, artist: cleanTrackArtist(track.artist || "", track.source) }));
             patch.currentIndex = Math.max(
               0,
               Math.min(parsed.currentIndex ?? 0, parsed.queue.length - 1),

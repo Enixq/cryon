@@ -1,6 +1,6 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { NowPlayingPanel } from "./NowPlayingPanel";
@@ -53,6 +53,7 @@ const SOURCE_DEPENDENT_QUERY_KEYS = [
  */
 export function AppLayout() {
   const location = useLocation();
+  const [deviceConnectionRevision, setDeviceConnectionRevision] = useState(0);
   // Реальный движок воспроизведения (mpv или HTML5 <audio>).
   useAudioEngine();
   const queryClient = useQueryClient();
@@ -62,6 +63,12 @@ export function AppLayout() {
 
   // Системные медиа-контролы (SMTC на Windows) + аппаратные медиа-клавиши.
   useMediaSession();
+
+  useEffect(() => {
+    const onChange = () => setDeviceConnectionRevision((revision) => revision + 1);
+    window.addEventListener("cryon:device-connection-changed", onChange);
+    return () => window.removeEventListener("cryon:device-connection-changed", onChange);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +90,9 @@ export function AppLayout() {
   // состояние через маленький JSON-канал. Синхронизация включается только
   // после выбора устройства в настройках и не требует общего аккаунта.
   useEffect(() => {
-    const remote = configuredBaseUrl();
+    const configured = configuredBaseUrl();
+    const isDesktop = Boolean((window as Window & { go?: { main?: { App?: unknown } }; CryonAndroid?: unknown }).go?.main?.App) && !(window as Window & { CryonAndroid?: unknown }).CryonAndroid;
+    const remote = configured || (isDesktop ? "http://127.0.0.1:8899" : "");
     if (!remote) return;
     let deviceId = "";
     try {
@@ -108,16 +117,17 @@ export function AppLayout() {
     const publish = async () => {
       if (Date.now() < suppressPublishUntil) return;
       const state = snapshot();
-      const signature = JSON.stringify(state);
+      const signature = JSON.stringify({ ...state, progress: undefined });
       if (signature === lastSignature) return;
       lastSignature = signature;
       try {
-        await fetch(remote + "/v1/devices/state", {
+        const response = await fetch(remote + "/v1/devices/state", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ deviceId, updatedAtMs: Date.now(), ...state }),
         });
-      } catch { /* устройство временно недоступно — следующая итерация повторит */ }
+        if (!response.ok) lastSignature = "";
+      } catch { lastSignature = ""; }
     };
     const pull = async () => {
       try {
@@ -129,6 +139,7 @@ export function AppLayout() {
         if (timestamp <= lastRemoteTimestamp) return;
         lastRemoteTimestamp = timestamp;
         suppressPublishUntil = Date.now() + 1800;
+        lastSignature = JSON.stringify({ queue: incoming.queue, currentIndex: Number(incoming.currentIndex || 0), isPlaying: Boolean(incoming.isPlaying), progress: undefined, volume: Number(incoming.volume ?? 68), muted: Boolean(incoming.muted) });
         usePlayerStore.getState().replaceRemoteState({
           queue: incoming.queue,
           currentIndex: Number(incoming.currentIndex || 0),
@@ -139,10 +150,23 @@ export function AppLayout() {
         });
       } catch { /* сеть пропала — не прерываем локальное воспроизведение */ }
     };
-    void publish();
-    const timer = window.setInterval(() => { void pull(); void publish(); }, 1000);
+    let polling = false;
+    const tick = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const localSignature = JSON.stringify({ ...snapshot(), progress: undefined });
+        // A user command on this device must be sent before applying an older
+        // snapshot from the peer, otherwise tapping pause/next is overwritten.
+        if (lastSignature && localSignature !== lastSignature && Date.now() >= suppressPublishUntil) await publish();
+        await pull();
+        if (!lastSignature) await publish();
+      } finally { polling = false; }
+    };
+    void tick();
+    const timer = window.setInterval(() => { void tick(); }, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [deviceConnectionRevision]);
 
   // Аппаратная кнопка / жест «Назад» на Android: закрыть оверлей → шаг назад по
   // истории → на «Главную» → и только затем выход. Без этого WebView по

@@ -206,7 +206,9 @@ class MainActivity : AppCompatActivity() {
         fun openTokenBrowser(url: String) {
             runOnUiThread {
                 try {
-                    CustomTabsIntent.Builder().build().launchUrl(this@MainActivity, Uri.parse(url))
+                    val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER)
+                        .setAction(Intent.ACTION_VIEW).setData(Uri.parse(url))
+                    startActivity(intent)
                 } catch (_: Exception) {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 }

@@ -20,7 +20,12 @@ func (s *Service) SearchPlaylists(ctx context.Context, query string, limit int) 
 	if err != nil {
 		return []domain.Playlist{}, nil
 	}
-	rows, err := s.searchAlbums(ctx, strings.TrimSpace(query), clientID)
+	rows, err := s.searchPlaylists(ctx, strings.TrimSpace(query), clientID)
+	if err != nil {
+		if fresh, refreshErr := s.refreshClientID(ctx); refreshErr == nil && fresh != "" && fresh != clientID {
+			rows, err = s.searchPlaylists(ctx, strings.TrimSpace(query), fresh)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -39,6 +44,26 @@ func (s *Service) SearchPlaylists(ctx context.Context, query string, limit int) 
 	return out, nil
 }
 
+func (s *Service) searchPlaylists(ctx context.Context, query, clientID string) ([]scPlaylist, error) {
+	u, _ := url.Parse("https://api-v2.soundcloud.com/search/playlists")
+	q := u.Query()
+	q.Set("q", query)
+	q.Set("client_id", clientID)
+	q.Set("limit", "20")
+	u.RawQuery = q.Encode()
+	body, err := s.fetchText(ctx, u.String())
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Collection []scPlaylist `json:"collection"`
+	}
+	if err := json.Unmarshal([]byte(body), &result); err != nil {
+		return nil, err
+	}
+	return result.Collection, nil
+}
+
 func (s *Service) PlaylistTracks(ctx context.Context, playlistID string) ([]domain.Track, error) {
 	id, err := strconv.ParseInt(strings.TrimSpace(playlistID), 10, 64)
 	if err != nil || id <= 0 {
@@ -46,9 +71,15 @@ func (s *Service) PlaylistTracks(ctx context.Context, playlistID string) ([]doma
 	}
 	clientID, err := s.ensureClientID(ctx)
 	if err != nil {
-		return []domain.Track{}, nil
+		return nil, err
 	}
 	rows, err := s.fetchText(ctx, "https://api-v2.soundcloud.com/playlists/"+strconv.FormatInt(id, 10)+"?client_id="+url.QueryEscape(clientID))
+	if err != nil {
+		if fresh, refreshErr := s.refreshClientID(ctx); refreshErr == nil && fresh != "" && fresh != clientID {
+			clientID = fresh
+			rows, err = s.fetchText(ctx, "https://api-v2.soundcloud.com/playlists/"+strconv.FormatInt(id, 10)+"?client_id="+url.QueryEscape(clientID))
+		}
+	}
 	batchURL := "https://api-v2.soundcloud.com/playlists?ids=" + strconv.FormatInt(id, 10) + "&client_id=" + url.QueryEscape(clientID)
 	if err != nil {
 		// Some public/user playlists are served only by the batch endpoint.
@@ -70,6 +101,11 @@ func (s *Service) PlaylistTracks(ctx context.Context, playlistID string) ([]doma
 		}
 		var batch struct {
 			Collection []scPlaylist `json:"collection"`
+		}
+		var array []scPlaylist
+		if json.Unmarshal([]byte(rows), &array) == nil && len(array) > 0 {
+			playlist = array[0]
+			return s.expandPlaylistTracks(ctx, &playlist, clientID), nil
 		}
 		if batchErr := json.Unmarshal([]byte(rows), &batch); batchErr != nil || len(batch.Collection) == 0 {
 			if decodeErr != nil {

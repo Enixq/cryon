@@ -37,6 +37,16 @@ func TestParseCatalogDuration(t *testing.T) {
 	}
 }
 
+func TestMissingColumnDoesNotIncludeMenuText(t *testing.T) {
+	item := map[string]any{
+		"flexColumns": []any{map[string]any{"musicResponsiveListItemFlexColumnRenderer": map[string]any{"text": map[string]any{"runs": []any{map[string]any{"text": "Song"}}}}}},
+		"menu":        map[string]any{"runs": []any{map[string]any{"text": "Sign in to add to queue"}}},
+	}
+	if got := catalogItemColumn(item, 1); got != "" {
+		t.Fatalf("missing artist column included unrelated text: %q", got)
+	}
+}
+
 func TestCatalogPlaylistLive(t *testing.T) {
 	if os.Getenv("CRYON_YOUTUBE_CATALOG_IT") != "1" {
 		t.Skip("integration: set CRYON_YOUTUBE_CATALOG_IT=1 to run")

@@ -41,6 +41,12 @@ function toSourceId(service: string): SourceId {
     : "local";
 }
 
+/** Удаляет ошибочно сохранённый текст меню старого парсера YouTube Music. */
+export function cleanTrackArtist(artist: string, source: SourceId): string {
+  if (source === "youtube" && /включить микс|добавить в очередь|войдите в аккаунт|play next|add to queue|sign in to/i.test(artist)) return "YouTube Music";
+  return artist || "Неизвестный исполнитель";
+}
+
 /** Преобразует backend Track в Track фронтенда. */
 export function mapTrack(src: domain.Track): Track {
   const source = toSourceId(src.service);
@@ -52,7 +58,7 @@ export function mapTrack(src: domain.Track): Track {
   return {
     id: `${source}:${src.id}`,
     title: src.title || "Без названия",
-    artist,
+    artist: cleanTrackArtist(artist, source),
     album: src.album || undefined,
     source,
     duration: src.durationMs ? Math.round(src.durationMs / 1000) : 0,

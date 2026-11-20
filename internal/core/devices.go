@@ -127,7 +127,7 @@ func discoverDevices(ctx context.Context) []discoveredDevice {
 		deadline = d
 	}
 	seen := map[string]bool{}
-	var out []discoveredDevice
+	out := make([]discoveredDevice, 0)
 	for time.Now().Before(deadline) {
 		_ = conn.SetReadDeadline(deadline)
 		var payload []byte = make([]byte, 1024)

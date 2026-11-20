@@ -266,14 +266,26 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return { queue: [...s.queue, ...fresh] };
     }),
 
-  replaceRemoteState: (state) => set({
-    queue: state.queue,
-    currentIndex: clamp(state.currentIndex, 0, Math.max(0, state.queue.length - 1)),
-    isPlaying: state.isPlaying,
-    progress: Math.max(0, state.progress),
-    volume: clamp(Math.round(state.volume), 0, 100),
-    muted: state.muted,
-    engineDuration: 0,
+  replaceRemoteState: (state) => set((old) => {
+    // Reuse unchanged track objects: the audio engine reloads when the current
+    // object changes, so recreating the whole queue on every remote command
+    // restarted playback even for pause or volume changes.
+    const oldTracks = new Map(old.queue.map((track) => [track.id, track]));
+    const queue = state.queue.map((track) => {
+      const existing = oldTracks.get(track.id);
+      return existing && JSON.stringify(existing) === JSON.stringify(track) ? existing : track;
+    });
+    const currentIndex = clamp(state.currentIndex, 0, Math.max(0, queue.length - 1));
+    const sameTrack = old.currentTrack()?.id === queue[currentIndex]?.id;
+    const target = Math.max(0, state.progress);
+    const needsSeek = sameTrack && Math.abs(old.progress - target) > 3;
+    return {
+      queue, currentIndex, isPlaying: state.isPlaying,
+      progress: sameTrack && !needsSeek ? old.progress : target,
+      volume: clamp(Math.round(state.volume), 0, 100), muted: state.muted,
+      engineDuration: sameTrack ? old.engineDuration : 0,
+      ...(needsSeek ? { seekTarget: target, seekNonce: old.seekNonce + 1 } : {}),
+    };
   }),
 
   playNext: (track) =>

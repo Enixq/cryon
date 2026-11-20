@@ -425,7 +425,7 @@ function QuickMixCard({
       </button>
       <button
         onClick={onPlay}
-        className="mr-4 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#a855f7] text-white opacity-0 shadow-lg shadow-[#a855f7]/40 transition-opacity group-hover:opacity-100"
+        className="absolute bottom-2 right-2 grid h-9 w-9 place-items-center rounded-full bg-[#a855f7] text-white opacity-0 shadow-lg shadow-[#a855f7]/40 transition-opacity group-hover:opacity-100 focus:opacity-100"
         aria-label={`Воспроизвести: ${mix.title}`}
       >
         <Play size={16} fill="currentColor" className="ml-0.5" />

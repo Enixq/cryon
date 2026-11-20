@@ -69,6 +69,7 @@ export function setConfiguredBaseUrl(url: string): void {
   } catch {
     // приватный режим WebView — просто не сохранится
   }
+  window.dispatchEvent(new Event("cryon:device-connection-changed"));
 }
 
 /** RPC-вызов метода App по HTTP. Совпадает с JSON-контрактом Wails-биндингов. */

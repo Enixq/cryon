@@ -666,14 +666,12 @@ function MobileServerSection() {
   const [discovering, setDiscovering] = useState(false);
   const apply = () => {
     setConfiguredBaseUrl(url);
-    setBusy(true);
-    // Перезапуск, чтобы мост переустановился и client.ts «увидел» бэкенд.
-    window.setTimeout(() => window.location.reload(), 350);
+    setBusy(false);
   };
   const trimmed = url.trim();
   const discover = async () => {
     setDiscovering(true);
-    try { setDevices(await discoverDevices()); } finally { setDiscovering(false); }
+    try { const found = await discoverDevices(); setDevices(Array.isArray(found) ? found : []); } catch { setDevices([]); } finally { setDiscovering(false); }
   };
   useEffect(() => { void discover(); }, []);
   return (
@@ -914,7 +912,6 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
   const [saving, setSaving] = useState(false);
   // После открытия браузера показываем поле для вставки токена и подсказку.
   const [awaitingPaste, setAwaitingPaste] = useState(false);
-  const autoConnectInFlight = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -931,39 +928,6 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
       off();
     };
   }, []);
-
-  // После возврата из браузера Android уже может положить токен в буфер
-  // обмена. Считываем его только в рамках явно начатого входа и подключаем
-  // автоматически, чтобы пользователю не приходилось переключаться между
-  // браузером и Cryon и вручную искать поле вставки.
-  useEffect(() => {
-    if (!awaitingPaste) return;
-    let cancelled = false;
-    const readClipboard = async (): Promise<string> => {
-      const native = (window as Window & { CryonAndroid?: { readClipboard?: () => string } }).CryonAndroid;
-      if (typeof native?.readClipboard === "function") return native.readClipboard();
-      try { return await navigator.clipboard.readText(); } catch { return ""; }
-    };
-    const poll = async () => {
-      if (cancelled || autoConnectInFlight.current) return;
-      const value = (await readClipboard()).trim();
-      if (value.length < 40 || /\s/.test(value) || /^https?:\/\//i.test(value)) return;
-      autoConnectInFlight.current = true;
-      try {
-        await setYandexToken(value);
-        if (!cancelled) {
-          setConnected(await yandexTokenConnected());
-          setToken("");
-          setAwaitingPaste(false);
-        }
-      } catch {
-        autoConnectInFlight.current = false;
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => { void poll(); }, 700);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [awaitingPaste]);
 
   const loginViaBrowser = async () => {
     // Официальный OAuth не даёт localhost-redirect, поэтому вход идёт через
@@ -1039,9 +1003,10 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
 
         {awaitingPaste && (
           <p className="text-xs text-slate-400">
-            Войдите в аккаунт Yandex в открывшемся окне. Если страница скопирует
-            токен в буфер обмена, Cryon подключит его автоматически; ручная
-            вставка ниже остаётся запасным вариантом.
+            В браузере выберите «Получить токен в браузере», войдите в Яндекс,
+            откройте страницу подтверждения и введите показанный код. Вернитесь
+            на страницу токена, скопируйте его, затем вернитесь в Cryon и
+            вставьте токен ниже.
           </p>
         )}
 
