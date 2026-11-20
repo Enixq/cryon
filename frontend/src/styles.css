@@ -221,10 +221,22 @@ input {
   animation: nav-pop 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Нижний мини-плеер перелистывает содержимое вместе с очередью, чтобы смена
+   трека была заметна и в свернутом состоянии. */
+@keyframes mini-player-track-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.mini-player-track-enter {
+  animation: mini-player-track-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-sheet-up,
   .route-transition,
-  .animate-nav-pop {
+  .animate-nav-pop,
+  .mini-player-track-enter {
     animation: none;
   }
 }

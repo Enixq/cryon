@@ -34,6 +34,7 @@ import {
   validateSourceV1,
   weeklyDiscoveriesV1,
   listSourcesV1,
+  discoverDevicesV1,
   playbackPauseV1,
   playbackPlayV1,
   playbackResumeV1,
@@ -44,6 +45,11 @@ import {
   type BackgroundJob,
   type PlaylistV1,
 } from "./v1";
+
+export async function discoverDevices() {
+  if (!hasApiV1Runtime()) return [];
+  return discoverDevicesV1();
+}
 
 export interface LocalAccount { id: string; login: string; email: string; isGuest: boolean; }
 

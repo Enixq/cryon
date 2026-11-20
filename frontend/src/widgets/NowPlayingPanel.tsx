@@ -170,7 +170,7 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           {/* Мета */}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="truncate text-xl font-bold text-white">{track.title}</h3>
+              <h3 className="break-words text-xl font-bold leading-tight text-white" title={track.title}>{track.title}</h3>
               <div className="flex min-w-0 items-center gap-2 text-slate-400">
                 <p className="min-w-0 truncate">
                   <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />

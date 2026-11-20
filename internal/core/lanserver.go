@@ -28,6 +28,7 @@ const lanServerPort = 8899
 // ПК и по сети НЕ передаются (телефон хранит только введённый адрес). Поднимать
 // только в доверенной домашней сети.
 func (a *App) startLANServer() {
+	startDeviceDiscoveryResponder()
 	h := &localAssetHandler{app: a}
 	mux := http.NewServeMux()
 

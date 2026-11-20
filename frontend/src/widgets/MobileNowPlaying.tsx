@@ -262,7 +262,7 @@ export function MobileNowPlaying() {
           {/* Название + исполнитель + лайк */}
           <div className={cn("mt-3 flex items-center justify-between gap-3 sm:mt-5", (showQueue || showLyrics) && "hidden") }>
             <div className="min-w-0">
-              <h2 className="line-clamp-2 whitespace-normal break-words text-xl font-bold leading-tight text-white sm:text-2xl" title={track.title}>{track.title}</h2>
+              <h2 className="whitespace-normal break-words text-xl font-bold leading-tight text-white sm:text-2xl" title={track.title}>{track.title}</h2>
               <p className="flex flex-wrap items-center gap-1.5 text-sm text-slate-400">
                 <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
                 {track.quality && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">{track.quality}</span>}

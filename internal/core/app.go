@@ -93,21 +93,23 @@ var notifCounter uint64
 // и локальное хранилище. Методы с большой буквы доступны фронтенду
 // через Wails-биндинги.
 type App struct {
-	ctx          context.Context
-	startupError string
-	workerCancel context.CancelFunc
-	workerDone   chan struct{}
-	cfg          config.Config
-	registry     map[domain.ServiceID]domain.MusicService
-	local        *local.Service
-	player       *playback.Controller
-	store        store.Store
-	reco         *recommendations.Engine
-	lyrics       *lyrics.Client
-	mu           sync.Mutex
-	eventsMu     sync.Mutex
-	statusMu     sync.RWMutex
-	events       *apiEventHub
+	ctx           context.Context
+	startupError  string
+	workerCancel  context.CancelFunc
+	workerDone    chan struct{}
+	cfg           config.Config
+	registry      map[domain.ServiceID]domain.MusicService
+	local         *local.Service
+	player        *playback.Controller
+	store         store.Store
+	reco          *recommendations.Engine
+	lyrics        *lyrics.Client
+	mu            sync.Mutex
+	eventsMu      sync.Mutex
+	statusMu      sync.RWMutex
+	remoteStateMu sync.RWMutex
+	remoteState   []byte
+	events        *apiEventHub
 	// validationErrors хранит только результат явной проверки API в текущем
 	// запуске. Это не подменяет конфигурационный статус, а дополняет его.
 	validationErrors map[domain.ServiceID]string
@@ -923,7 +925,15 @@ func sameTrack(a, b domain.Track) bool {
 	if normalizeTrackText(a.Title) != normalizeTrackText(b.Title) {
 		return false
 	}
-	return normalizeTrackText(strings.Join(a.Artists, " ")) == normalizeTrackText(strings.Join(b.Artists, " "))
+	leftArtist := normalizeTrackText(strings.Join(a.Artists, " "))
+	rightArtist := normalizeTrackText(strings.Join(b.Artists, " "))
+	if leftArtist == rightArtist || leftArtist == "" || rightArtist == "" {
+		return true
+	}
+	// YouTube often reports the channel/uploader while SoundCloud reports the
+	// actual artist. For a cross-source fallback an exact title is a stronger
+	// signal than those incompatible bylines.
+	return a.Service != b.Service
 }
 
 func normalizeTrackText(value string) string {

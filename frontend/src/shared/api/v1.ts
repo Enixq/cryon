@@ -36,6 +36,13 @@ export type SourceStatusV1 = {
   error?: string;
 };
 
+export type DiscoveredDeviceV1 = {
+  id: string;
+  name: string;
+  url: string;
+  version?: string;
+};
+
 export type BackgroundJob = {
   id: string;
   kind: string;
@@ -164,6 +171,10 @@ export async function localFoldersV1(): Promise<string[]> {
 
 export async function listSourcesV1(): Promise<SourceStatusV1[]> {
   return request<SourceStatusV1[]>("/v1/sources");
+}
+
+export function discoverDevicesV1(): Promise<DiscoveredDeviceV1[]> {
+  return request<DiscoveredDeviceV1[]>("/v1/devices/discover");
 }
 
 export async function validateSourceV1(id: string): Promise<void> {

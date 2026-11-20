@@ -25,6 +25,8 @@ func (a *App) APIHandler() http.Handler {
 	mux.HandleFunc("/v1/system/health", a.handleAPIHealth)
 	mux.HandleFunc("/v1/system/update", a.handleAPIUpdate)
 	mux.HandleFunc("/v1/events", a.handleAPIEvents)
+	mux.HandleFunc("/v1/devices/discover", a.handleAPIDeviceDiscover)
+	mux.HandleFunc("/v1/devices/state", a.handleAPIDeviceState)
 	mux.HandleFunc("/v1/sources", a.handleAPISources)
 	mux.HandleFunc("/v1/sources/", a.handleAPISourceByID)
 	mux.HandleFunc("/v1/search", a.handleAPISearch)
@@ -51,6 +53,16 @@ func (a *App) APIHandler() http.Handler {
 
 type apiError struct {
 	Error string `json:"error"`
+}
+
+func (a *App) handleAPIDeviceDiscover(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "требуется GET")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 1200*time.Millisecond)
+	defer cancel()
+	writeAPIJSON(w, http.StatusOK, discoverDevices(ctx))
 }
 
 func (a *App) handleAPIUpdate(w http.ResponseWriter, r *http.Request) {
@@ -728,15 +740,20 @@ func (a *App) handleAPIPlaybackResolve(w http.ResponseWriter, r *http.Request) {
 	}
 	streamURL := apiTrackStreamURL(track)
 	response := apiPlaybackResolveResponse{Track: track, StreamURL: streamURL}
-	if stream, streamErr := a.GetAudioStream(string(track.Service), track.ID); streamErr == nil && stream != nil {
-		track.Quality = stream.Quality
-		response.Track = track
-	}
-	if req.Native && track.Service == domain.ServiceSoundCloud {
+	// Native Android playback must validate the provider URL before handing it
+	// to Media3. Previously errors were swallowed and the endpoint returned a
+	// local /stream URL anyway; the UI then reported a generic 502 and could not
+	// start its alternate-source search. Desktop keeps the lightweight proxy URL
+	// path and resolves quality when the desktop engine actually starts.
+	if req.Native {
 		stream, err := a.GetAudioStream(string(track.Service), track.ID)
 		if err != nil {
 			writeAPIAppError(w, err)
 			return
+		}
+		if stream != nil {
+			track.Quality = stream.Quality
+			response.Track = track
 		}
 		if stream != nil && stream.Format == "application/x-mpegURL" && stream.URL != "" {
 			response.StreamURL = stream.URL

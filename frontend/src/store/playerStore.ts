@@ -71,6 +71,8 @@ interface PlayerState {
   addToQueue: (track: Track) => void;
   /** Добавить несколько треков в конец очереди (дедуп по id). Для радио. */
   appendToQueue: (tracks: Track[]) => void;
+  /** Применить состояние очереди, пришедшее от сопряжённого устройства. */
+  replaceRemoteState: (state: { queue: Track[]; currentIndex: number; isPlaying: boolean; progress: number; volume: number; muted: boolean }) => void;
   /** Поставить трек следующим после текущего. */
   playNext: (track: Track) => void;
   /** Переключить лайк с сохранением в избранное (backend). */
@@ -263,6 +265,16 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       if (fresh.length === 0) return {};
       return { queue: [...s.queue, ...fresh] };
     }),
+
+  replaceRemoteState: (state) => set({
+    queue: state.queue,
+    currentIndex: clamp(state.currentIndex, 0, Math.max(0, state.queue.length - 1)),
+    isPlaying: state.isPlaying,
+    progress: Math.max(0, state.progress),
+    volume: clamp(Math.round(state.volume), 0, 100),
+    muted: state.muted,
+    engineDuration: 0,
+  }),
 
   playNext: (track) =>
     set((s) => {

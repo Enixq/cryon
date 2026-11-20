@@ -30,7 +30,9 @@ import { ShareTrackModal } from "./ShareTrackModal";
 import { RouteErrorBoundary } from "./ErrorBoundary";
 import { notify } from "../store/notificationStore";
 import { apiV1BaseUrl } from "../shared/api/v1";
+import { configuredBaseUrl } from "../shared/lib/httpBridge";
 import type { CSSProperties } from "react";
+import type { Track } from "../shared/types";
 
 // Ключи запросов, зависящих от подключённых источников: их выдача меняется
 // при появлении/смене токена или ключа (например, треки Yandex до токена
@@ -75,6 +77,71 @@ export function AppLayout() {
     };
     void check();
     return () => { cancelled = true; };
+  }, []);
+
+  // Сопряжённый Cryon в той же Wi-Fi-сети получает очередь и транспортное
+  // состояние через маленький JSON-канал. Синхронизация включается только
+  // после выбора устройства в настройках и не требует общего аккаунта.
+  useEffect(() => {
+    const remote = configuredBaseUrl();
+    if (!remote) return;
+    let deviceId = "";
+    try {
+      const key = "cryon.device.id";
+      deviceId = localStorage.getItem(key) || `device-${crypto.randomUUID?.() || Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(key, deviceId);
+    } catch { deviceId = `device-${Math.random().toString(36).slice(2)}`; }
+    let lastSignature = "";
+    let lastRemoteTimestamp = 0;
+    let suppressPublishUntil = 0;
+    const snapshot = () => {
+      const state = usePlayerStore.getState();
+      return {
+        queue: state.queue,
+        currentIndex: state.currentIndex,
+        isPlaying: state.isPlaying,
+        progress: Math.round(state.progress * 10) / 10,
+        volume: state.volume,
+        muted: state.muted,
+      };
+    };
+    const publish = async () => {
+      if (Date.now() < suppressPublishUntil) return;
+      const state = snapshot();
+      const signature = JSON.stringify(state);
+      if (signature === lastSignature) return;
+      lastSignature = signature;
+      try {
+        await fetch(remote + "/v1/devices/state", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deviceId, updatedAtMs: Date.now(), ...state }),
+        });
+      } catch { /* устройство временно недоступно — следующая итерация повторит */ }
+    };
+    const pull = async () => {
+      try {
+        const response = await fetch(remote + "/v1/devices/state");
+        if (!response.ok) return;
+        const incoming = await response.json() as { deviceId?: string; updatedAtMs?: number; queue?: Track[]; currentIndex?: number; isPlaying?: boolean; progress?: number; volume?: number; muted?: boolean };
+        if (!incoming.deviceId || incoming.deviceId === deviceId || !Array.isArray(incoming.queue)) return;
+        const timestamp = Number(incoming.updatedAtMs || 0);
+        if (timestamp <= lastRemoteTimestamp) return;
+        lastRemoteTimestamp = timestamp;
+        suppressPublishUntil = Date.now() + 1800;
+        usePlayerStore.getState().replaceRemoteState({
+          queue: incoming.queue,
+          currentIndex: Number(incoming.currentIndex || 0),
+          isPlaying: Boolean(incoming.isPlaying),
+          progress: Number(incoming.progress || 0),
+          volume: Number(incoming.volume ?? 68),
+          muted: Boolean(incoming.muted),
+        });
+      } catch { /* сеть пропала — не прерываем локальное воспроизведение */ }
+    };
+    void publish();
+    const timer = window.setInterval(() => { void pull(); void publish(); }, 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   // Аппаратная кнопка / жест «Назад» на Android: закрыть оверлей → шаг назад по

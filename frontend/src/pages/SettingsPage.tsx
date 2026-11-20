@@ -54,6 +54,7 @@ import {
   previewSpotifyLibraryExport,
   startSpotifyLogin,
   listAccountConnections,
+  discoverDevices,
   setOAuthApplicationConfig,
   validateSource,
   type FavoritesImportResult,
@@ -541,7 +542,7 @@ export function SettingsPage() {
         <>
           <div className="columns-1 gap-5 lg:columns-2">
             <UpdateSection />
-            {(isMobileShell() || Boolean(configuredBaseUrl())) && <MobileServerSection />}
+            <MobileServerSection />
             <Section title="Интерфейс" description="Оформление приложения.">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between rounded-xl bg-white/[0.05] p-3">
@@ -661,6 +662,8 @@ function relativeTime(iso: string): string {
 function MobileServerSection() {
   const [url, setUrl] = useState<string>(() => configuredBaseUrl());
   const [busy, setBusy] = useState(false);
+  const [devices, setDevices] = useState<Array<{ id: string; name: string; url: string; version?: string }>>([]);
+  const [discovering, setDiscovering] = useState(false);
   const apply = () => {
     setConfiguredBaseUrl(url);
     setBusy(true);
@@ -668,12 +671,27 @@ function MobileServerSection() {
     window.setTimeout(() => window.location.reload(), 350);
   };
   const trimmed = url.trim();
+  const discover = async () => {
+    setDiscovering(true);
+    try { setDevices(await discoverDevices()); } finally { setDiscovering(false); }
+  };
+  useEffect(() => { void discover(); }, []);
   return (
     <Section
-      title="Сервер Cryon (для телефона)"
-      description="Адрес запущенного на компьютере приложения Cryon в вашей Wi-Fi-сети. Его показывает окно приложения на ПК при запуске. Пример: http://192.168.1.50:8899"
+      title="Устройства Cryon в сети"
+      description="Cryon автоматически ищет другие открытые приложения в вашей Wi-Fi-сети. Выберите устройство, чтобы подключить общий плеер и очередь."
     >
       <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => void discover()} disabled={discovering} className="flex-1 rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm text-slate-200 transition-colors hover:border-[var(--app-accent)] hover:text-white disabled:opacity-60">
+            {discovering ? "Поиск устройств…" : "Найти устройства автоматически"}
+          </button>
+        </div>
+        {devices.length > 0 && <div className="flex flex-col gap-1 rounded-xl bg-white/[0.04] p-2">
+          {devices.map((device) => <button key={device.id} type="button" onClick={() => setUrl(device.url)} className="flex items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-white/10">
+            <span className="text-white">{device.name}</span><span className="font-mono text-xs text-slate-400">{device.url}</span>
+          </button>)}
+        </div>}
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -690,7 +708,7 @@ function MobileServerSection() {
           disabled={busy}
           className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 py-2.5 text-sm text-slate-200 transition-colors hover:border-[var(--app-accent)] hover:text-white disabled:opacity-60"
         >
-          {busy ? "Перезапуск…" : trimmed ? "Подключиться и перезапустить" : "Отключить (демо-режим)"}
+          {busy ? "Перезапуск…" : trimmed ? "Подключиться и синхронизировать" : "Отключить синхронизацию"}
         </button>
       </div>
     </Section>
@@ -896,6 +914,7 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
   const [saving, setSaving] = useState(false);
   // После открытия браузера показываем поле для вставки токена и подсказку.
   const [awaitingPaste, setAwaitingPaste] = useState(false);
+  const autoConnectInFlight = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -912,6 +931,39 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
       off();
     };
   }, []);
+
+  // После возврата из браузера Android уже может положить токен в буфер
+  // обмена. Считываем его только в рамках явно начатого входа и подключаем
+  // автоматически, чтобы пользователю не приходилось переключаться между
+  // браузером и Cryon и вручную искать поле вставки.
+  useEffect(() => {
+    if (!awaitingPaste) return;
+    let cancelled = false;
+    const readClipboard = async (): Promise<string> => {
+      const native = (window as Window & { CryonAndroid?: { readClipboard?: () => string } }).CryonAndroid;
+      if (typeof native?.readClipboard === "function") return native.readClipboard();
+      try { return await navigator.clipboard.readText(); } catch { return ""; }
+    };
+    const poll = async () => {
+      if (cancelled || autoConnectInFlight.current) return;
+      const value = (await readClipboard()).trim();
+      if (value.length < 40 || /\s/.test(value) || /^https?:\/\//i.test(value)) return;
+      autoConnectInFlight.current = true;
+      try {
+        await setYandexToken(value);
+        if (!cancelled) {
+          setConnected(await yandexTokenConnected());
+          setToken("");
+          setAwaitingPaste(false);
+        }
+      } catch {
+        autoConnectInFlight.current = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 700);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [awaitingPaste]);
 
   const loginViaBrowser = async () => {
     // Официальный OAuth не даёт localhost-redirect, поэтому вход идёт через
@@ -987,8 +1039,9 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
 
         {awaitingPaste && (
           <p className="text-xs text-slate-400">
-            В открывшемся окне войдите в аккаунт Yandex и скопируйте полученный
-            токен, затем вставьте его в поле ниже и нажмите «Сохранить».
+            Войдите в аккаунт Yandex в открывшемся окне. Если страница скопирует
+            токен в буфер обмена, Cryon подключит его автоматически; ручная
+            вставка ниже остаётся запасным вариантом.
           </p>
         )}
 
