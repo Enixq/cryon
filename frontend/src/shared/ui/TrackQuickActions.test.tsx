@@ -3,12 +3,21 @@ import { describe, expect, it, vi } from "vitest";
 import { TrackQuickActions } from "./TrackQuickActions";
 import type { Track } from "../types";
 
+const rate = vi.hoisted(() => vi.fn());
+vi.mock("../lib/useRecoFeedback", () => ({ useRecoFeedback: () => ({ scoreFor: () => 0, rate, saving: false }) }));
 vi.mock("../lib/useFavorites", () => ({ useFavoriteIds: () => new Set() }));
 vi.mock("./AddToPlaylistButton", () => ({ AddToPlaylistButton: () => <div>Плейлисты</div> }));
 
 const track: Track = { id: "youtube:one", source: "youtube", title: "Название", artist: "Исполнитель", duration: 180, accent: "violet" };
 
 describe("track actions menu", () => {
+  it("blocks a track from its actions menu", () => {
+    render(<TrackQuickActions track={track} />);
+    fireEvent.click(screen.getByRole("button", { name: "Другие действия" }));
+    fireEvent.click(screen.getByRole("button", { name: "Не рекомендовать трек" }));
+    expect(rate).toHaveBeenCalledWith(track, -1);
+  });
+
   it("opens above a button near the bottom and closes on Escape", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
       const bounds = this.getAttribute("role") === "menu"

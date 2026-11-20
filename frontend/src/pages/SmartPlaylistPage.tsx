@@ -13,6 +13,7 @@ import {
   onFavoritesChanged,
 } from "../shared/api/client";
 import { deriveRecommendations, deriveSmartPlaylists } from "../shared/lib/recommendations";
+import { useRecoFeedback } from "../shared/lib/useRecoFeedback";
 
 // Умный плейлист открывается как отдельный экран (а не «играет сразу по клику»):
 // пользователь видит все треки списком и сам выбирает, что запустить. Подборки
@@ -23,6 +24,7 @@ export function SmartPlaylistPage() {
   const navigate = useNavigate();
   const { playTrack, isPlaying, activeTrackId } = useTrackListPlayer();
   const queryClient = useQueryClient();
+  const feedback = useRecoFeedback();
 
   const { data: favorites = [] } = useQuery({ queryKey: ["favorites"], queryFn: listFavorites });
   const { data: history = [] } = useQuery({ queryKey: ["history"], queryFn: listHistory });
@@ -43,7 +45,7 @@ export function SmartPlaylistPage() {
     return all.find((p) => p.id === id);
   }, [favorites, history, localTracks, id]);
 
-  const tracks = playlist?.tracks ?? [];
+  const tracks = id?.startsWith("rec-") ? (playlist?.tracks ?? []).filter((track) => feedback.scoreFor(track) >= 0) : playlist?.tracks ?? [];
   const totalSeconds = tracks.reduce((sum, t) => sum + t.duration, 0);
 
   if (!playlist || tracks.length === 0) {

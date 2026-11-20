@@ -1,9 +1,11 @@
 package recommendations
 
 import (
+	"context"
 	"testing"
 
 	"Cryon2/internal/domain"
+	"Cryon2/internal/store"
 )
 
 func tr(artist, title string, svc domain.ServiceID) domain.Track {
@@ -27,22 +29,62 @@ func TestCapPerArtist(t *testing.T) {
 		tr("C", "c1", domain.ServiceSoundCloud),
 	}
 
-	// Кап 2 на артиста при достатке других: a3 откладывается за b1/c1.
+	// Сначала разные исполнители, затем второй трек того же артиста.
 	got := capPerArtist(in, 4, 2)
-	want := []string{"a1", "a2", "b1", "c1"}
+	want := []string{"a1", "b1", "c1", "a2"}
 	if !equalStrings(titles(got), want) {
 		t.Fatalf("cap с запасом: got %v, want %v", titles(got), want)
 	}
 
-	// Если других не хватает на limit, добавляем отложенные сверх капа.
+	// При недостатке разнообразия подборка короче, а не заполнена одним артистом.
 	got = capPerArtist(in, 5, 2)
-	want = []string{"a1", "a2", "b1", "c1", "a3"}
+	want = []string{"a1", "b1", "c1", "a2"}
 	if !equalStrings(titles(got), want) {
 		t.Fatalf("cap с добором overflow: got %v, want %v", titles(got), want)
 	}
 
 	if len(capPerArtist(in, 0, 2)) != 0 {
 		t.Fatalf("limit=0 должен вернуть пусто")
+	}
+}
+
+type cachedGraph struct {
+	store.Store
+	values map[string]string
+}
+
+func (s *cachedGraph) RecoCacheGet(_ context.Context, key string) (string, bool, error) {
+	value, ok := s.values[key]
+	return value, ok, nil
+}
+
+func TestOnlineRecommendationsExploreSecondHop(t *testing.T) {
+	graph := &cachedGraph{values: map[string]string{
+		"graph:similar:v1:seed":        `[{"name":"Bridge","match":0.9}]`,
+		"graph:similar:v1:bridge":      `[{"name":"Discovery","match":0.8}]`,
+		"graph:toptracks:v1:bridge":    `[{"artist":"Bridge","name":"First"}]`,
+		"graph:toptracks:v1:discovery": `[{"artist":"Discovery","name":"Second"}]`,
+	}}
+	e := &Engine{store: graph, search: func(_ context.Context, query string) ([]domain.Track, error) {
+		switch query {
+		case "Bridge First":
+			return []domain.Track{tr("Bridge", "First", domain.ServiceSoundCloud)}, nil
+		case "Discovery Second":
+			return []domain.Track{tr("Discovery", "Second", domain.ServiceSoundCloud)}, nil
+		default:
+			return nil, nil
+		}
+	}}
+	got := e.onlineRecommendations(context.Background(), taste{}, []artistWeight{{name: "Seed", weight: 1}}, 10)
+	if !equalStrings(titles(got), []string{"First", "Second"}) {
+		t.Fatalf("second hop missing: %v", titles(got))
+	}
+}
+
+func TestMergeGraphCandidatesCombinesIndependentSeeds(t *testing.T) {
+	got := mergeGraphCandidates([]scoredCand{{artist: "Artist", title: "Song", score: 0.4}, {artist: " artist ", title: "SONG", score: 0.6}, {artist: "Other", title: "Song", score: 0.3}})
+	if len(got) != 2 || got[0].score != 1.0 || got[1].artist != "Other" {
+		t.Fatalf("unexpected merged candidates: %+v", got)
 	}
 }
 

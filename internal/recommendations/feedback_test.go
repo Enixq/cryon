@@ -52,6 +52,39 @@ func TestNormalizeSources(t *testing.T) {
 	}
 }
 
+func TestDislikedTrackIsExcludedFromRadioAndReleases(t *testing.T) {
+	ctx := context.Background()
+	e := &Engine{store: newFakeSettings(), search: func(_ context.Context, _ string) ([]domain.Track, error) {
+		return []domain.Track{tr("Artist", "Bad", domain.ServiceYandex), tr("Artist", "Good", domain.ServiceYandex)}, nil
+	}}
+	if _, err := e.SetFeedback(ctx, "Artist", "Bad", -1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.RelatedTracks(ctx, tr("Artist", "Seed", domain.ServiceYandex), 10)
+	if err != nil || !equalStrings(titles(got), []string{"Good"}) {
+		t.Fatalf("radio: %v, %v", titles(got), err)
+	}
+	releases := e.PersonalizeReleases(ctx, []domain.Track{tr("Artist", "Bad", domain.ServiceSoundCloud), tr("Artist", "Good", domain.ServiceYandex)})
+	if !equalStrings(titles(releases), []string{"Good"}) {
+		t.Fatalf("releases: %v", titles(releases))
+	}
+	if _, err := e.SetFeedback(ctx, "Artist", "Bad", 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err = e.RelatedTracks(ctx, tr("Artist", "Seed", domain.ServiceYandex), 10)
+	if err != nil || !equalStrings(titles(got), []string{"Bad", "Good"}) {
+		t.Fatalf("undo: %v, %v", titles(got), err)
+	}
+}
+
+func TestDiversifyDefersRecentArtists(t *testing.T) {
+	tracks := []domain.Track{tr("Recent", "r1", domain.ServiceYandex), tr("Recent", "r2", domain.ServiceYandex), tr("Other", "o1", domain.ServiceYandex), tr("Third", "t1", domain.ServiceYandex)}
+	got := diversifyTracks(tracks, map[string]bool{"recent": true}, 4, 2)
+	if !equalStrings(titles(got), []string{"o1", "t1", "r1", "r2"}) {
+		t.Fatalf("unexpected order: %v", titles(got))
+	}
+}
+
 func TestPickCandidateForPrefersHabitualSource(t *testing.T) {
 	e := &Engine{}
 	found := []domain.Track{
@@ -159,7 +192,7 @@ func TestSetFeedbackAffectsProfile(t *testing.T) {
 		},
 	}
 
-	// «Не нравится» дважды по разным трекам одного артиста — артист блокируется.
+	// Дизлайки исключают эти треки, не блокируя исполнителя навсегда.
 	if _, err := e.SetFeedback(ctx, "Bad", "b1", -1); err != nil {
 		t.Fatalf("SetFeedback: %v", err)
 	}
@@ -167,8 +200,8 @@ func TestSetFeedbackAffectsProfile(t *testing.T) {
 		t.Fatalf("SetFeedback: %v", err)
 	}
 	profile := e.buildTaste(ctx)
-	if !profile.blockedArtists["bad"] {
-		t.Fatalf("после двух дизлайков артист должен блокироваться: %v", profile.blockedArtists)
+	if profile.blockedArtists["bad"] {
+		t.Fatalf("дизлайки треков не должны блокировать исполнителя: %v", profile.blockedArtists)
 	}
 	if !profile.seen["bad|b1"] || !profile.seen["bad|b2"] {
 		t.Fatalf("дизлайкнутые треки должны попадать в seen")
@@ -237,9 +270,8 @@ func TestPersonalizeReleases(t *testing.T) {
 		tr("Other", "n4", domain.ServiceSpotify),
 	}
 	got := titles(e.PersonalizeReleases(ctx, in))
-	// Знакомый исполнитель — наверх, заблокированный — исключён, остальные
-	// сохраняют исходный порядок (сортировка стабильная).
-	want := []string{"n3", "n1", "n4"}
+	// Знакомый исполнитель — наверх; другие песни того же артиста не скрываются.
+	want := []string{"n3", "n1", "n2", "n4"}
 	if !equalStrings(got, want) {
 		t.Fatalf("радар под профиль: got %v, want %v", got, want)
 	}

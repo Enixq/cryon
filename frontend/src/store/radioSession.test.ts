@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Track } from "../shared/types";
-import { rankRadioTracks, recordRadioSignal, resetRadioSession } from "./radioSession";
+import { consumeRadioCompletion, rankRadioTracks, recordRadioSignal, resetRadioSession } from "./radioSession";
 
 function track(id: string, artist: string): Track {
   return { id, artist, title: id, source: "youtube", duration: 180, accent: "violet" };
@@ -20,5 +20,39 @@ describe("radio session", () => {
     recordRadioSignal(candidate, "skipped");
     resetRadioSession();
     expect(rankRadioTracks([candidate])).toEqual([candidate]);
+  });
+
+  it("excludes an artist after two consecutive skips until the session resets", () => {
+    recordRadioSignal(track("one", "Artist"), "skipped");
+    recordRadioSignal(track("two", "artist"), "skipped");
+    const candidates = [track("three", "Artist"), track("other", "Other")];
+    expect(rankRadioTracks(candidates).map((item) => item.id)).toEqual(["other"]);
+    resetRadioSession();
+    expect(rankRadioTracks(candidates)).toEqual(candidates);
+  });
+
+  it("does not treat separated skips as consecutive", () => {
+    recordRadioSignal(track("one", "Artist"), "skipped");
+    recordRadioSignal(track("two", "Other"), "completed");
+    recordRadioSignal(track("three", "Artist"), "skipped");
+    expect(rankRadioTracks([track("four", "Artist")])).toHaveLength(1);
+  });
+
+  it("does not count repeated events for the same track as two skips", () => {
+    recordRadioSignal(track("one", "Artist"), "skipped");
+    recordRadioSignal(track("one", "Artist"), "skipped");
+    expect(rankRadioTracks([track("two", "Artist")])).toHaveLength(1);
+  });
+
+  it("interleaves artists and limits repeats", () => {
+    const candidates = [track("a1", "A"), track("a2", "A"), track("a3", "A"), track("b1", "B")];
+    expect(rankRadioTracks(candidates).map((item) => item.id)).toEqual(["a1", "b1", "a2"]);
+  });
+
+  it("consumes a completion only once when advancing automatically", () => {
+    const candidate = track("one", "Artist");
+    recordRadioSignal(candidate, "completed");
+    expect(consumeRadioCompletion(candidate)).toBe(true);
+    expect(consumeRadioCompletion(candidate)).toBe(false);
   });
 });

@@ -23,6 +23,9 @@ export interface Track {
   id: string;
   title: string;
   artist: string;
+  /** Основной исполнитель для сопоставления рекомендаций между источниками. */
+  primaryArtist?: string;
+  artists?: string[];
   album?: string;
   source: SourceId;
   /** Длительность трека в секундах. */

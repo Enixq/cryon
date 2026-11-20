@@ -162,8 +162,8 @@ export function CollectionPage() {
   const items = useMemo(() => {
     const all = data ?? [];
     // Дизлайкнутый трек исчезает из подборки сразу, не дожидаясь пересборки.
-    return rateable ? all.filter((t) => rateScore(t) >= 0) : all;
-  }, [data, rateable, rateScore]);
+    return rateable || kind === "m2" || kind === "new-releases" ? all.filter((t) => rateScore(t) >= 0) : all;
+  }, [data, kind, rateable, rateScore]);
 
   const handlePlay = (track: Track) => {
     playTrack(track, items);

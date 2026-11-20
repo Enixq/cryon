@@ -140,8 +140,11 @@ export function HomePage() {
   );
   // Клиентские подборки — фолбэк на случай, когда backend авто-подборок не дал.
   const derived = useMemo(
-    () => deriveRecommendations(favorites, history, localTracks),
-    [favorites, history, localTracks],
+    () => deriveRecommendations(favorites, history, localTracks).map((playlist) => ({
+      ...playlist,
+      tracks: playlist.tracks.filter((track) => feedback.scoreFor(track) >= 0),
+    })),
+    [favorites, history, localTracks, feedback.scoreFor],
   );
 
   // Дизлайкнутые треки убираем из всех подборок сразу. scoreFor стабилен между
@@ -163,7 +166,7 @@ export function HomePage() {
 
   const quickMixTracks: Record<QuickMix["id"], Track[]> = {
     m1: visibleDailyMix,
-    m2: newReleases,
+    m2: newReleases.filter((track) => rateScore(track) >= 0),
     m3: favorites,
     m4: visibleWeekly,
   };

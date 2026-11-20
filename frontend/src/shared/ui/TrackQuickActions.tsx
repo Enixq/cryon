@@ -1,4 +1,4 @@
-﻿import { Heart, ListPlus, ListStart, MoreHorizontal, Share2 } from "lucide-react";
+﻿import { Heart, ListPlus, ListStart, MoreHorizontal, Share2, ThumbsDown } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePlayerStore } from "../../store/playerStore";
@@ -7,6 +7,7 @@ import type { Track } from "../types";
 import { AddToPlaylistButton } from "./AddToPlaylistButton";
 import { cn } from "../lib/cn";
 import { useFavoriteIds } from "../lib/useFavorites";
+import { useRecoFeedback } from "../lib/useRecoFeedback";
 
 interface Props { track: Track; }
 
@@ -22,6 +23,8 @@ export function TrackQuickActions({ track }: Props) {
   const playTrack = usePlayerStore((state) => state.playTrack);
   const toggleLikeWithTrack = usePlayerStore((state) => state.toggleLikeWithTrack);
   const openShare = useUiStore((state) => state.openShare);
+  const feedback = useRecoFeedback();
+  const disliked = feedback.scoreFor(track) < 0;
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -66,6 +69,7 @@ export function TrackQuickActions({ track }: Props) {
           <button type="button" onClick={(event) => { event.stopPropagation(); addToQueue(track); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"><ListPlus size={15} />Добавить в очередь</button>
           <button type="button" onClick={(event) => { event.stopPropagation(); playTrack(track, [track]); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"><ListPlus size={15} />Играть сейчас</button>
           <button type="button" onClick={(event) => { event.stopPropagation(); toggleLikeWithTrack({ ...track, liked: isFavorite }); setOpen(false); }} className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-white/8", isFavorite ? "text-[#a855f7]" : "text-slate-200")}><Heart size={15} fill={isFavorite ? "currentColor" : "none"} />{isFavorite ? "Убрать из избранного" : "В избранное"}</button>
+          <button type="button" disabled={feedback.saving} onClick={(event) => { event.stopPropagation(); feedback.rate(track, -1); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8 disabled:opacity-50"><ThumbsDown size={15} />{disliked ? "Вернуть в рекомендации" : "Не рекомендовать трек"}</button>
           <button type="button" onClick={(event) => { event.stopPropagation(); openShare(track); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"><Share2 size={15} />Поделиться</button>
           <div className="mt-1 border-t border-white/8 pt-2"><AddToPlaylistButton track={track} opensUp alwaysVisible /></div>
         </div>, document.body,

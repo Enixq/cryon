@@ -398,11 +398,7 @@ export async function setRecoFeedback(
     }
     return map;
   }
-  try {
-    return (await App.SetRecoFeedback(artist, title, score)) ?? {};
-  } catch {
-    return await recoFeedbackState();
-  }
+  return (await App.SetRecoFeedback(artist, title, score)) ?? {};
 }
 
 /**

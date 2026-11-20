@@ -4,7 +4,7 @@ import { clamp } from "../shared/lib/format";
 import { initialQueue } from "../mocks/data";
 import { isWailsRuntime, addFavorite, removeFavorite } from "../shared/api/client";
 import { notify } from "./notificationStore";
-import { recordRadioSignal, resetRadioSession } from "./radioSession";
+import { consumeRadioCompletion, isRadioArtistBlocked, recordRadioSignal, resetRadioSession } from "./radioSession";
 
 // В настоящем приложении (Wails) очередь стартует пустой — иначе Play по
 // демо-трекам без реального источника даёт тишину. Мок-очередь нужна только
@@ -107,7 +107,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (queue.length === 0) return;
     const current = queue[currentIndex];
     const duration = get().effectiveDuration();
-    if (get().radio && current && get().isPlaying && get().progress >= 5 && duration > 0 && get().progress / duration < 0.5) {
+    const completed = Boolean(get().radio && current && consumeRadioCompletion(current));
+    if (get().radio && current && !completed && get().isPlaying && (duration <= 0 || get().progress / duration < 0.5)) {
       recordRadioSignal(current, "skipped");
     }
     if (repeat === "one") {
@@ -120,11 +121,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     let nextIndex: number;
     if (shuffle) {
-      nextIndex = Math.floor(Math.random() * queue.length);
+      const eligible = queue.map((track, index) => ({ track, index })).filter(({ track, index }) => index !== currentIndex && (!get().radio || !isRadioArtistBlocked(track)));
+      if (eligible.length === 0) { if (get().radio) set({ isPlaying: false }); return; }
+      nextIndex = eligible[Math.floor(Math.random() * eligible.length)].index;
     } else {
       nextIndex = currentIndex + 1;
+      while (get().radio && nextIndex < queue.length && isRadioArtistBlocked(queue[nextIndex])) nextIndex++;
       if (nextIndex >= queue.length) {
-        nextIndex = repeat === "all" ? 0 : currentIndex;
+        nextIndex = repeat === "all" && !get().radio ? 0 : currentIndex;
+        if (get().radio) { set({ isPlaying: false }); return; }
       }
     }
     set({ currentIndex: nextIndex, progress: 0, isPlaying: true, engineDuration: 0 });

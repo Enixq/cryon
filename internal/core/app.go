@@ -1255,8 +1255,7 @@ func (a *App) ListRelatedTracks(seed domain.Track, limit int) ([]domain.Track, e
 // оценка, чтобы UI подсветил кнопки без второго запроса.
 //
 // Оценка попадает в профиль вкусов: «нравится» усиливает исполнителя сильнее
-// избранного, накопленные «не нравится» полностью исключают его из подборок,
-// а оценённый трек больше не предлагается.
+// избранного, «не нравится» снижает его вес, а сам трек больше не предлагается.
 func (a *App) SetRecoFeedback(artist, title string, score int) (map[string]int, error) {
 	if a.reco == nil {
 		return map[string]int{}, nil

@@ -42,7 +42,7 @@ const (
 // срез, если онлайн-движок недоступен или обход ничего не дал — вызывающий код
 // (AutoMix) в этом случае откатывается на обычный пул рекомендаций.
 func (e *Engine) discoveryMix(ctx context.Context, limit int) []domain.Track {
-	if e == nil || !e.lastfm.Available() || limit <= 0 {
+	if e == nil || !e.OnlineAvailable() || limit <= 0 {
 		return nil
 	}
 	profile := e.buildTaste(ctx)
@@ -57,14 +57,17 @@ func (e *Engine) discoveryMix(ctx context.Context, limit int) []domain.Track {
 	// Недельный кэш готовой подборки: ключ от профиля + версии оценок + номера
 	// недели, поэтому обход не повторяется в течение недели, но пересобирается
 	// при смене вкуса.
-	cacheKey := "reco:discovery:v1:w" + strconv.FormatInt(periodSeed(MixWeekly), 10) +
+	cacheKey := "reco:discovery:v2:w" + strconv.FormatInt(periodSeed(MixWeekly), 10) +
 		":fb" + strconv.Itoa(profile.feedbackRev) + ":n" + strconv.Itoa(limit) +
 		":" + profileSignature(seeds)
 	if e.store != nil {
 		if raw, ok, _ := e.store.RecoCacheGet(ctx, cacheKey); ok {
 			var cached []domain.Track
 			if json.Unmarshal([]byte(raw), &cached) == nil && len(cached) > 0 {
-				return cached
+				filtered := filterUnseen(cached, profile)
+				if len(filtered) > 0 {
+					return diversifyTracks(filtered, profile.recentArtists, limit, artistCap)
+				}
 			}
 		}
 	}

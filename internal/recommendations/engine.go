@@ -40,8 +40,9 @@ type SearchFunc func(ctx context.Context, query string) ([]domain.Track, error)
 
 // Engine — движок рекомендаций.
 type Engine struct {
-	store  store.Store
-	lastfm *lastfm.Client
+	feedbackMu sync.Mutex
+	store      store.Store
+	lastfm     *lastfm.Client
 	// deezer — бесключевой граф похожести (fallback к Last.fm). Даёт похожих
 	// артистов, топ-треки и чарт без ключа/регистрации, поэтому рекомендации
 	// работают «из коробки». Только ГРАФ: аудио из Deezer не берём — найденные
@@ -196,6 +197,9 @@ type taste struct {
 	// seen — что уже слушали/лайкали: такое не рекомендуем повторно. Сюда же
 	// попадают треки с дизлайком.
 	seen map[string]bool
+	// blockedTracks contains explicit dislikes, independently of listening history.
+	blockedTracks map[string]bool
+	recentArtists map[string]bool
 	// sources — насколько пользователь пользуется каждым источником. Нужен,
 	// чтобы рекомендованный трек приходил из привычного сервиса.
 	sources sourcePrefs
@@ -209,10 +213,12 @@ type taste struct {
 // buildTaste строит профиль вкусов из всех локальных сигналов. Избранное весит
 // больше истории, треки из своих плейлистов — между ними, свежие прослушивания
 // получают надбавку за свежесть. Явные оценки («нравится»/«не нравится» на
-// карточке рекомендации) усиливают или полностью исключают исполнителя.
+// карточке рекомендации) усиливают или ослабляют исполнителя.
 func (e *Engine) buildTaste(ctx context.Context) taste {
 	weights := map[string]*artistWeight{}
 	seenTrackKeys := map[string]bool{}
+	blockedTracks := map[string]bool{}
+	recentArtists := map[string]bool{}
 	sources := sourcePrefs{}
 
 	add := func(name string, w float64, playedAt int64, plays int, deliberate bool) {
@@ -281,8 +287,13 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 	if e.histFn != nil {
 		if rows, err := e.histFn(ctx, 120); err == nil {
 			now := time.Now().UnixMilli()
-			for _, r := range rows {
+			for i, r := range rows {
 				seenTrackKeys[trackKey(r.Track)] = true
+				if i < 10 && r.PlayedAtMs > 0 && now-r.PlayedAtMs >= 0 && now-r.PlayedAtMs <= int64(30*time.Minute/time.Millisecond) {
+					for _, artist := range r.Track.Artists {
+						recentArtists[feedbackArtistKey(artist)] = true
+					}
+				}
 				// История ограничена свежим окном: давние прослушивания не должны
 				// перебивать текущие предпочтения и тянуть в радар случайные жанры.
 				if r.PlayedAtMs <= 0 {
@@ -355,6 +366,7 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 		if score < 0 {
 			// Дизлайкнутый трек не должен возвращаться ни в одной подборке.
 			seenTrackKeys[key] = true
+			blockedTracks[key] = true
 		}
 	}
 	for name, score := range fb.Artists {
@@ -365,11 +377,11 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 			display = saved
 		}
 		switch {
-		case score <= artistBlockScore:
-			// Набралось достаточно дизлайков — исполнитель уходит из подборок
-			// целиком, включая затравки.
-			blocked[name] = true
-			delete(weights, name)
+		case score < 0:
+			// Неудачные треки снижают вес артиста, но не блокируют его навсегда.
+			if weight := weights[name]; weight != nil {
+				weight.weight /= 1 + float64(-score)
+			}
 		case score > 0:
 			// Лайк рекомендации — самый прямой сигнал вкуса, сильнее избранного:
 			// пользователь одобрил именно предложенное, а не то, что уже знал.
@@ -395,6 +407,8 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 	return taste{
 		artists:        out,
 		seen:           seenTrackKeys,
+		blockedTracks:  blockedTracks,
+		recentArtists:  recentArtists,
 		sources:        normalizeSources(sources),
 		blockedArtists: blocked,
 		feedbackRev:    fb.Rev,
@@ -445,7 +459,7 @@ func (e *Engine) PersonalizeReleases(ctx context.Context, in []domain.Track) []d
 		return in
 	}
 	profile := e.buildTaste(ctx)
-	if len(profile.artists) == 0 && len(profile.blockedArtists) == 0 {
+	if len(profile.artists) == 0 && len(profile.blockedArtists) == 0 && len(profile.blockedTracks) == 0 {
 		// Вкусы ещё не набраны — радар остаётся как есть.
 		return in
 	}
@@ -507,7 +521,7 @@ func (e *Engine) PersonalizeReleases(ctx context.Context, in []domain.Track) []d
 	reordered := make([]scored, 0, len(in))
 	for _, t := range in {
 		key := artistKey(t)
-		if profile.blockedArtists[key] {
+		if profile.blockedArtists[key] || profile.blockedTracks[trackKey(t)] {
 			continue
 		}
 		famScore := familiar[key]
@@ -596,11 +610,6 @@ func (e *Engine) RadarSeeds(ctx context.Context, maxSeeds int) []string {
 	return out
 }
 
-// artistBlockScore — при какой сумме оценок исполнитель исключается из
-// подборок целиком. Один дизлайк — это «не этот трек», два и больше — уже
-// «не этот исполнитель».
-const artistBlockScore = -2
-
 // feedbackSettingKey — ключ настройки, в которой лежат оценки рекомендаций.
 // Оценки — это несколько десятков пар «ключ→оценка», поэтому отдельная таблица
 // не нужна: храним JSON в существующем key-value хранилище настроек и не
@@ -663,12 +672,13 @@ func (e *Engine) loadFeedback(ctx context.Context) feedback {
 // «не нравится», score == 0 — снять оценку. Возвращает актуальную карту оценок
 // по трекам, чтобы UI не делал второй запрос.
 //
-// Оценка трека переносится и на исполнителя: накопленный минус исключает его из
-// подборок (см. artistBlockScore), плюс — усиливает в профиле вкусов.
+// Оценка трека также влияет на вес исполнителя в профиле вкусов.
 func (e *Engine) SetFeedback(ctx context.Context, artist, title string, score int) (map[string]int, error) {
 	if e == nil || e.store == nil {
 		return map[string]int{}, nil
 	}
+	e.feedbackMu.Lock()
+	defer e.feedbackMu.Unlock()
 	tKey := feedbackTrackKey(artist, title)
 	if tKey == "|" {
 		return e.FeedbackState(ctx)
@@ -757,7 +767,7 @@ func (e *Engine) recoCacheKey(t taste, seeds []artistWeight, limit int) string {
 	if e.lastfm.Available() {
 		mode = "online"
 	}
-	return "reco:v3:" + mode + ":fb" + strconv.Itoa(t.feedbackRev) +
+	return "reco:v4:" + mode + ":fb" + strconv.Itoa(t.feedbackRev) +
 		":n" + strconv.Itoa(limit) + ":" + profileSignature(seeds)
 }
 
@@ -791,7 +801,10 @@ func (e *Engine) Recommendations(ctx context.Context, limit int) ([]domain.Track
 		if raw, ok, _ := e.store.RecoCacheGet(ctx, cacheKey); ok {
 			var cached []domain.Track
 			if json.Unmarshal([]byte(raw), &cached) == nil && len(cached) > 0 {
-				return cached, nil
+				filtered := filterUnseen(cached, profile)
+				if len(filtered) > 0 {
+					return diversifyTracks(filtered, profile.recentArtists, limit, artistCap), nil
+				}
 			}
 		}
 	}
@@ -807,6 +820,7 @@ func (e *Engine) Recommendations(ctx context.Context, limit int) ([]domain.Track
 		tracks = e.offlineRecommendations(ctx, profile, seeds, limit)
 	}
 
+	tracks = diversifyTracks(filterRecommended(tracks, profile), profile.recentArtists, limit, artistCap)
 	if len(tracks) > 0 && e.store != nil {
 		if data, err := json.Marshal(tracks); err == nil {
 			_ = e.store.RecoCacheSet(ctx, cacheKey, string(data), recoTTL)
@@ -829,12 +843,15 @@ func (e *Engine) chartFallbackRecommendations(ctx context.Context, t taste, limi
 	if e.deezer == nil || !e.deezer.Available() {
 		return []domain.Track{}
 	}
-	const cacheKey = "reco:chart:v1"
+	cacheKey := "reco:chart:v2:fb" + strconv.Itoa(t.feedbackRev) + ":n" + strconv.Itoa(limit)
 	if e.store != nil {
 		if raw, ok, _ := e.store.RecoCacheGet(ctx, cacheKey); ok {
 			var cached []domain.Track
 			if json.Unmarshal([]byte(raw), &cached) == nil && len(cached) > 0 {
-				return cached
+				filtered := filterUnseen(cached, t)
+				if len(filtered) > 0 {
+					return diversifyTracks(filtered, t.recentArtists, limit, artistCap)
+				}
 			}
 		}
 	}
@@ -890,7 +907,7 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 		// Поиск волнами: радио дозаполняет очередь в момент, когда трек
 		// закончился, поэтому последовательные limit*2 поисков давали слышимую
 		// паузу. Порядок похожести сохраняется — волна разбирается по индексам.
-		for start := 0; start < len(similar) && len(out) < limit; start += searchConcurrency {
+		for start := 0; start < len(similar) && len(out) < limit*3; start += searchConcurrency {
 			end := start + searchConcurrency
 			if end > len(similar) {
 				end = len(similar)
@@ -916,7 +933,7 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 			wg.Wait()
 
 			for _, found := range results {
-				if len(out) >= limit {
+				if len(out) >= limit*3 {
 					break
 				}
 				if len(found) == 0 {
@@ -930,16 +947,32 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 					continue
 				}
 				key := trackKey(best)
-				if seen[key] {
+				if seen[key] || profile.blockedTracks[key] {
 					continue
 				}
 				seen[key] = true
 				out = append(out, best)
 			}
 		}
-		if len(out) > 0 {
-			return out, nil
+	}
+
+	// Without track-level similarity, use the available artist graph before
+	// falling back to more tracks by the same performer.
+	if e.OnlineAvailable() && strings.TrimSpace(artist) != "" {
+		radioProfile := profile
+		radioProfile.seen = map[string]bool{trackKey(seed): true}
+		for key := range seen {
+			radioProfile.seen[key] = true
 		}
+		for key := range profile.blockedTracks {
+			radioProfile.seen[key] = true
+		}
+		if related := e.onlineRecommendations(ctx, radioProfile, []artistWeight{{name: artist, weight: 1}}, limit); len(related) > 0 {
+			out = append(out, related...)
+		}
+	}
+	if len(out) > 0 {
+		return diversifyTracks(out, profile.recentArtists, limit, artistCap), nil
 	}
 
 	// Фолбэк: ещё треки того же артиста.
@@ -954,7 +987,7 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 					continue
 				}
 				key := trackKey(t)
-				if seen[key] {
+				if seen[key] || profile.blockedTracks[key] {
 					continue
 				}
 				seen[key] = true
@@ -962,7 +995,7 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 			}
 		}
 	}
-	return out, nil
+	return diversifyTracks(out, profile.recentArtists, limit, artistCap), nil
 }
 
 // similarTracksCached — SimilarTracks с кэшем в SQLite (TTL сутки).
@@ -1014,6 +1047,57 @@ func (e *Engine) onlineRecommendations(ctx context.Context, t taste, seeds []art
 		}(i, seed.name)
 	}
 	wgSimilar.Wait()
+
+	// A small second hop widens sparse graphs while keeping network work bounded.
+	// Neighbours already in the first hop remain ranked ahead of distant artists.
+	type graphBridge struct {
+		seed   int
+		artist lastfm.Artist
+	}
+	var bridges []graphBridge
+	bridgeSeen := map[string]bool{}
+	firstHop := map[string]bool{}
+	for _, group := range similarBySeed {
+		for _, candidate := range group {
+			firstHop[feedbackArtistKey(candidate.Name)] = true
+		}
+	}
+	for i, group := range similarBySeed {
+		for _, candidate := range group {
+			key := feedbackArtistKey(candidate.Name)
+			if key == "" || seedSet[key] || bridgeSeen[key] {
+				continue
+			}
+			bridgeSeen[key] = true
+			bridges = append(bridges, graphBridge{seed: i, artist: candidate})
+			if len(bridges) == 4 {
+				break
+			}
+		}
+		if len(bridges) == 4 {
+			break
+		}
+	}
+	if len(firstHop) < 12 {
+		next := make([][]lastfm.Artist, len(bridges))
+		var wg sync.WaitGroup
+		for i, bridge := range bridges {
+			wg.Add(1)
+			go func(i int, name string) { defer wg.Done(); next[i] = e.similarArtistsCached(ctx, name, 6) }(i, bridge.artist.Name)
+		}
+		wg.Wait()
+		for i, bridge := range bridges {
+			for _, candidate := range next[i] {
+				key := feedbackArtistKey(candidate.Name)
+				if key == "" || seedSet[key] || bridgeSeen[key] || t.blockedArtists[key] {
+					continue
+				}
+				bridgeSeen[key] = true
+				candidate.Match *= 0.4 * (bridge.artist.Match + 0.1)
+				similarBySeed[bridge.seed] = append(similarBySeed[bridge.seed], candidate)
+			}
+		}
+	}
 
 	// Фаза 2: топ-треки похожих артистов. Разные затравки часто дают одних и тех
 	// же похожих — дедуплицируем имена, чтобы не запрашивать один артист дважды.
@@ -1093,7 +1177,7 @@ func (e *Engine) onlineRecommendations(ctx context.Context, t taste, seeds []art
 		}
 	}
 
-	return e.resolveCandidates(ctx, cands, t, limit)
+	return e.resolveCandidates(ctx, mergeGraphCandidates(cands), t, limit)
 }
 
 // scoredCand — кандидат-название (артист + трек) с весом релевантности, ещё не
@@ -1103,6 +1187,23 @@ type scoredCand struct {
 	artist string
 	title  string
 	score  float64
+}
+
+// Multiple seed artists may independently point to the same candidate.
+// Combine their evidence before lookup instead of searching for it repeatedly.
+func mergeGraphCandidates(candidates []scoredCand) []scoredCand {
+	out := make([]scoredCand, 0, len(candidates))
+	positions := map[string]int{}
+	for _, candidate := range candidates {
+		key := feedbackTrackKey(candidate.artist, candidate.title)
+		if i, ok := positions[key]; ok {
+			out[i].score += candidate.score
+			continue
+		}
+		positions[key] = len(out)
+		out = append(out, candidate)
+	}
+	return out
 }
 
 // resolveCandidates превращает взвешенные названия в реальные проигрываемые
@@ -1136,6 +1237,7 @@ func (e *Engine) resolveCandidates(ctx context.Context, cands []scoredCand, t ta
 	}
 	found := make([]domain.Track, 0, target)
 	usedKeys := map[string]bool{}
+	foundByArtist := map[string]int{}
 	for start := 0; start < len(cands) && len(found) < target; start += searchConcurrency {
 		end := start + searchConcurrency
 		if end > len(cands) {
@@ -1181,46 +1283,72 @@ func (e *Engine) resolveCandidates(ctx context.Context, cands []scoredCand, t ta
 			if seen[key] || usedKeys[key] {
 				continue
 			}
+			artist := artistKey(best)
+			if artist != "" && foundByArtist[artist] >= artistCap {
+				continue
+			}
+			foundByArtist[artist]++
 			usedKeys[key] = true
 			found = append(found, best)
 		}
 	}
-	return capPerArtist(found, limit, artistCap)
+	return diversifyTracks(found, t.recentArtists, limit, artistCap)
 }
 
-// artistCap — сколько треков одного исполнителя допускается в подборке, пока
-// хватает других. Держим низко для разнообразия, но не 1: у любимого артиста
-// пара треков подряд — это нормально.
+// artistCap — верхний предел треков одного исполнителя в подборке.
 const artistCap = 2
 
-// capPerArtist ограничивает число треков на исполнителя значением maxPerArtist, сохраняя
-// исходный порядок релевантности. Если после ограничения набралось меньше
-// limit, добавляет отложенные («лишние») треки — лучше показать больше от
-// одного артиста, чем отдать пустые слоты.
+// capPerArtist сначала расставляет разных исполнителей и соблюдает жёсткий предел.
 func capPerArtist(in []domain.Track, limit, maxPerArtist int) []domain.Track {
-	if limit <= 0 {
+	return diversifyTracks(in, nil, limit, maxPerArtist)
+}
+
+// Keep the list short if the candidate pool is narrow. Give every artist one
+// slot before allowing a second, and postpone recently played artists.
+func diversifyTracks(in []domain.Track, recent map[string]bool, limit, maxPerArtist int) []domain.Track {
+	if limit <= 0 || maxPerArtist <= 0 {
 		return []domain.Track{}
 	}
-	out := make([]domain.Track, 0, limit)
-	overflow := make([]domain.Track, 0)
 	counts := map[string]int{}
-	for _, t := range in {
-		if len(out) >= limit {
-			break
+	out := make([]domain.Track, 0, limit)
+	used := make([]bool, len(in))
+	for round := 0; round < maxPerArtist && len(out) < limit; round++ {
+		for _, recentlyPlayed := range []bool{false, true} {
+			for i, track := range in {
+				if used[i] || len(out) >= limit {
+					continue
+				}
+				key := artistKey(track)
+				if (key != "" && counts[key] != round) || (recent[key] != recentlyPlayed) {
+					continue
+				}
+				used[i] = true
+				if key != "" {
+					counts[key]++
+				}
+				out = append(out, track)
+			}
 		}
-		a := artistKey(t)
-		if a != "" && counts[a] >= maxPerArtist {
-			overflow = append(overflow, t)
-			continue
-		}
-		counts[a]++
-		out = append(out, t)
 	}
-	for _, t := range overflow {
-		if len(out) >= limit {
-			break
+	return out
+}
+
+func filterRecommended(in []domain.Track, profile taste) []domain.Track {
+	out := make([]domain.Track, 0, len(in))
+	for _, track := range in {
+		if !profile.blockedTracks[trackKey(track)] && !profile.blockedArtists[artistKey(track)] {
+			out = append(out, track)
 		}
-		out = append(out, t)
+	}
+	return out
+}
+
+func filterUnseen(in []domain.Track, profile taste) []domain.Track {
+	out := make([]domain.Track, 0, len(in))
+	for _, track := range filterRecommended(in, profile) {
+		if !profile.seen[trackKey(track)] {
+			out = append(out, track)
+		}
 	}
 	return out
 }
@@ -1242,7 +1370,7 @@ func (e *Engine) offlineRecommendations(ctx context.Context, t taste, seeds []ar
 	seen := t.seen
 	// Без Last.fm единственный сигнал — сами любимые артисты, поэтому кап на
 	// артиста здесь выше: иначе от 2-3 seed'ов не набрать limit треков.
-	perArtist := limit/len(seeds) + 1
+	perArtist := artistCap
 	// Запросы по затравкам независимы — выполняем их сразу все (их не больше 5).
 	// Разбор идёт в порядке затравок, поэтому выдача остаётся стабильной.
 	foundBySeed := make([][]domain.Track, len(seeds))
@@ -1283,7 +1411,7 @@ func (e *Engine) offlineRecommendations(ctx context.Context, t taste, seeds []ar
 			taken++
 		}
 	}
-	return out
+	return diversifyTracks(out, t.recentArtists, limit, artistCap)
 }
 
 // similarArtistsCached — похожие артисты с кэшем в SQLite (TTL сутки). Сначала
@@ -1425,10 +1553,7 @@ func (e *Engine) AutoMix(ctx context.Context, kind MixKind, limit int) ([]domain
 	if kind == MixWeekly {
 		if disco := e.discoveryMix(ctx, limit*2); len(disco) > 0 {
 			shuffled := deterministicShuffle(disco, seed)
-			if len(shuffled) > limit {
-				shuffled = shuffled[:limit]
-			}
-			return shuffled, nil
+			return diversifyTracks(shuffled, e.buildTaste(ctx).recentArtists, limit, artistCap), nil
 		}
 	}
 
@@ -1459,10 +1584,7 @@ func (e *Engine) AutoMix(ctx context.Context, kind MixKind, limit int) ([]domain
 	}
 
 	shuffled := deterministicShuffle(pool, seed)
-	if len(shuffled) > limit {
-		shuffled = shuffled[:limit]
-	}
-	return shuffled, nil
+	return diversifyTracks(shuffled, e.buildTaste(ctx).recentArtists, limit, artistCap), nil
 }
 
 // isFamiliar — есть ли первый артист трека в множестве топ-артистов профиля.

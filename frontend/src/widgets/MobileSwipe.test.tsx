@@ -6,6 +6,7 @@ import { usePlayerStore } from "../store/playerStore";
 import type { Track } from "../shared/types";
 import { MemoryRouter } from "react-router-dom";
 
+vi.mock("../shared/lib/useRecoFeedback", () => ({ useRecoFeedback: () => ({ scoreFor: () => 0, rate: vi.fn(), saving: false }) }));
 vi.mock("../shared/lib/useFavorites", () => ({ useFavoriteIds: () => new Set() }));
 vi.mock("../shared/lib/useTrackCover", () => ({ useTrackCover: () => undefined }));
 vi.mock("../shared/lib/useCoverPalette", () => ({ useCoverPalette: () => "#777" }));

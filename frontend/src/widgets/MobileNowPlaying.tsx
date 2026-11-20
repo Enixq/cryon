@@ -3,6 +3,7 @@ import type { TouchEvent } from "react";
 import {
   ChevronDown,
   Heart,
+  ThumbsDown,
   ListMusic,
   Radio,
   Pause,
@@ -26,6 +27,7 @@ import { useLyrics } from "../shared/lib/useLyrics";
 import { activeLineIndex } from "../shared/lib/lyrics";
 import { useCoverPalette } from "../shared/lib/useCoverPalette";
 import { useFavoriteIds } from "../shared/lib/useFavorites";
+import { useRecoFeedback } from "../shared/lib/useRecoFeedback";
 import { sourceName } from "../shared/sources";
 import { cn } from "../shared/lib/cn";
 import { ArtistLink } from "../shared/ui/ArtistLink";
@@ -67,6 +69,7 @@ export function MobileNowPlaying() {
   // Акцент подстраивается под обложку текущего трека (кнопка play, фон-свечение).
   const accent = useCoverPalette(coverUrl);
   const favoriteIds = useFavoriteIds();
+  const feedback = useRecoFeedback();
   const isFavorite = track ? favoriteIds.has(track.id) : false;
   const [showQueue, setShowQueue] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
@@ -268,6 +271,7 @@ export function MobileNowPlaying() {
                 {track.quality && <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">{track.quality}</span>}
               </p>
             </div>
+            <button type="button" disabled={feedback.saving} onClick={() => feedback.rate(track, -1)} aria-label={feedback.scoreFor(track) < 0 ? "Вернуть трек в рекомендации" : "Не рекомендовать трек"} aria-pressed={feedback.scoreFor(track) < 0} className={cn("shrink-0", feedback.scoreFor(track) < 0 ? "text-rose-400" : "text-slate-400")}><ThumbsDown size={23} /></button>
             <button
               type="button"
               onClick={() => toggleLikeWithTrack({ ...track, liked: isFavorite })}
