@@ -60,7 +60,7 @@ func (a *App) handleAPIDeviceDiscover(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusMethodNotAllowed, "требуется GET")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 1200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	writeAPIJSON(w, http.StatusOK, discoverDevices(ctx))
 }

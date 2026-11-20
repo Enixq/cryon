@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
 )
 
 func TestDeviceStateRoundTrip(t *testing.T) {
@@ -31,6 +33,15 @@ func TestDeviceStateRoundTrip(t *testing.T) {
 	if got.DeviceID != "phone" || len(got.Queue) != 1 || got.Queue[0].ID != "one" || !got.IsPlaying {
 		t.Fatalf("unexpected state: %+v", got)
 	}
+}
+
+func TestDeviceDiscoveryFromNetworkLive(t *testing.T) {
+	if os.Getenv("CRYON_DISCOVERY_IT") != "1" {
+		t.Skip("network discovery test is disabled")
+	}
+	startDeviceDiscoveryResponder()
+	t.Log("discovery responder active for 20 seconds")
+	time.Sleep(20 * time.Second)
 }
 
 func TestLANPreflightAllowsDeviceStateWrites(t *testing.T) {

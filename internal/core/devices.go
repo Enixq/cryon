@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"Cryon2/internal/update"
@@ -148,6 +149,53 @@ func discoverDevices(ctx context.Context) []discoveredDevice {
 	}
 	seen := map[string]bool{}
 	out := make([]discoveredDevice, 0)
+	// Broadcast can be blocked by router isolation or a desktop firewall even
+	// when the Cryon TCP port itself is reachable. Probe the local IPv4 subnet
+	// concurrently as a bounded fallback; never scan public addresses.
+	probed := make(chan discoveredDevice, 256)
+	var probes sync.WaitGroup
+	sem := make(chan struct{}, 64)
+	for address := range localIPs {
+		ip := net.ParseIP(address).To4()
+		if ip == nil || !ip.IsPrivate() {
+			continue
+		}
+		for n := 1; n < 255; n++ {
+			target := net.IPv4(ip[0], ip[1], ip[2], byte(n)).String()
+			if localIPs[target] {
+				continue
+			}
+			probes.Add(1)
+			go func() {
+				defer probes.Done()
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
+				defer func() { <-sem }()
+				probeCtx, cancel := context.WithTimeout(ctx, 550*time.Millisecond)
+				defer cancel()
+				url := fmt.Sprintf("http://%s:%d", target, lanServerPort)
+				req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, url+"/v1/system/health", nil)
+				if err != nil {
+					return
+				}
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return
+				}
+				defer resp.Body.Close()
+				var health struct {
+					Status string `json:"status"`
+					API    string `json:"api"`
+				}
+				if resp.StatusCode == http.StatusOK && json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&health) == nil && health.Status == "ok" && health.API == "v1" {
+					probed <- discoveredDevice{ID: "cryon-" + target, Name: "Cryon", URL: url}
+				}
+			}()
+		}
+	}
 	for time.Now().Before(deadline) {
 		_ = conn.SetReadDeadline(deadline)
 		var payload []byte = make([]byte, 1024)
@@ -160,6 +208,14 @@ func discoverDevices(ctx context.Context) []discoveredDevice {
 			continue
 		}
 		if json.Unmarshal(payload[:n], &device) == nil && device.URL != "" && !seen[device.URL] {
+			seen[device.URL] = true
+			out = append(out, device)
+		}
+	}
+	probes.Wait()
+	close(probed)
+	for device := range probed {
+		if !seen[device.URL] {
 			seen[device.URL] = true
 			out = append(out, device)
 		}
