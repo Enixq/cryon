@@ -82,6 +82,10 @@ export function GetPlaybackPreferences() {
   return window['go']['main']['App']['GetPlaybackPreferences']();
 }
 
+export function GetPlaylistTracks(arg1, arg2) {
+  return window['go']['main']['App']['GetPlaylistTracks'](arg1, arg2);
+}
+
 export function GetSetting(arg1) {
   return window['go']['main']['App']['GetSetting'](arg1);
 }
@@ -300,6 +304,10 @@ export function SearchAll(arg1) {
 
 export function SearchInSources(arg1, arg2) {
   return window['go']['main']['App']['SearchInSources'](arg1, arg2);
+}
+
+export function SearchPlaylists(arg1, arg2) {
+  return window['go']['main']['App']['SearchPlaylists'](arg1, arg2);
 }
 
 export function SetLastFMKey(arg1) {

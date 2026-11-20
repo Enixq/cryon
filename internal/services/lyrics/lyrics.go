@@ -73,21 +73,36 @@ func (c *Client) Get(ctx context.Context, artist, title, album string, durationS
 	}
 
 	// 1) Точное совпадение по метаданным.
-	if t, ok, err := c.getExact(ctx, artist, title, album, durationS); err != nil {
-		return Result{}, err
-	} else if ok {
+	if t, ok, err := c.getExact(ctx, artist, title, album, durationS); err == nil && ok {
 		return toResult(t), nil
 	}
 
 	// 2) Фолбэк: поиск и ближайший результат.
 	t, ok, err := c.search(ctx, artist, title)
+	if err == nil && ok {
+		return toResult(t), nil
+	}
+	// SoundCloud uploads often have no album/duration metadata in LRCLIB's
+	// exact index. Try a second lyric provider with the artist/title pair.
+	if fallback, fallbackErr := c.getLyricsOVH(ctx, artist, title); fallbackErr == nil && fallback != "" {
+		return Result{Plain: fallback, Found: true}, nil
+	}
+	return Result{Found: false}, nil
+}
+
+func (c *Client) getLyricsOVH(ctx context.Context, artist, title string) (string, error) {
+	endpoint := "https://api.lyrics.ovh/v1/" + url.PathEscape(artist) + "/" + url.PathEscape(title)
+	var payload struct {
+		Lyrics string `json:"lyrics"`
+	}
+	status, err := c.doJSON(ctx, endpoint, &payload)
 	if err != nil {
-		return Result{}, err
+		return "", err
 	}
-	if !ok {
-		return Result{Found: false}, nil
+	if status != http.StatusOK {
+		return "", nil
 	}
-	return toResult(t), nil
+	return strings.TrimSpace(payload.Lyrics), nil
 }
 
 func toResult(t apiTrack) Result {

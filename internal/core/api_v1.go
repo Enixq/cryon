@@ -728,6 +728,10 @@ func (a *App) handleAPIPlaybackResolve(w http.ResponseWriter, r *http.Request) {
 	}
 	streamURL := apiTrackStreamURL(track)
 	response := apiPlaybackResolveResponse{Track: track, StreamURL: streamURL}
+	if stream, streamErr := a.GetAudioStream(string(track.Service), track.ID); streamErr == nil && stream != nil {
+		track.Quality = stream.Quality
+		response.Track = track
+	}
 	if req.Native && track.Service == domain.ServiceSoundCloud {
 		stream, err := a.GetAudioStream(string(track.Service), track.ID)
 		if err != nil {

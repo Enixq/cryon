@@ -1,4 +1,4 @@
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Sidebar } from "./Sidebar";
@@ -50,6 +50,7 @@ const SOURCE_DEPENDENT_QUERY_KEYS = [
  * правая панель "Сейчас играет" и нижняя панель воспроизведения.
  */
 export function AppLayout() {
+  const location = useLocation();
   // Реальный движок воспроизведения (mpv или HTML5 <audio>).
   useAudioEngine();
   const queryClient = useQueryClient();
@@ -182,9 +183,11 @@ export function AppLayout() {
              навигация; полноэкранный «Сейчас играет» — оверлеем поверх. */
           <div className="flex min-w-0 flex-1 flex-col">
             <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4 pt-[calc(8px+var(--safe-top))] sm:px-4">
-              <RouteErrorBoundary>
-                <Outlet />
-              </RouteErrorBoundary>
+              <div key={`${location.pathname}${location.search}`} className="route-transition h-full">
+                <RouteErrorBoundary>
+                  <Outlet />
+                </RouteErrorBoundary>
+              </div>
             </main>
             <MobileMiniPlayer />
             <BottomNav />
@@ -198,9 +201,11 @@ export function AppLayout() {
               <Topbar />
               <div className="relative flex min-h-0 flex-1">
                 <main className="min-w-0 flex-1 overflow-y-auto px-4 pb-6 sm:px-6">
-                  <RouteErrorBoundary>
-                    <Outlet />
-                  </RouteErrorBoundary>
+                  <div key={`${location.pathname}${location.search}`} className="route-transition h-full">
+                    <RouteErrorBoundary>
+                      <Outlet />
+                    </RouteErrorBoundary>
+                  </div>
                 </main>
 
                 {showInlineNowPlaying ? <NowPlayingPanel /> : null}

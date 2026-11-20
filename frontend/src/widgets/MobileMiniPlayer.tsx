@@ -80,7 +80,7 @@ export function MobileMiniPlayer() {
       <div className="flex items-center gap-1.5 p-1.5">
         <button type="button" onClick={() => { if (suppressClick.current) { suppressClick.current = false; return; } setNowPlayingOpen(true); }} className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none" aria-label="Открыть плеер">
           <Cover accent={track.accent} src={coverUrl} alt={track.title} className="h-10 w-10 shrink-0" rounded="rounded-xl" iconSize={17} />
-          <div className="min-w-0"><div className="truncate text-[13px] font-semibold text-white">{track.title}</div><div className="truncate text-[11px] text-slate-400">{track.artist} · {sourceName(track.source)}</div></div>
+          <div className="min-w-0"><div className="line-clamp-2 whitespace-normal break-words text-[13px] font-semibold leading-tight text-white" title={track.title}>{track.title}</div><div className="truncate text-[11px] text-slate-400">{track.artist} · {sourceName(track.source)}</div></div>
         </button>
         <button data-no-swipe type="button" onClick={previous} className="grid h-9 w-7 shrink-0 place-items-center rounded-full text-slate-300 active:text-white" aria-label="Предыдущий трек"><SkipBack size={16} fill="currentColor" /></button>
         <button data-no-swipe type="button" onClick={togglePlay} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-white shadow-lg active:scale-95" style={{ backgroundColor: "var(--app-accent)" }} aria-label={isPlaying ? "Пауза" : "Воспроизвести"}>{isPlaying ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" className="ml-0.5" />}</button>

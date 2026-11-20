@@ -171,9 +171,12 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h3 className="truncate text-xl font-bold text-white">{track.title}</h3>
-              <p className="truncate text-slate-400">
-                <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
-              </p>
+              <div className="flex min-w-0 items-center gap-2 text-slate-400">
+                <p className="min-w-0 truncate">
+                  <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
+                </p>
+                {track.quality ? <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">{track.quality}</span> : null}
+              </div>
             </div>
             <button
               onClick={() => toggleLikeWithTrack({ ...track, liked: isFavorite })}

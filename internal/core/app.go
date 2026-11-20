@@ -181,8 +181,7 @@ func (a *App) startup(ctx context.Context) {
 	// Durable jobs execute outside UI runtimes and therefore survive WebView
 	// renderer recreation on Android.
 	a.startJobWorker(ctx)
-	// LAN-сервер для телефона (только сборка `wails build -tags cryonlan`;
-	// иначе no-op из lanserver_stub.go).
+	// LAN-сервер для телефона и управления desktop из доверенной Wi-Fi-сети.
 	a.startLANServer()
 }
 
@@ -974,6 +973,7 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 		return &audiofetcher.AudioStream{
 			URL:      info.URL,
 			Format:   format,
+			Quality:  info.Quality,
 			Duration: int64(info.DurationMs / 1000),
 		}, nil
 	case domain.ServiceYandex:
@@ -988,6 +988,7 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 		return &audiofetcher.AudioStream{
 			URL:      info.URL,
 			Format:   info.MimeType,
+			Quality:  info.Quality,
 			Duration: int64(info.DurationMs / 1000),
 		}, nil
 	case domain.ServiceLocal:

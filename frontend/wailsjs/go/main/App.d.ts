@@ -50,6 +50,8 @@ export function GetLyrics(arg1:string,arg2:string,arg3:string,arg4:number):Promi
 
 export function GetPlaybackPreferences():Promise<core.PlaybackPreferences>;
 
+export function GetPlaylistTracks(arg1:string,arg2:string):Promise<Array<domain.Track>>;
+
 export function GetSetting(arg1:string):Promise<string>;
 
 export function ImportFavorites(arg1:string):Promise<core.FavoritesImportResult>;
@@ -159,6 +161,8 @@ export function Search(arg1:string,arg2:string):Promise<Array<domain.Track>>;
 export function SearchAll(arg1:string):Promise<Array<domain.Track>>;
 
 export function SearchInSources(arg1:string,arg2:Array<string>):Promise<Array<domain.Track>>;
+
+export function SearchPlaylists(arg1:string,arg2:string):Promise<Array<domain.Playlist>>;
 
 export function SetLastFMKey(arg1:string):Promise<void>;
 

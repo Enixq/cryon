@@ -49,12 +49,35 @@ func (s *Service) PlaylistTracks(ctx context.Context, playlistID string) ([]doma
 		return []domain.Track{}, nil
 	}
 	rows, err := s.fetchText(ctx, "https://api-v2.soundcloud.com/playlists/"+strconv.FormatInt(id, 10)+"?client_id="+url.QueryEscape(clientID))
+	batchURL := "https://api-v2.soundcloud.com/playlists?ids=" + strconv.FormatInt(id, 10) + "&client_id=" + url.QueryEscape(clientID)
 	if err != nil {
-		return nil, err
+		// Some public/user playlists are served only by the batch endpoint.
+		rows, err = s.fetchText(ctx, batchURL)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var playlist scPlaylist
-	if err := json.Unmarshal([]byte(rows), &playlist); err != nil {
-		return nil, err
+	decodeErr := json.Unmarshal([]byte(rows), &playlist)
+	if decodeErr != nil || len(playlist.Tracks) == 0 {
+		// A successful detail response can still omit tracks for large/public
+		// playlists. Retry the batch representation before reporting an empty
+		// playlist; it contains the same metadata with an expanded track list.
+		if decodeErr == nil {
+			if batchRows, batchErr := s.fetchText(ctx, batchURL); batchErr == nil {
+				rows = batchRows
+			}
+		}
+		var batch struct {
+			Collection []scPlaylist `json:"collection"`
+		}
+		if batchErr := json.Unmarshal([]byte(rows), &batch); batchErr != nil || len(batch.Collection) == 0 {
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			return []domain.Track{}, nil
+		}
+		playlist = batch.Collection[0]
 	}
 	return s.expandPlaylistTracks(ctx, &playlist, clientID), nil
 }

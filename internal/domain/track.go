@@ -37,6 +37,7 @@ type Track struct {
 	Album        string       `json:"album,omitempty"`
 	DurationMs   int          `json:"durationMs,omitempty"`
 	PlayCount    int          `json:"playCount,omitempty"`
+	Quality      string       `json:"quality,omitempty"`
 	ArtworkURL   string       `json:"artworkUrl,omitempty"`
 	ExternalURL  string       `json:"externalUrl,omitempty"`
 	PlayableKind PlayableKind `json:"playableKind"`

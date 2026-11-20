@@ -1,9 +1,11 @@
 package ru.cryon.app
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.Bundle
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -19,6 +21,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.CommandButton
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import java.io.File
 
 /**
@@ -39,6 +46,8 @@ class CryonPlaybackService : MediaSessionService() {
             progressHandler.postDelayed(this, PROGRESS_INTERVAL_MS)
         }
     }
+    private val previousCommand = SessionCommand(ACTION_PREVIOUS, Bundle.EMPTY)
+    private val nextCommand = SessionCommand(ACTION_NEXT, Bundle.EMPTY)
 
     override fun onCreate() {
         super.onCreate()
@@ -82,7 +91,57 @@ class CryonPlaybackService : MediaSessionService() {
                     }
                 })
             }
-        mediaSession = MediaSession.Builder(this, requireNotNull(player)).build()
+        val sessionActivity = PendingIntent.getActivity(
+            this,
+            7100,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or if (android.os.Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0,
+        )
+        mediaSession = MediaSession.Builder(this, requireNotNull(player))
+            .setSessionActivity(sessionActivity)
+            .setMediaButtonPreferences(
+                listOf(
+                    CommandButton.Builder(CommandButton.ICON_PREVIOUS)
+                        .setSessionCommand(previousCommand)
+                        .setDisplayName("Предыдущий")
+                        .setSlots(CommandButton.SLOT_BACK)
+                        .build(),
+                    CommandButton.Builder(CommandButton.ICON_NEXT)
+                        .setSessionCommand(nextCommand)
+                        .setDisplayName("Следующий")
+                        .setSlots(CommandButton.SLOT_FORWARD)
+                        .build(),
+                ),
+            )
+            .setCallback(object : MediaSession.Callback {
+                override fun onConnect(session: MediaSession, controllerInfo: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
+                    val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
+                        .buildUpon()
+                        .add(previousCommand)
+                        .add(nextCommand)
+                        .build()
+                    return MediaSession.ConnectionResult.accept(commands, session.player.availableCommands)
+                }
+
+                override fun onCustomCommand(
+                    session: MediaSession,
+                    controllerInfo: MediaSession.ControllerInfo,
+                    customCommand: SessionCommand,
+                    args: Bundle,
+                ): ListenableFuture<SessionResult> {
+                    if (customCommand.customAction == ACTION_PREVIOUS || customCommand.customAction == ACTION_NEXT) {
+                        sendBroadcast(
+                            Intent(ACTION_REMOTE_COMMAND)
+                                .setPackage(packageName)
+                                .putExtra(EXTRA_REMOTE_COMMAND, customCommand.customAction),
+                        )
+                    }
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+            })
+            .build()
         addSession(requireNotNull(mediaSession))
     }
 
@@ -173,6 +232,9 @@ class CryonPlaybackService : MediaSessionService() {
         const val ACTION_SEEK = "ru.cryon.app.action.SEEK"
         const val ACTION_VOLUME = "ru.cryon.app.action.VOLUME"
         const val ACTION_STATE = "ru.cryon.app.action.PLAYBACK_STATE"
+        const val ACTION_REMOTE_COMMAND = "ru.cryon.app.action.REMOTE_COMMAND"
+        const val ACTION_PREVIOUS = "ru.cryon.app.action.PREVIOUS"
+        const val ACTION_NEXT = "ru.cryon.app.action.NEXT"
         const val EXTRA_STREAM_URL = "streamUrl"
         const val EXTRA_MIME_TYPE = "mimeType"
         const val EXTRA_TRACK_ID = "trackId"
@@ -186,6 +248,7 @@ class CryonPlaybackService : MediaSessionService() {
         const val EXTRA_PLAYING = "playing"
         const val EXTRA_DURATION_MS = "durationMs"
         const val EXTRA_ERROR = "error"
+        const val EXTRA_REMOTE_COMMAND = "remoteCommand"
         const val STATE_IDLE = "idle"
         const val STATE_BUFFERING = "buffering"
         const val STATE_READY = "ready"

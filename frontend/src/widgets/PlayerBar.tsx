@@ -96,6 +96,7 @@ export function PlayerBar() {
                 <span className="min-w-0 max-w-[45%] truncate border-l border-white/10 pl-1.5 text-slate-400">
                   {sourceName(track.source)}
                 </span>
+                {track.quality ? <span className="shrink-0 rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">{track.quality}</span> : null}
               </div>
             </div>
             <button

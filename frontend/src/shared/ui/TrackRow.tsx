@@ -94,7 +94,7 @@ export function TrackRow({
         <div className="min-w-0 flex-1">
           <div
             className={cn(
-              "truncate text-[14px] font-medium text-white sm:text-[15px]",
+              "line-clamp-2 whitespace-normal break-words text-[14px] font-medium leading-tight text-white sm:text-[15px]",
               active && "bg-[color-mix(in_srgb,var(--app-accent)_12%,transparent)] text-[#c084fc]",
             )}
           >

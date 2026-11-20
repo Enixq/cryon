@@ -76,6 +76,14 @@ class MainActivity : AppCompatActivity() {
             dispatchNativePlaybackState(intent)
         }
     }
+    private val remoteCommandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != CryonPlaybackService.ACTION_REMOTE_COMMAND) return
+            val command = intent.getStringExtra(CryonPlaybackService.EXTRA_REMOTE_COMMAND).orEmpty()
+            if (command == CryonPlaybackService.ACTION_NEXT) dispatchPlayerCommand("next")
+            if (command == CryonPlaybackService.ACTION_PREVIOUS) dispatchPlayerCommand("previous")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +93,12 @@ class MainActivity : AppCompatActivity() {
             this,
             playbackStateReceiver,
             IntentFilter(CryonPlaybackService.ACTION_STATE),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        ContextCompat.registerReceiver(
+            this,
+            remoteCommandReceiver,
+            IntentFilter(CryonPlaybackService.ACTION_REMOTE_COMMAND),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         mediaSession = MediaSessionCompat(this, "Cryon").apply {
@@ -625,6 +639,7 @@ class MainActivity : AppCompatActivity() {
         fileChooserCallback?.onReceiveValue(null)
         fileChooserCallback = null
         unregisterReceiver(playbackStateReceiver)
+        unregisterReceiver(remoteCommandReceiver)
         if (this::mediaSession.isInitialized) mediaSession.release()
         // Do not stop the loopback Go engine here: Media3 may still stream
         // through it after the Activity/WebView was recreated or backgrounded.

@@ -36,7 +36,7 @@ export function BottomNav() {
             {({ isActive }) => (
               <>
                 <span
-                  className="grid h-8 w-14 place-items-center rounded-full transition-colors"
+                  className={cn("grid h-8 w-14 place-items-center rounded-full transition-colors", isActive && "animate-nav-pop")}
                   style={
                     isActive
                       ? {

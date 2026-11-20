@@ -335,7 +335,11 @@ func (s *Service) SearchPlaylists(ctx context.Context, query string, limit int) 
 			return
 		}
 		seen[id] = true
-		name := catalogItemTitle(card)
+		cardMap, _ := card.(map[string]any)
+		name := catalogText(cardMap["title"])
+		if name == "" {
+			name = catalogItemTitle(card)
+		}
 		out = append(out, domain.Playlist{ID: id, Service: domain.ServiceYouTube, Name: name, ArtworkURL: catalogThumb(card), ExternalURL: "https://music.youtube.com/playlist?list=" + strings.TrimPrefix(id, "VL")})
 	})
 	return out, nil

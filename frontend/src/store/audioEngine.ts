@@ -474,6 +474,9 @@ export function useAudioEngine() {
           usePlayerStore.getState().replaceCurrentTrack(resolved.track);
           return;
         }
+        if (resolved.track.quality && usePlayerStore.getState().currentTrack()?.id === track.id) {
+          usePlayerStore.getState().replaceCurrentTrack({ ...usePlayerStore.getState().currentTrack()!, quality: resolved.track.quality });
+        }
         const state = usePlayerStore.getState();
         const startPositionSeconds = pendingSeekRef.current?.trackId === resolved.track.id ? pendingSeekRef.current.position : fallbackStartPositionRef.current.get(resolved.track.id) ?? 0;
         fallbackStartPositionRef.current.delete(resolved.track.id);

@@ -199,8 +199,32 @@ input {
   animation: sheet-up 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Перелистывание экранов при выборе пункта нижней навигации. Ключ маршрута
+   меняет оболочку контента, поэтому анимация запускается и при переходе
+   кнопками, и при системной кнопке «Назад». */
+@keyframes route-swipe-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.route-transition {
+  animation: route-swipe-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes nav-pop {
+  0% { transform: scale(0.88); }
+  65% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+.animate-nav-pop {
+  animation: nav-pop 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-sheet-up {
+  .animate-sheet-up,
+  .route-transition,
+  .animate-nav-pop {
     animation: none;
   }
 }

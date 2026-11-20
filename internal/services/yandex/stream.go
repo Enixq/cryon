@@ -18,6 +18,7 @@ const downloadInfoSalt = "XGRlBW9FXlekgbPrRHuSiA"
 type StreamInfo struct {
 	URL        string
 	MimeType   string
+	Quality    string
 	DurationMs int
 }
 
@@ -61,7 +62,11 @@ func (s *Service) ResolveStream(ctx context.Context, trackRef string) (*StreamIn
 	if err != nil {
 		return nil, err
 	}
-	return &StreamInfo{URL: streamURL, MimeType: "audio/mpeg"}, nil
+	quality := ""
+	if best.BitrateKbps > 0 {
+		quality = fmt.Sprintf("%d kbps", best.BitrateKbps)
+	}
+	return &StreamInfo{URL: streamURL, MimeType: "audio/mpeg", Quality: quality}, nil
 }
 
 type downloadInfo struct {

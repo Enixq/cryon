@@ -146,11 +146,11 @@ export namespace domain {
 	    kind?: string;
 	    trackCount?: number;
 	    externalUrl?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Album(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -172,6 +172,7 @@ export namespace domain {
 	    album?: string;
 	    durationMs?: number;
 	    playCount?: number;
+	    quality?: string;
 	    artworkUrl?: string;
 	    externalUrl?: string;
 	    playableKind: string;
@@ -189,6 +190,7 @@ export namespace domain {
 	        this.album = source["album"];
 	        this.durationMs = source["durationMs"];
 	        this.playCount = source["playCount"];
+	        this.quality = source["quality"];
 	        this.artworkUrl = source["artworkUrl"];
 	        this.externalUrl = source["externalUrl"];
 	        this.playableKind = source["playableKind"];
@@ -283,6 +285,28 @@ export namespace domain {
 		    }
 		    return a;
 		}
+	}
+	export class Playlist {
+	    id: string;
+	    service: string;
+	    name: string;
+	    tracksTotal: number;
+	    artworkUrl?: string;
+	    externalUrl?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Playlist(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.service = source["service"];
+	        this.name = source["name"];
+	        this.tracksTotal = source["tracksTotal"];
+	        this.artworkUrl = source["artworkUrl"];
+	        this.externalUrl = source["externalUrl"];
+	    }
 	}
 	
 	export class UserPlaylist {
