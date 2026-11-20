@@ -937,6 +937,63 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
   const [saving, setSaving] = useState(false);
   // После открытия браузера показываем поле для вставки токена и подсказку.
   const [awaitingPaste, setAwaitingPaste] = useState(false);
+  const [deviceLogin, setDeviceLogin] = useState<{ code: string; interval: number; expiresIn: number } | null>(null);
+  const [deviceError, setDeviceError] = useState("");
+
+  const startDeviceLogin = async () => {
+    setSaving(true);
+    setDeviceError("");
+    setDeviceLogin(null);
+    try {
+      const response = await fetch(apiV1BaseUrl() + "/v1/auth/yandex/device/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const result = await response.json() as { code?: string; interval?: number; expiresIn?: number; error?: string };
+      if (!response.ok || !result.code) throw new Error(result.error || "Яндекс не выдал код");
+      setDeviceLogin({ code: result.code, interval: result.interval || 5, expiresIn: result.expiresIn || 300 });
+    } catch (error) { setDeviceError(error instanceof Error ? error.message : "Не удалось получить код"); }
+    finally { setSaving(false); }
+  };
+
+  const openDeviceVerification = async () => {
+    try {
+      const host = window as Window & { CryonAndroid?: { openYandexVerification?: () => void }; go?: { main?: { App?: { OpenYandexVerification?: () => Promise<void> } } } };
+      if (host.CryonAndroid?.openYandexVerification) host.CryonAndroid.openYandexVerification();
+      else if (host.go?.main?.App?.OpenYandexVerification) await host.go.main.App.OpenYandexVerification();
+      else throw new Error("Встроенное окно недоступно на этой платформе");
+    } catch (error) { setDeviceError(error instanceof Error ? error.message : "Не удалось открыть страницу Яндекса"); }
+  };
+
+  const copyDeviceCode = async (code: string) => {
+    try {
+      const android = (window as Window & { CryonAndroid?: { copyYandexCode?: (value: string) => void } }).CryonAndroid;
+      if (android?.copyYandexCode) android.copyYandexCode(code);
+      else if (navigator.clipboard) await navigator.clipboard.writeText(code);
+      else throw new Error("Буфер обмена недоступен");
+    } catch { setDeviceError("Не удалось скопировать код; запишите его перед открытием Яндекса."); }
+  };
+
+  useEffect(() => {
+    if (!deviceLogin) return;
+    let cancelled = false;
+    let timer = 0;
+    const controller = new AbortController();
+    let interval = Math.max(5, deviceLogin.interval) * 1000;
+    const endAt = Date.now() + deviceLogin.expiresIn * 1000;
+    const poll = async () => {
+      if (Date.now() >= endAt) { setDeviceLogin(null); setDeviceError("Срок действия кода истёк. Получите новый код."); return; }
+      try {
+        const response = await fetch(apiV1BaseUrl() + "/v1/auth/yandex/device/poll", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", signal: controller.signal });
+        const result = await response.json() as { connected?: boolean; slowDown?: boolean; error?: string };
+        if (cancelled) return;
+        if (!response.ok) throw new Error(result.error || "Не удалось проверить подтверждение");
+        if (result.connected) { setConnected(true); setDeviceLogin(null); setDeviceError(""); return; }
+        if (result.slowDown) interval += 5000;
+        setDeviceError("");
+      } catch (error) { if (!cancelled) setDeviceError(error instanceof Error ? error.message : "Нет связи с Яндексом"); }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), interval);
+    };
+    timer = window.setTimeout(() => void poll(), interval);
+    return () => { cancelled = true; window.clearTimeout(timer); controller.abort(); };
+  }, [deviceLogin]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1002,7 +1059,7 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
     <Section
       anchorRef={anchorRef}
       title="Yandex Music (необязательно)"
-      description="Необязательно: токен включает поиск через официальное API, прямой поток и радар новинок. Для получения токена откройте веб-приложение MarshalX, войдите в аккаунт и вставьте полученный токен ниже. Без токена Yandex работает через веб-поиск, а поиск/воспроизведение/рекомендации в целом — и вовсе без него."
+      description="Подключите Яндекс Музыку, подтвердив вход в окне Яндекса. Токен сохранится автоматически. Также можно ввести его вручную."
     >
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2 text-xs">
@@ -1017,7 +1074,20 @@ function YandexTokenSection({ anchorRef }: SectionAnchorProps) {
           </span>
         </div>
 
-        {/* Основной путь: открыть браузер и вставить выданный токен. */}
+        <button type="button" onClick={() => void startDeviceLogin()} disabled={saving} className="rounded-xl bg-[#ffdb4d] px-4 py-2.5 text-sm font-semibold text-black disabled:opacity-40">
+          {saving ? "Получаем код…" : "Войти в Яндекс Музыку"}
+        </button>
+        {deviceLogin && <div className="rounded-xl bg-white/[0.06] p-4 text-sm text-slate-300">
+          <p>Откройте Яндекс, войдите в аккаунт и введите этот код:</p>
+          <p className="my-3 select-all text-center font-mono text-2xl font-bold tracking-widest text-white">{deviceLogin.code}</p>
+          <button type="button" onClick={() => void copyDeviceCode(deviceLogin.code)} className="mb-2 w-full rounded-xl bg-white/10 px-4 py-2 text-white">Скопировать код</button>
+          <button type="button" onClick={() => void openDeviceVerification()} className="w-full rounded-xl bg-white/10 px-4 py-2.5 font-semibold text-white">Открыть подтверждение в Cryon</button>
+          <p className="mt-2 text-xs text-slate-400">После подтверждения закройте окно Яндекса. Cryon подключит музыку автоматически.</p>
+          <button type="button" onClick={() => setDeviceLogin(null)} className="mt-2 text-xs underline">Отмена</button>
+        </div>}
+        {deviceError && <p role="alert" className="text-sm text-rose-400">{deviceError}</p>}
+
+        {/* Существующий способ остаётся запасным. */}
         <button
           onClick={loginViaBrowser}
           disabled={saving}

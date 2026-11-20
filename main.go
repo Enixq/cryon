@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"embed"
+	"os"
+	"os/exec"
+	"testing/fstest"
 
 	"Cryon2/internal/core"
 
@@ -21,11 +24,28 @@ var assets embed.FS
 // обёртки автоматически.
 type App struct{ *core.App }
 
+// The login window is a separate, unbound WebView process: the Yandex page
+// never receives Cryon's application bridge or access to the main window.
+func (a *App) OpenYandexVerification() error {
+	path, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	return exec.Command(path, "--yandex-verification").Start()
+}
+
 func (a *App) SetTaskbarPlaybackState(playing, hasTrack bool) {
 	setTaskbarPlaybackState(playing, hasTrack)
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--yandex-verification" {
+		assets := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte(`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=https://ya.ru/device"></head><body>Открываем Яндекс…</body></html>`)}}
+		if err := wails.Run(&options.App{Title: "Подтверждение Яндекс ID — Cryon", Width: 600, Height: 800, MinWidth: 400, MinHeight: 500, AssetServer: &assetserver.Options{Assets: assets}}); err != nil {
+			println(err.Error())
+		}
+		return
+	}
 	app := &App{core.NewApp()}
 	// Десктоп: события/браузер/диалоги идут через Wails-рантайм. Хост читает
 	// ctx лениво, поэтому его можно внедрить до Startup (где ctx появится).

@@ -1,7 +1,9 @@
 package core
+
 import (
 	"net/http"
 	"sync"
+	"time"
 )
 
 // Вход в Yandex Music без официального способа выдачи токена. Мы используем
@@ -20,8 +22,10 @@ const (
 
 // yandexLogin инкапсулирует одноразовый локальный сервер захвата токена.
 type yandexLogin struct {
-	mu     sync.Mutex
-	server *http.Server
+	mu         sync.Mutex
+	server     *http.Server
+	deviceCode string
+	expires    time.Time
 }
 
 // yandexCallbackHTML читает access_token из hash-части URL и отправляет его

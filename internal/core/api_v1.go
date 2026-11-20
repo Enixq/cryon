@@ -25,6 +25,8 @@ func (a *App) APIHandler() http.Handler {
 	mux.HandleFunc("/v1/system/health", a.handleAPIHealth)
 	mux.HandleFunc("/v1/system/update", a.handleAPIUpdate)
 	mux.HandleFunc("/v1/events", a.handleAPIEvents)
+	mux.HandleFunc("/v1/auth/yandex/device/start", a.handleYandexDeviceStart)
+	mux.HandleFunc("/v1/auth/yandex/device/poll", a.handleYandexDevicePoll)
 	mux.HandleFunc("/v1/devices/discover", a.handleAPIDeviceDiscover)
 	mux.HandleFunc("/v1/devices/state", a.handleAPIDeviceState)
 	mux.HandleFunc("/v1/sources", a.handleAPISources)

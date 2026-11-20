@@ -186,6 +186,10 @@ export function MarkAllNotificationsRead() {
   return window['go']['main']['App']['MarkAllNotificationsRead']();
 }
 
+export function OpenYandexVerification() {
+  return window['go']['main']['App']['OpenYandexVerification']();
+}
+
 export function PickMusicFolder() {
   return window['go']['main']['App']['PickMusicFolder']();
 }

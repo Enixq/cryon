@@ -31,6 +31,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (System.getenv("CRYON_SEPARATE_TEST_APP") == "1") {
+                applicationIdSuffix = ".yandextest"
+                versionNameSuffix = "-yandextest"
+            }
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("cryonRelease")

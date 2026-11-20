@@ -102,6 +102,8 @@ export function LogoutAccount():Promise<void>;
 
 export function MarkAllNotificationsRead():Promise<void>;
 
+export function OpenYandexVerification():Promise<void>;
+
 export function PickMusicFolder():Promise<string>;
 
 export function PickSpotifyLibraryExport():Promise<string>;

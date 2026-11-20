@@ -203,6 +203,18 @@ class MainActivity : AppCompatActivity() {
 
     private inner class AndroidBridge {
         @JavascriptInterface
+        fun copyYandexCode(code: String) {
+            if (!code.matches(Regex("[A-Za-z0-9-]{1,32}"))) return
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Код Яндекса", code))
+        }
+
+        @JavascriptInterface
+        fun openYandexVerification() {
+            runOnUiThread { startActivity(Intent(this@MainActivity, YandexVerificationActivity::class.java)) }
+        }
+
+        @JavascriptInterface
         fun wifiIPv4(): String {
             val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return ""
             @Suppress("DEPRECATION")
