@@ -384,6 +384,24 @@ type apiStaticMusicService struct {
 	tracks []domain.Track
 }
 
+type apiPlaylistService struct{ apiStaticMusicService }
+
+func (s apiPlaylistService) SearchPlaylists(context.Context, string, int) ([]domain.Playlist, error) {
+	return nil, nil
+}
+func (s apiPlaylistService) PlaylistTracks(_ context.Context, id string) ([]domain.Track, error) {
+	return []domain.Track{{ID: id, Title: "Song", Service: s.id}}, nil
+}
+
+func TestRemotePlaylistTracksFrontendRoute(t *testing.T) {
+	app := &App{ctx: context.Background(), registry: map[domain.ServiceID]domain.MusicService{domain.ServiceSoundCloud: apiPlaylistService{apiStaticMusicService{id: domain.ServiceSoundCloud}}}}
+	rec := httptest.NewRecorder()
+	app.APIHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/catalog/playlists/soundcloud/2030805225/tracks", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"id":"2030805225"`) {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
 func (s apiStaticMusicService) ID() domain.ServiceID { return s.id }
 
 func (s apiStaticMusicService) Search(context.Context, string) ([]domain.Track, error) {

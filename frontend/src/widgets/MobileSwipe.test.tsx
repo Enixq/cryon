@@ -38,6 +38,8 @@ describe("mobile player swipes", () => {
     const coverButton = screen.getByRole("button", { name: "Открыть плеер" });
     fireEvent.pointerDown(coverButton, { clientX: 220, clientY: 100, pointerId: 1 });
     fireEvent.pointerMove(coverButton, { clientX: 120, clientY: 103, pointerId: 1 });
+    expect(coverButton.style.transform).toBe("translateX(-100px)");
+    expect(usePlayerStore.getState().currentTrack()?.id).toBe("second");
     fireEvent.pointerUp(coverButton, { clientX: 120, clientY: 103, pointerId: 1 });
     expect(usePlayerStore.getState().currentTrack()?.id).toBe("third");
   });

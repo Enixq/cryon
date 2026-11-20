@@ -92,6 +92,19 @@ describe("playerStore volume", () => {
   });
 });
 
+it("applies remote pause without reloading the current track and sends a seek when needed", () => {
+  const current = makeTrack("remote");
+  usePlayerStore.setState({ queue: [current], currentIndex: 0, isPlaying: true, progress: 30, engineDuration: 200 });
+  const nonce = usePlayerStore.getState().seekNonce;
+  usePlayerStore.getState().replaceRemoteState({ queue: [{ ...current }], currentIndex: 0, isPlaying: false, progress: 12, volume: 50, muted: false });
+  const state = usePlayerStore.getState();
+  expect(state.queue[0]).toBe(current);
+  expect(state.isPlaying).toBe(false);
+  expect(state.engineDuration).toBe(200);
+  expect(state.seekTarget).toBe(12);
+  expect(state.seekNonce).toBe(nonce + 1);
+});
+
 describe("playerStore queue management", () => {
   beforeEach(() => {
     usePlayerStore.setState({ queue: [...q], currentIndex: 1 });

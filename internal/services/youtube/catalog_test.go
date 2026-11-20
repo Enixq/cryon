@@ -3,6 +3,7 @@ package youtube
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,6 +27,44 @@ func TestCatalogHelpersExtractMusicIdentifiers(t *testing.T) {
 	if got := catalogItemTitle(value); got != "Album title" {
 		t.Fatalf("item title = %q", got)
 	}
+}
+
+func TestArtistCatalogDoesNotIncludeMenuTextLive(t *testing.T) {
+	if os.Getenv("CRYON_YOUTUBE_CATALOG_IT") != "1" {
+		t.Skip("live YouTube test is disabled")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	svc := New("")
+	info, err := svc.getArtistInnerTube(ctx, "Jahmal TGK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Albums)+len(info.Singles) == 0 {
+		t.Fatal("artist has no releases")
+	}
+	for _, track := range info.TopTracks {
+		for _, artist := range track.Artists {
+			if strings.Contains(strings.ToLower(artist), "включить микс") {
+				t.Fatalf("menu text in artist: %q", artist)
+			}
+		}
+	}
+	for _, release := range info.Albums {
+		if strings.EqualFold(release.Title, "SON CUBANO") {
+			tracks, ok := svc.cachedAlbumTracks(release.ID)
+			if !ok || len(tracks) == 0 {
+				t.Fatalf("album %q has no cached tracks", release.Title)
+			}
+			for _, track := range tracks {
+				if len(track.Artists) == 0 || strings.Contains(strings.ToLower(track.Artists[0]), "включить микс") {
+					t.Fatalf("bad artist for %q: %q", track.Title, track.Artists)
+				}
+			}
+			t.Logf("%s: %d tracks, first artist %q", release.Title, len(tracks), tracks[0].Artists[0])
+		}
+	}
+	t.Logf("%d albums, %d singles, %d tracks", len(info.Albums), len(info.Singles), len(info.TopTracks))
 }
 
 func TestParseCatalogDuration(t *testing.T) {

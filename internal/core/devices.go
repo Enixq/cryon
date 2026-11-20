@@ -82,6 +82,9 @@ func startDeviceDiscoveryResponder() {
 				continue
 			}
 			ip := localIPv4For(addr.IP)
+			if ip == "" {
+				continue
+			}
 			payload, _ := json.Marshal(discoveredDevice{
 				ID:      "cryon-" + ip,
 				Name:    "Cryon",
@@ -105,7 +108,7 @@ func localIPv4For(peer net.IP) string {
 			return ip.To4().String()
 		}
 	}
-	return "127.0.0.1"
+	return ""
 }
 
 func sameIPv4Subnet(a, b net.IP) bool {
@@ -122,6 +125,23 @@ func discoverDevices(ctx context.Context) []discoveredDevice {
 	_ = conn.SetWriteBuffer(4096)
 	_ = conn.SetReadBuffer(4096)
 	_, _ = conn.WriteToUDP([]byte(discoveryMagic), &net.UDPAddr{IP: net.IPv4bcast, Port: deviceDiscoveryPort})
+	localIPs := map[string]bool{}
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, addr := range addrs {
+			ip, network, parseErr := net.ParseCIDR(addr.String())
+			ip = ip.To4()
+			if parseErr != nil || ip == nil || ip.IsLoopback() {
+				continue
+			}
+			localIPs[ip.String()] = true
+			mask := network.Mask
+			if len(mask) != 4 {
+				continue
+			}
+			broadcast := net.IPv4(ip[0]|^mask[0], ip[1]|^mask[1], ip[2]|^mask[2], ip[3]|^mask[3])
+			_, _ = conn.WriteToUDP([]byte(discoveryMagic), &net.UDPAddr{IP: broadcast, Port: deviceDiscoveryPort})
+		}
+	}
 	deadline := time.Now().Add(900 * time.Millisecond)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
@@ -131,11 +151,14 @@ func discoverDevices(ctx context.Context) []discoveredDevice {
 	for time.Now().Before(deadline) {
 		_ = conn.SetReadDeadline(deadline)
 		var payload []byte = make([]byte, 1024)
-		n, _, readErr := conn.ReadFromUDP(payload)
+		n, peer, readErr := conn.ReadFromUDP(payload)
 		if readErr != nil {
 			break
 		}
 		var device discoveredDevice
+		if peer.IP.IsLoopback() || localIPs[peer.IP.String()] {
+			continue
+		}
 		if json.Unmarshal(payload[:n], &device) == nil && device.URL != "" && !seen[device.URL] {
 			seen[device.URL] = true
 			out = append(out, device)

@@ -332,6 +332,9 @@ func (a *App) handleAPICatalogPlaylistTracks(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/catalog/playlists/"), "/"), "/")
+	if len(parts) == 3 && parts[2] == "tracks" {
+		parts = parts[:2]
+	}
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		writeAPIError(w, http.StatusBadRequest, "нужны service и playlistId")
 		return
