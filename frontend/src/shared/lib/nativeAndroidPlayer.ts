@@ -7,6 +7,11 @@ export type NativePlaybackState = {
   positionMs: number;
   durationMs: number;
   error?: string;
+  queue?: Track[];
+  currentIndex?: number;
+  autoPlay?: boolean;
+  radio?: boolean;
+  playbackOnThisDevice?: boolean;
 };
 
 type NativeAndroidBridge = {
@@ -18,6 +23,9 @@ type NativeAndroidBridge = {
   nativeStop?: () => void;
   nativeSeek?: (positionMs: number) => void;
   nativeSetVolume?: (volume: number) => void;
+  nativeSetQueue?: (json: string) => void;
+  nativeGetState?: () => string;
+  nativeConfigureSync?: (json: string) => void;
 };
 
 declare global {
@@ -36,6 +44,10 @@ export function hasNativeAndroidPlayer(): boolean {
   return typeof bridge()?.nativePlay === "function";
 }
 
+export function hasNativeAndroidQueue(): boolean { return typeof bridge()?.nativeSetQueue === "function"; }
+export function updateNativeAndroidQueue(state: object): void { bridge()?.nativeSetQueue?.(JSON.stringify(state)); }
+export function configureNativeAndroidSync(state: object): void { bridge()?.nativeConfigureSync?.(JSON.stringify(state)); }
+
 export function playNativeAndroidTrack(track: Track, streamUrl: string, autoPlay: boolean, startPositionSeconds = 0, mimeType = ""): void {
   bridge()?.nativePlay?.(
     streamUrl,
@@ -53,6 +65,19 @@ export function playNativeAndroidTrack(track: Track, streamUrl: string, autoPlay
 export function pauseNativeAndroidPlayer(): void { bridge()?.nativePause?.(); }
 export function resumeNativeAndroidPlayer(): void { bridge()?.nativeResume?.(); }
 export function stopNativeAndroidPlayer(): void { bridge()?.nativeStop?.(); }
+export async function stopNativeAndroidPlayerAndWait(): Promise<void> {
+  stopNativeAndroidPlayer();
+  if (!bridge()?.nativeGetState) return;
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const saved = bridge()?.nativeGetState?.();
+    if (!saved) return;
+    const state = JSON.parse(saved) as NativePlaybackState;
+    if (!state.trackId && !state.playing) return;
+    await new Promise(resolve => window.setTimeout(resolve, 25));
+  }
+  throw new Error("Android player did not acknowledge stop");
+}
 export function seekNativeAndroidPlayer(seconds: number): void { bridge()?.nativeSeek?.(Math.max(0, Math.round(seconds * 1000))); }
 export function setNativeAndroidPlayerVolume(volume: number): void { bridge()?.nativeSetVolume?.(Math.max(0, Math.min(100, Math.round(volume)))); }
 
@@ -60,5 +85,16 @@ export function subscribeNativeAndroidPlayback(listener: (state: NativePlaybackS
   if (typeof window === "undefined") return () => {};
   const handler = (event: Event) => listener((event as CustomEvent<NativePlaybackState>).detail);
   window.addEventListener(eventName, handler);
-  return () => window.removeEventListener(eventName, handler);
+  const refresh = () => {
+    const saved = bridge()?.nativeGetState?.();
+    if (saved) { try { listener(JSON.parse(saved) as NativePlaybackState); } catch { /* No saved session yet. */ } }
+  };
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", refresh);
+  refresh();
+  return () => {
+    window.removeEventListener(eventName, handler);
+    window.removeEventListener("focus", refresh);
+    document.removeEventListener("visibilitychange", refresh);
+  };
 }

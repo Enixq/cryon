@@ -16,6 +16,7 @@ android {
         targetSdk = 36
         versionCode = versionParts[0] * 1000000 + versionParts[1] * 1000 + versionParts[2]
         versionName = releaseVersion
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -72,4 +73,6 @@ dependencies {
     implementation("androidx.media3:media3-session:1.8.0")
     implementation("androidx.media3:media3-datasource:1.8.0")
     implementation("androidx.media3:media3-database:1.8.0")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

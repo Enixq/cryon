@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Track } from "../shared/types";
 import { useAudioEngine } from "./audioEngine";
 import { usePlayerStore } from "./playerStore";
@@ -7,6 +7,7 @@ import { resolvePlaybackFallbackV1, resolvePlaybackV1 } from "../shared/api/v1";
 import { getAudioStreamInfo, getPlaybackUrlForHtml5, playerBackendAvailable, playerPlay, playerSetEqualizer, playerSetNormalize, playerStatus, playerStop, playerResume, resolvePlayableTrack, addHistory } from "../shared/api/client";
 
 vi.mock("../shared/api/v1", () => ({
+  apiV1BaseUrl: vi.fn().mockReturnValue("http://localhost:1234"),
   resolvePlaybackV1: vi.fn(),
   resolvePlaybackFallbackV1: vi.fn(),
 }));
@@ -29,9 +30,49 @@ vi.mock("../shared/api/client", async (importOriginal) => ({
 const track = (id: string): Track => ({ id, source: id.split(":")[0] as Track["source"], title: "Song", artist: "Artist", duration: 180, accent: "violet" });
 
 describe("Android playback fallback", () => {
+  beforeEach(() => {
+    vi.mocked(playerBackendAvailable).mockResolvedValue(false);
+    vi.mocked(playerSetEqualizer).mockResolvedValue(undefined);
+    vi.mocked(playerSetNormalize).mockResolvedValue(undefined);
+    vi.mocked(resolvePlayableTrack).mockImplementation(async item => item);
+    vi.mocked(addHistory).mockResolvedValue(undefined);
+    vi.mocked(playerStop).mockResolvedValue(undefined);
+  });
   afterEach(() => {
     delete window.CryonAndroid;
     vi.restoreAllMocks();
+    usePlayerStore.setState({ playbackOnThisDevice: true });
+  });
+
+  it("mirrors a native background transition without reloading its stream", async () => {
+    const first = track("youtube:first"); const second = track("youtube:second");
+    const nativePlay = vi.fn();
+    window.CryonAndroid = { nativePlay, nativeSetQueue: vi.fn(), nativeStop: vi.fn(), nativeResume: vi.fn(), nativeSetVolume: vi.fn() };
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    vi.mocked(resolvePlaybackV1).mockImplementation(async item => ({ track: item, streamUrl: "/stream/audio" }));
+    usePlayerStore.setState({ queue: [first, second], currentIndex: 0, isPlaying: true, playbackOnThisDevice: true });
+    const { unmount } = renderHook(() => useAudioEngine());
+    await waitFor(() => expect(nativePlay).toHaveBeenCalledTimes(1));
+    act(() => window.dispatchEvent(new CustomEvent("cryon:native-playback", { detail: { trackId: first.id, queue: [first, second], currentIndex: 0, state: "ready", playing: true, autoPlay: true, positionMs: 1000, durationMs: 180000 } })));
+    act(() => window.dispatchEvent(new CustomEvent("cryon:native-playback", { detail: { trackId: second.id, queue: [first, second], currentIndex: 1, state: "ready", playing: true, autoPlay: true, positionMs: 1500, durationMs: 180000 } })));
+    expect(usePlayerStore.getState().currentIndex).toBe(1);
+    expect(usePlayerStore.getState().progress).toBe(1.5);
+    expect(nativePlay).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("keeps a remote playing queue silent on this Android device", async () => {
+    const nativePlay = vi.fn(); const nativeStop = vi.fn();
+    window.CryonAndroid = { nativePlay, nativeSetQueue: vi.fn(), nativeStop };
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    usePlayerStore.setState({ queue: [track("youtube:first")], currentIndex: 0, isPlaying: true, playbackOnThisDevice: false });
+    const { unmount } = renderHook(() => useAudioEngine());
+    await waitFor(() => expect(nativeStop).toHaveBeenCalled());
+    expect(nativePlay).not.toHaveBeenCalled();
+    expect(usePlayerStore.getState().isPlaying).toBe(true);
+    unmount();
   });
 
   it("continues from the original position after two failed versions", async () => {

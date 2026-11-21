@@ -12,6 +12,12 @@ import { consumeRadioCompletion, isRadioArtistBlocked, recordRadioSignal, resetR
 const startingQueue: Track[] = isWailsRuntime() ? [] : initialQueue;
 
 interface PlayerState {
+  /** Transport state is shared; only the selected device produces sound. */
+  playbackOnThisDevice: boolean;
+  playbackDeviceId: string;
+  radioWaiting: boolean;
+  remoteSeekNonce: number;
+  pairedDeviceId: string;
   queue: Track[];
   /** Индекс текущего трека в очереди. */
   currentIndex: number;
@@ -72,7 +78,7 @@ interface PlayerState {
   /** Добавить несколько треков в конец очереди (дедуп по id). Для радио. */
   appendToQueue: (tracks: Track[]) => void;
   /** Применить состояние очереди, пришедшее от сопряжённого устройства. */
-  replaceRemoteState: (state: { queue: Track[]; currentIndex: number; isPlaying: boolean; progress: number; volume: number; muted: boolean }) => void;
+  replaceRemoteState: (state: { queue: Track[]; currentIndex: number; isPlaying: boolean; progress: number; volume: number; muted: boolean; radio?: boolean; repeat?: RepeatMode; shuffle?: boolean; seekNonce?: number; playbackOnThisDevice?: boolean; playbackDeviceId?: string }) => void;
   /** Поставить трек следующим после текущего. */
   playNext: (track: Track) => void;
   /** Переключить лайк с сохранением в избранное (backend). */
@@ -80,6 +86,11 @@ interface PlayerState {
 }
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
+  playbackOnThisDevice: true,
+  playbackDeviceId: "host",
+  radioWaiting: false,
+  remoteSeekNonce: 0,
+  pairedDeviceId: "",
   queue: startingQueue,
   currentIndex: 0,
   isPlaying: false,
@@ -99,8 +110,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   play: () => set({ isPlaying: true }),
-  pause: () => set({ isPlaying: false }),
-  togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
+  pause: () => set({ isPlaying: false, radioWaiting: false }),
+  togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying, radioWaiting: false })),
 
   next: () => {
     const { queue, currentIndex, repeat, shuffle } = get();
@@ -121,18 +132,18 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     let nextIndex: number;
     if (shuffle) {
-      const eligible = queue.map((track, index) => ({ track, index })).filter(({ track, index }) => index !== currentIndex && (!get().radio || !isRadioArtistBlocked(track)));
-      if (eligible.length === 0) { if (get().radio) set({ isPlaying: false }); return; }
+      const eligible = queue.map((track, index) => ({ track, index })).filter(({ track, index }) => index !== currentIndex && (!get().radio || (index > currentIndex && !isRadioArtistBlocked(track))));
+      if (eligible.length === 0) { if (get().radio) set({ isPlaying: false, radioWaiting: true }); return; }
       nextIndex = eligible[Math.floor(Math.random() * eligible.length)].index;
     } else {
       nextIndex = currentIndex + 1;
       while (get().radio && nextIndex < queue.length && isRadioArtistBlocked(queue[nextIndex])) nextIndex++;
       if (nextIndex >= queue.length) {
         nextIndex = repeat === "all" && !get().radio ? 0 : currentIndex;
-        if (get().radio) { set({ isPlaying: false }); return; }
+        if (get().radio) { set({ isPlaying: false, radioWaiting: true }); return; }
       }
     }
-    set({ currentIndex: nextIndex, progress: 0, isPlaying: true, engineDuration: 0 });
+    set({ currentIndex: nextIndex, progress: 0, isPlaying: true, engineDuration: 0, radioWaiting: false });
   },
 
   previous: () => {
@@ -194,7 +205,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     })),
   toggleRadio: () => {
     resetRadioSession();
-    set((s) => ({ radio: !s.radio }));
+    set((s) => ({ radio: !s.radio, radioWaiting: false }));
   },
 
   playTrack: (track, queue) => {
@@ -266,7 +277,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   appendToQueue: (tracks) =>
     set((s) => {
       const existing = new Set(s.queue.map((t) => t.id));
-      const fresh = tracks.filter((t) => !existing.has(t.id));
+      const fresh = tracks.filter((t) => {
+        if (existing.has(t.id)) return false;
+        existing.add(t.id);
+        return true;
+      });
       if (fresh.length === 0) return {};
       return { queue: [...s.queue, ...fresh] };
     }),
@@ -283,11 +298,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const currentIndex = clamp(state.currentIndex, 0, Math.max(0, queue.length - 1));
     const sameTrack = old.currentTrack()?.id === queue[currentIndex]?.id;
     const target = Math.max(0, state.progress);
-    const needsSeek = sameTrack ? Math.abs(old.progress - target) > 3 : target > 0;
+    const explicitSeek = state.seekNonce !== undefined && state.seekNonce !== old.remoteSeekNonce;
+    const needsSeek = sameTrack ? explicitSeek || Math.abs(old.progress - target) > 3 : target > 0;
     return {
       queue, currentIndex, isPlaying: state.isPlaying,
-      progress: sameTrack && !needsSeek ? old.progress : target,
+      progress: sameTrack && !needsSeek && old.playbackOnThisDevice ? old.progress : target,
+      remoteSeekNonce: state.seekNonce ?? old.remoteSeekNonce,
       volume: clamp(Math.round(state.volume), 0, 100), muted: state.muted,
+      radio: state.radio ?? old.radio, repeat: state.repeat ?? old.repeat, shuffle: state.shuffle ?? old.shuffle,
+      playbackOnThisDevice: state.playbackOnThisDevice ?? old.playbackOnThisDevice,
+      playbackDeviceId: state.playbackDeviceId ?? old.playbackDeviceId,
+      radioWaiting: false,
       engineDuration: sameTrack ? old.engineDuration : 0,
       ...(needsSeek ? { seekTarget: target, seekNonce: old.seekNonce + 1 } : {}),
     };

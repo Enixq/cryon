@@ -26,8 +26,8 @@ func (a *App) handleAPIDeviceState(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(state)
 		return
 	}
-	if r.Method != http.MethodPut {
-		writeAPIError(w, http.StatusMethodNotAllowed, "требуется GET или PUT")
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "требуется GET, PUT или POST")
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
@@ -36,11 +36,48 @@ func (a *App) handleAPIDeviceState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var probe map[string]any
-	if json.Unmarshal(body, &probe) != nil {
+	if json.Unmarshal(body, &probe) != nil || probe == nil {
 		writeAPIError(w, http.StatusBadRequest, "некорректный JSON")
 		return
 	}
 	a.remoteStateMu.Lock()
+	if base, ok := probe["baseRevision"].(float64); ok && uint64(base) != a.remoteRevision {
+		a.remoteStateMu.Unlock()
+		writeAPIError(w, http.StatusConflict, "состояние плеера изменилось; перечитайте очередь")
+		return
+	}
+	_, versioned := probe["baseRevision"]
+	delete(probe, "baseRevision")
+	var previous map[string]any
+	_ = json.Unmarshal(a.remoteState, &previous)
+	if r.Method == http.MethodPost {
+		release, _ := probe["releaseDeviceId"].(string)
+		if release == "" || release != previous["releaseDeviceId"] {
+			a.remoteStateMu.Unlock()
+			writeAPIError(w, http.StatusConflict, "устройство уже передало воспроизведение")
+			return
+		}
+		probe = previous
+		probe["activePlaybackDeviceId"] = probe["playbackDeviceId"]
+		delete(probe, "releaseDeviceId")
+	} else if owner, ok := probe["playbackDeviceId"].(string); ok && owner != "" {
+		oldOwner, _ := previous["playbackDeviceId"].(string)
+		if oldOwner == "" {
+			oldOwner = "host"
+		}
+		active, _ := previous["activePlaybackDeviceId"].(string)
+		if active == "" && previous["releaseDeviceId"] == nil {
+			active = oldOwner
+		}
+		probe["activePlaybackDeviceId"] = active
+		if pending, _ := previous["releaseDeviceId"].(string); pending != "" {
+			probe["activePlaybackDeviceId"] = ""
+			probe["releaseDeviceId"] = pending
+		} else if owner != oldOwner {
+			probe["activePlaybackDeviceId"] = ""
+			probe["releaseDeviceId"] = active
+		}
+	}
 	a.remoteRevision++
 	probe["revision"] = a.remoteRevision
 	encoded, err := json.Marshal(probe)
@@ -51,7 +88,11 @@ func (a *App) handleAPIDeviceState(w http.ResponseWriter, r *http.Request) {
 	}
 	a.remoteState = append(a.remoteState[:0], encoded...)
 	a.remoteStateMu.Unlock()
-	w.WriteHeader(204)
+	if versioned {
+		writeAPIJSON(w, http.StatusOK, map[string]any{"revision": probe["revision"]})
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 const (

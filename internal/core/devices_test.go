@@ -71,3 +71,37 @@ func TestLANPreflightAllowsDeviceStateWrites(t *testing.T) {
 		t.Fatalf("PUT not allowed: %s", got)
 	}
 }
+
+func TestDeviceStateRejectsStaleCommandsAndWaitsForRelease(t *testing.T) {
+	app := &App{}
+	put := func(method, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		app.handleAPIDeviceState(w, httptest.NewRequest(method, "/v1/devices/state", bytes.NewBufferString(body)))
+		return w
+	}
+	if w := put("PUT", `{"deviceId":"pc","playbackDeviceId":"host","baseRevision":0,"queue":[],"isPlaying":true}`); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	if w := put("PUT", `{"deviceId":"phone","playbackDeviceId":"phone","baseRevision":0}`); w.Code != 409 {
+		t.Fatal("accepted stale command", w.Code)
+	}
+	if w := put("PUT", `{"deviceId":"phone","playbackDeviceId":"phone","baseRevision":1,"queue":[],"isPlaying":true}`); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	var state map[string]any
+	_ = json.Unmarshal(app.remoteState, &state)
+	if state["activePlaybackDeviceId"] != "" || state["releaseDeviceId"] != "host" {
+		t.Fatal("started before host released playback", state)
+	}
+	if w := put("POST", `{"releaseDeviceId":"phone","baseRevision":2}`); w.Code != 409 {
+		t.Fatal("wrong device released host", w.Code)
+	}
+	if w := put("POST", `{"releaseDeviceId":"host","baseRevision":2}`); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	state = nil
+	_ = json.Unmarshal(app.remoteState, &state)
+	if state["activePlaybackDeviceId"] != "phone" || state["releaseDeviceId"] != nil || state["isPlaying"] != true {
+		t.Fatal("handoff lost transport state", state)
+	}
+}

@@ -9,6 +9,8 @@ import { BottomNav } from "./BottomNav";
 import { MobileMiniPlayer } from "./MobileMiniPlayer";
 import { MobileNowPlaying } from "./MobileNowPlaying";
 import { useAudioEngine } from "../store/audioEngine";
+import { useRadioAutoplay } from "../shared/lib/useRadioAutoplay";
+import { usePlaybackPreload } from "../shared/lib/usePlaybackPreload";
 import { usePlayerStore } from "../store/playerStore";
 import { useTrackCover } from "../shared/lib/useTrackCover";
 import { useCoverPalette } from "../shared/lib/useCoverPalette";
@@ -30,9 +32,8 @@ import { ShareTrackModal } from "./ShareTrackModal";
 import { RouteErrorBoundary } from "./ErrorBoundary";
 import { notify } from "../store/notificationStore";
 import { apiV1BaseUrl } from "../shared/api/v1";
-import { configuredBaseUrl } from "../shared/lib/httpBridge";
+import { useDeviceSync } from "../shared/lib/useDeviceSync";
 import type { CSSProperties } from "react";
-import type { Track } from "../shared/types";
 
 // Ключи запросов, зависящих от подключённых источников: их выдача меняется
 // при появлении/смене токена или ключа (например, треки Yandex до токена
@@ -56,6 +57,9 @@ export function AppLayout() {
   const [deviceConnectionRevision, setDeviceConnectionRevision] = useState(0);
   // Реальный движок воспроизведения (mpv или HTML5 <audio>).
   useAudioEngine();
+  // Радио-очередь пополняется заранее, а не в момент её опустошения.
+  useRadioAutoplay();
+  usePlaybackPreload();
   const queryClient = useQueryClient();
 
   // Персист состояния плеера (громкость, вкладка, очередь) между запусками.
@@ -86,88 +90,7 @@ export function AppLayout() {
     return () => { cancelled = true; };
   }, []);
 
-  // Сопряжённый Cryon в той же Wi-Fi-сети получает очередь и транспортное
-  // состояние через маленький JSON-канал. Синхронизация включается только
-  // после выбора устройства в настройках и не требует общего аккаунта.
-  useEffect(() => {
-    const configured = configuredBaseUrl();
-    const native = Boolean((window as Window & { go?: { main?: { App?: unknown } }; CryonAndroid?: unknown }).go?.main?.App);
-    const remote = configured || (native ? "http://127.0.0.1:8899" : "");
-    if (!remote) return;
-    let deviceId = "";
-    try {
-      const key = "cryon.device.id";
-      deviceId = localStorage.getItem(key) || `device-${crypto.randomUUID?.() || Math.random().toString(36).slice(2)}`;
-      localStorage.setItem(key, deviceId);
-    } catch { deviceId = `device-${Math.random().toString(36).slice(2)}`; }
-    let lastSignature = "";
-    let lastRemoteTimestamp = 0;
-    let suppressPublishUntil = 0;
-    const snapshot = () => {
-      const state = usePlayerStore.getState();
-      return {
-        queue: state.queue,
-        currentIndex: state.currentIndex,
-        isPlaying: state.isPlaying,
-        progress: Math.round(state.progress * 10) / 10,
-        volume: state.volume,
-        muted: state.muted,
-        seekNonce: state.seekNonce,
-      };
-    };
-    const publish = async () => {
-      if (Date.now() < suppressPublishUntil) return;
-      const state = snapshot();
-      const signature = JSON.stringify({ ...state, progress: undefined });
-      if (signature === lastSignature) return;
-      lastSignature = signature;
-      try {
-        const response = await fetch(remote + "/v1/devices/state", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deviceId, updatedAtMs: Date.now(), ...state }),
-        });
-        if (!response.ok) lastSignature = "";
-      } catch { lastSignature = ""; }
-    };
-    const pull = async () => {
-      try {
-        const response = await fetch(remote + "/v1/devices/state");
-        if (!response.ok) return;
-        const incoming = await response.json() as { deviceId?: string; updatedAtMs?: number; revision?: number; queue?: Track[]; currentIndex?: number; isPlaying?: boolean; progress?: number; volume?: number; muted?: boolean };
-        if (!incoming.deviceId || incoming.deviceId === deviceId || !Array.isArray(incoming.queue)) return;
-        const timestamp = Number(incoming.revision ?? incoming.updatedAtMs ?? 0);
-        if (timestamp <= lastRemoteTimestamp) return;
-        lastRemoteTimestamp = timestamp;
-        suppressPublishUntil = Date.now() + 1800;
-        usePlayerStore.getState().replaceRemoteState({
-          queue: incoming.queue,
-          currentIndex: Number(incoming.currentIndex || 0),
-          isPlaying: Boolean(incoming.isPlaying),
-          progress: Number(incoming.progress || 0),
-          volume: Number(incoming.volume ?? 68),
-          muted: Boolean(incoming.muted),
-        });
-        lastSignature = JSON.stringify({ ...snapshot(), progress: undefined });
-      } catch { /* сеть пропала — не прерываем локальное воспроизведение */ }
-    };
-    let polling = false;
-    const tick = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        const localSignature = JSON.stringify({ ...snapshot(), progress: undefined });
-        // A user command on this device must be sent before applying an older
-        // snapshot from the peer, otherwise tapping pause/next is overwritten.
-        if (lastSignature && localSignature !== lastSignature && Date.now() >= suppressPublishUntil) await publish();
-        await pull();
-        if (!lastSignature) await publish();
-      } finally { polling = false; }
-    };
-    void tick();
-    const timer = window.setInterval(() => { void tick(); }, 1000);
-    return () => window.clearInterval(timer);
-  }, [deviceConnectionRevision]);
+  useDeviceSync(deviceConnectionRevision);
 
   // Аппаратная кнопка / жест «Назад» на Android: закрыть оверлей → шаг назад по
   // истории → на «Главную» → и только затем выход. Без этого WebView по

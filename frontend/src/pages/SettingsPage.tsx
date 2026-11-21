@@ -23,6 +23,8 @@ import { ServiceIcon } from "../shared/ui/ServiceIcon";
 import { PageHeader } from "../shared/ui/PageHeader";
 import { TabBar, type TabItem } from "../shared/ui/TabBar";
 import { useUiStore } from "../store/uiStore";
+import { usePlayerStore } from "../store/playerStore";
+import { selectPlaybackDevice } from "../shared/lib/useDeviceSync";
 import { usePlaybackSettingsStore } from "../store/playbackSettingsStore";
 import { usePlaybackDiagnosticsStore } from "../store/playbackDiagnosticsStore";
 import { useFavoriteIds } from "../shared/lib/useFavorites";
@@ -663,6 +665,8 @@ function MobileServerSection() {
   const [url, setUrl] = useState<string>(() => configuredBaseUrl());
   const [busy, setBusy] = useState(false);
   const [devices, setDevices] = useState<Array<{ id: string; name: string; url: string; version?: string }>>([]);
+  const playbackOnThisDevice = usePlayerStore((s) => s.playbackOnThisDevice);
+  const pairedDeviceId = usePlayerStore((s) => s.pairedDeviceId);
   const [discovering, setDiscovering] = useState(false);
   const [connectionMessage, setConnectionMessage] = useState("");
   const apply = async () => {
@@ -684,7 +688,7 @@ function MobileServerSection() {
       const health = await response.json() as { status?: string; api?: string };
       if (health.status !== "ok" || health.api !== "v1") throw new Error("По этому адресу не найдено работающее приложение Cryon.");
       setConfiguredBaseUrl(parsed.origin);
-      setConnectionMessage("Устройство подключено. Синхронизация включена.");
+      setConnectionMessage("Устройство подключено. Музыка играет на нём; здесь можно управлять очередью.");
     } catch (error) {
       setConnectionMessage(error instanceof Error && error.name !== "AbortError" && !/fetch|network/i.test(error.message) ? error.message : "Не удалось связаться с устройством. Проверьте Wi‑Fi, VPN и доступ Cryon к локальной сети.");
     } finally {
@@ -701,7 +705,7 @@ function MobileServerSection() {
   return (
     <Section
       title="Устройства Cryon в сети"
-      description="Cryon автоматически ищет другие открытые приложения в вашей Wi-Fi-сети. Выберите устройство, чтобы подключить общий плеер и очередь."
+      description="Выберите устройство в Wi-Fi-сети. Музыка играет в одном месте, а переключать треки можно с обоих устройств."
     >
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
@@ -733,6 +737,13 @@ function MobileServerSection() {
           {busy ? "Проверяем соединение…" : trimmed ? "Подключиться и синхронизировать" : "Отключить синхронизацию"}
         </button>
         {connectionMessage && <p role="status" className="text-sm text-slate-300">{connectionMessage}</p>}
+        {(configuredBaseUrl() || pairedDeviceId) && <div className="rounded-xl bg-white/[0.04] p-3">
+          <p className="mb-2 text-sm text-slate-300">Где воспроизводить музыку</p>
+          <div className="flex gap-2">
+            <button type="button" aria-pressed={playbackOnThisDevice} onClick={() => selectPlaybackDevice(true)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${playbackOnThisDevice ? "bg-violet-500 text-white" : "bg-white/5 text-slate-300"}`}>На этом устройстве</button>
+            <button type="button" aria-pressed={!playbackOnThisDevice} onClick={() => selectPlaybackDevice(false)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${!playbackOnThisDevice ? "bg-violet-500 text-white" : "bg-white/5 text-slate-300"}`}>На подключённом</button>
+          </div>
+        </div>}
       </div>
     </Section>
   );

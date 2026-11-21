@@ -12,7 +12,6 @@ import { useCallback, useEffect, useRef } from "react";
 import { usePlayerStore } from "./playerStore";
 import {
   getAudioStreamInfo,
-  getAudioStreamUrl,
   resolvePlayableTrack,
   playerBackendAvailable,
   playerPlay,
@@ -27,25 +26,29 @@ import {
   getPlaybackUrlForHtml5,
   addHistory,
   openExternal,
-  listRelatedTracks,
 } from "../shared/api/client";
 import { notify } from "./notificationStore";
 import { recordPlaybackDiagnostic, usePlaybackDiagnosticsStore } from "./playbackDiagnosticsStore";
 import { PlaybackFallbackSession } from "./playbackFallback";
-import { rankRadioTracks, recordRadioSignal } from "./radioSession";
+import { recordRadioSignal } from "./radioSession";
 import { useEqualizerStore, EQ_FREQS } from "./equalizerStore";
 import { usePlaybackSettingsStore, CROSSFADE_MS } from "./playbackSettingsStore";
 import {
   hasNativeAndroidPlayer,
+  hasNativeAndroidQueue,
+  updateNativeAndroidQueue,
   pauseNativeAndroidPlayer,
   playNativeAndroidTrack,
   resumeNativeAndroidPlayer,
   seekNativeAndroidPlayer,
   setNativeAndroidPlayerVolume,
   stopNativeAndroidPlayer,
+  stopNativeAndroidPlayerAndWait,
   subscribeNativeAndroidPlayback,
 } from "../shared/lib/nativeAndroidPlayer";
 import { resolvePlaybackFallbackV1, resolvePlaybackV1 } from "../shared/api/v1";
+import { apiV1BaseUrl } from "../shared/api/v1";
+import { registerLocalPlaybackStop } from "../shared/lib/localPlayback";
 
 export function useAudioEngine() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -73,6 +76,7 @@ export function useAudioEngine() {
   const fadeRafRef = useRef<number | null>(null);
   const fadingOutRef = useRef<boolean>(false);
   const nativeEndHandledRef = useRef<string | null>(null);
+  const pendingNativeTrackRef = useRef<string | null>(null);
   // Защита от повторного запроса одной и той же неработающей версии и
   // позиция, с которой нужно продолжить на найденной альтернативе.
   const fallbackSessionRef = useRef(new PlaybackFallbackSession());
@@ -82,9 +86,19 @@ export function useAudioEngine() {
   const playbackGenerationRef = useRef(0);
   const playbackLoadRef = useRef<{ id: string; startedAt: number } | null>(null);
 
+  useEffect(() => registerLocalPlaybackStop(async () => {
+    audioRef.current?.pause();
+    if (playingViaMpvRef.current) { await playerStop(); playingViaMpvRef.current = false; }
+    if (hasNativeAndroidPlayer()) await stopNativeAndroidPlayerAndWait();
+  }), []);
+
   const currentIndex = usePlayerStore((s) => s.currentIndex);
   const queue = usePlayerStore((s) => s.queue);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const playbackOnThisDevice = usePlayerStore((s) => s.playbackOnThisDevice);
+  const isPlaying = usePlayerStore((s) => s.isPlaying && s.playbackOnThisDevice);
+  const radio = usePlayerStore((s) => s.radio);
+  const repeat = usePlayerStore((s) => s.repeat);
+  const shuffle = usePlayerStore((s) => s.shuffle);
   const volume = usePlayerStore((s) => s.volume);
   const muted = usePlayerStore((s) => s.muted);
   const seekNonce = usePlayerStore((s) => s.seekNonce);
@@ -92,9 +106,13 @@ export function useAudioEngine() {
   const eqEnabled = useEqualizerStore((s) => s.enabled);
   const eqGains = useEqualizerStore((s) => s.gains);
   const normalize = usePlaybackSettingsStore((s) => s.normalizeVolume);
-  const crossfade = usePlaybackSettingsStore((s) => s.crossfade);
 
-  const track = queue[currentIndex];
+  const track = playbackOnThisDevice ? queue[currentIndex] : undefined;
+
+  useEffect(() => {
+    if (!hasNativeAndroidQueue() || !playbackOnThisDevice) return;
+    updateNativeAndroidQueue({ queue, currentIndex, radio, repeat, shuffle, serverBaseUrl: apiV1BaseUrl() });
+  }, [queue, currentIndex, radio, repeat, shuffle, playbackOnThisDevice]);
 
   const acceptEnginePosition = (trackId: string, position: number) => {
     const pending = pendingSeekRef.current;
@@ -192,7 +210,19 @@ export function useAudioEngine() {
   useEffect(() => {
     if (!hasNativeAndroidPlayer()) return;
     return subscribeNativeAndroidPlayback((state) => {
-      const store = usePlayerStore.getState();
+      let store = usePlayerStore.getState();
+      if (state.playbackOnThisDevice === false) { usePlayerStore.setState({ playbackOnThisDevice: false }); return; }
+      if (!store.playbackOnThisDevice) return;
+      if (pendingNativeTrackRef.current && pendingNativeTrackRef.current !== state.trackId) return;
+      if (pendingNativeTrackRef.current === state.trackId) pendingNativeTrackRef.current = null;
+      if (hasNativeAndroidQueue() && state.queue && state.currentIndex !== undefined && state.queue[state.currentIndex]?.id === state.trackId) {
+        const switched = store.currentTrack()?.id !== state.trackId;
+        if (switched && store.radio && store.currentTrack()) recordRadioSignal(store.currentTrack()!, "completed");
+        loadedTrackIdRef.current = state.trackId;
+        const queueChanged = JSON.stringify(store.queue) !== JSON.stringify(state.queue);
+        usePlayerStore.setState({ ...(queueChanged ? { queue: state.queue } : {}), currentIndex: state.currentIndex, isPlaying: state.autoPlay ?? state.playing, radio: state.radio ?? store.radio, ...(switched ? { engineDuration: 0 } : {}) });
+        store = usePlayerStore.getState();
+      }
       const current = store.currentTrack();
       if (!current || current.id !== state.trackId) return;
       const acceptedPosition = acceptEnginePosition(current.id, state.positionMs / 1000);
@@ -205,6 +235,7 @@ export function useAudioEngine() {
         return;
       }
       if (state.state !== "ended" || nativeEndHandledRef.current === current.id) return;
+      if (hasNativeAndroidQueue()) return;
       nativeEndHandledRef.current = current.id;
       if (store.radio) recordRadioSignal(current, "completed");
       void (async () => {
@@ -216,13 +247,8 @@ export function useAudioEngine() {
         const isLast = store.currentIndex >= store.queue.length - 1;
         if (isLast && store.repeat === "off" && !store.shuffle) {
           if (store.radio) {
-            const related = rankRadioTracks(await listRelatedTracks(current, 15).catch(() => []));
-            if (related.length > 0) {
-              store.appendToQueue(related);
-              loadedTrackIdRef.current = null;
-              store.next();
-              return;
-            }
+            store.next();
+            return;
           }
           store.pause();
           return;
@@ -357,6 +383,7 @@ export function useAudioEngine() {
       // освобождаем оба движка, чтобы звук не продолжался "в фоне".
       loadedTrackIdRef.current = null;
       nativeEndHandledRef.current = null;
+      pendingNativeTrackRef.current = null;
       if (hasNativeAndroidPlayer()) stopNativeAndroidPlayer();
       if (playingViaMpvRef.current) void playerStop().catch(() => {});
       playingViaMpvRef.current = false;
@@ -372,6 +399,7 @@ export function useAudioEngine() {
       return;
     }
     if (loadedTrackIdRef.current === track.id) return;
+    if (hasNativeAndroidQueue()) pendingNativeTrackRef.current = track.id;
 
     let cancelled = false;
     playbackGenerationRef.current += 1;
@@ -458,7 +486,7 @@ export function useAudioEngine() {
       // прослушивание попадало бы в базу дважды. Пишем только когда трек
       // действительно играет, а не при пассивной подгрузке (восстановление
       // сессии на паузе не должно засорять историю).
-      if (usePlayerStore.getState().isPlaying) void addHistory(track).catch(() => {});
+      if (usePlayerStore.getState().isPlaying && !hasNativeAndroidQueue()) void addHistory(track).catch(() => {});
       const setEnginePosition = usePlayerStore.getState().setEnginePosition;
 
       if (hasNativeAndroidPlayer()) {
@@ -774,13 +802,8 @@ export function useAudioEngine() {
         // Режим радио: дозаполняем очередь треками, похожими на текущий,
         // и продолжаем воспроизведение. Если похожих нет — останавливаемся.
         if (store.radio) {
-          const related = rankRadioTracks(await listRelatedTracks(track, 15).catch(() => []));
-          if (related.length > 0) {
-            store.appendToQueue(related);
-            loadedTrackIdRef.current = null;
-            store.next();
-            return;
-          }
+          store.next();
+          return;
         }
         store.pause();
         store.setEnginePosition(track.duration || 0);

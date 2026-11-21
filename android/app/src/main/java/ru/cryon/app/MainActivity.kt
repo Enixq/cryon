@@ -312,6 +312,19 @@ class MainActivity : AppCompatActivity() {
         fun nativePause() { CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_PAUSE) }
 
         @JavascriptInterface
+        fun nativeSetQueue(json: String) {
+            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_QUEUE) { putExtra(CryonPlaybackService.EXTRA_QUEUE, json) }
+        }
+
+        @JavascriptInterface
+        fun nativeGetState(): String = CryonPlaybackService.latestState
+
+        @JavascriptInterface
+        fun nativeConfigureSync(json: String) {
+            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_SYNC) { putExtra(CryonPlaybackService.EXTRA_QUEUE, json) }
+        }
+
+        @JavascriptInterface
         fun nativeResume() { CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_RESUME) }
 
         @JavascriptInterface
@@ -406,7 +419,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun dispatchNativePlaybackState(intent: Intent) {
         if (!this::webView.isInitialized) return
-        val payload = JSONObject()
+        val payload = CryonPlaybackService.latestState.takeIf { it.isNotBlank() }?.let(::JSONObject) ?: JSONObject()
             .put("trackId", intent.getStringExtra(CryonPlaybackService.EXTRA_TRACK_ID).orEmpty())
             .put("state", intent.getStringExtra(CryonPlaybackService.EXTRA_STATE).orEmpty())
             .put("playing", intent.getBooleanExtra(CryonPlaybackService.EXTRA_PLAYING, false))
