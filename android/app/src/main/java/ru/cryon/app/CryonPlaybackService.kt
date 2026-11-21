@@ -73,19 +73,52 @@ class CryonPlaybackService : MediaSessionService() {
     private var recovering = false
     private var historyRecordedId = ""
     private var waitingAfterError = false
+    private var commandId = 0L
+    private var tickerScheduled = false
     private val progressHandler = Handler(Looper.getMainLooper())
     private val progressTicker = object : Runnable {
         override fun run() {
+            tickerScheduled = false
             val playbackPlayer = player ?: return
             publishState(stateFor(playbackPlayer))
             maybePreloadNext(playbackPlayer)
             maybeRefillRadio()
             syncDeviceState()
-            progressHandler.postDelayed(this, PROGRESS_INTERVAL_MS)
+            scheduleTicker()
+        }
+    }
+    private fun scheduleTicker() {
+        if (!tickerScheduled && (keepPlaying || syncConfig != null)) {
+            tickerScheduled = true
+            progressHandler.postDelayed(progressTicker, PROGRESS_INTERVAL_MS)
         }
     }
     private val previousCommand = SessionCommand(ACTION_PREVIOUS, Bundle.EMPTY)
     private val nextCommand = SessionCommand(ACTION_NEXT, Bundle.EMPTY)
+    private val likeCommand = SessionCommand(ACTION_LIKE, Bundle.EMPTY)
+    private val dislikeCommand = SessionCommand(ACTION_DISLIKE, Bundle.EMPTY)
+    private val rejectedTracks = mutableSetOf<String>()
+    private val feedbackWorker = Executors.newSingleThreadExecutor()
+
+    private var notificationLiked = false
+    private fun notificationButtons(liked: Boolean): List<CommandButton> = listOf(
+        CommandButton.Builder(CommandButton.ICON_PREVIOUS)
+            .setSessionCommand(previousCommand)
+            .setDisplayName("Предыдущий")
+            .setSlots(CommandButton.SLOT_BACK)
+            .build(),
+        CommandButton.Builder(CommandButton.ICON_NEXT)
+            .setSessionCommand(nextCommand)
+            .setDisplayName("Следующий")
+            .setSlots(CommandButton.SLOT_FORWARD)
+            .build(),
+        CommandButton.Builder(if (liked) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
+            .setSessionCommand(likeCommand).setDisplayName("Добавить в библиотеку")
+            .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW).build(),
+        CommandButton.Builder(CommandButton.ICON_THUMB_DOWN_UNFILLED)
+            .setSessionCommand(dislikeCommand).setDisplayName("Не рекомендовать и пропустить")
+            .setSlots(CommandButton.SLOT_FORWARD_SECONDARY, CommandButton.SLOT_OVERFLOW).build(),
+    )
 
     override fun onCreate() {
         super.onCreate()
@@ -144,8 +177,7 @@ class CryonPlaybackService : MediaSessionService() {
                     override fun onIsPlayingChanged(isPlaying: Boolean) {
                         if (isPlaying) recordCurrentHistory()
                         publishState(stateFor(playbackPlayer))
-                        progressHandler.removeCallbacks(progressTicker)
-                        if (isPlaying || keepPlaying || syncConfig != null) progressHandler.post(progressTicker)
+                        scheduleTicker()
                     }
 
                     override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
@@ -168,28 +200,17 @@ class CryonPlaybackService : MediaSessionService() {
         )
         mediaSession = MediaSession.Builder(this, requireNotNull(player))
             .setSessionActivity(sessionActivity)
-            .setMediaButtonPreferences(
-                listOf(
-                    CommandButton.Builder(CommandButton.ICON_PREVIOUS)
-                        .setSessionCommand(previousCommand)
-                        .setDisplayName("Предыдущий")
-                        .setSlots(CommandButton.SLOT_BACK)
-                        .build(),
-                    CommandButton.Builder(CommandButton.ICON_NEXT)
-                        .setSessionCommand(nextCommand)
-                        .setDisplayName("Следующий")
-                        .setSlots(CommandButton.SLOT_FORWARD)
-                        .build(),
-                ),
-            )
+            .setMediaButtonPreferences(notificationButtons(false))
             .setCallback(object : MediaSession.Callback {
                 override fun onConnect(session: MediaSession, controllerInfo: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
                     val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
                         .buildUpon()
                         .add(previousCommand)
                         .add(nextCommand)
+                        .add(likeCommand)
+                        .add(dislikeCommand)
                         .build()
-                    return MediaSession.ConnectionResult.accept(commands, session.player.availableCommands)
+                    return MediaSession.ConnectionResult.accept(commands, MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)
                 }
 
                 override fun onCustomCommand(
@@ -198,6 +219,8 @@ class CryonPlaybackService : MediaSessionService() {
                     customCommand: SessionCommand,
                     args: Bundle,
                 ): ListenableFuture<SessionResult> {
+                    if (customCommand.customAction == ACTION_LIKE) rateCurrent(1)
+                    if (customCommand.customAction == ACTION_DISLIKE) rateCurrent(-1)
                     if (customCommand.customAction == ACTION_PREVIOUS || customCommand.customAction == ACTION_NEXT) {
                         if (customCommand.customAction == ACTION_NEXT) skipNext()
                         else if (session.player.currentPosition > 3000) session.player.seekTo(0)
@@ -213,6 +236,7 @@ class CryonPlaybackService : MediaSessionService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         val playbackPlayer = player ?: return START_NOT_STICKY
+        commandId = maxOf(commandId, intent?.getLongExtra(EXTRA_COMMAND_ID, 0L) ?: 0L)
         when (intent?.action) {
             ACTION_PLAY -> {
                 generation++
@@ -231,6 +255,7 @@ class CryonPlaybackService : MediaSessionService() {
                         MediaMetadata.Builder()
                             .setTitle(intent.getStringExtra(EXTRA_TITLE))
                             .setArtist(intent.getStringExtra(EXTRA_ARTIST))
+                            .setDurationMs(intent.getLongExtra(EXTRA_DURATION_MS, 0).takeIf { it > 0 })
                             .setArtworkUri(intent.getStringExtra(EXTRA_ARTWORK_URL)?.takeIf { it.isNotBlank() }?.let(android.net.Uri::parse))
                             .build(),
                     )
@@ -254,6 +279,8 @@ class CryonPlaybackService : MediaSessionService() {
             }
             ACTION_PAUSE -> { keepPlaying = false; playbackPlayer.pause(); publishState(stateFor(playbackPlayer)) }
             ACTION_RESUME -> { keepPlaying = true; playbackPlayer.play(); resumeAfterLatePreload() }
+            ACTION_LIKE -> rateCurrent(1)
+            ACTION_DISLIKE -> rateCurrent(-1)
             ACTION_NEXT -> skipNext()
             ACTION_PREVIOUS -> { if (playbackPlayer.currentPosition > 3000) playbackPlayer.seekTo(0) else playQueueIndex((queueIndex - 1).coerceAtLeast(0)) }
             ACTION_STOP -> {
@@ -275,15 +302,18 @@ class CryonPlaybackService : MediaSessionService() {
             ACTION_SEEK -> playbackPlayer.seekTo(intent.getLongExtra(EXTRA_POSITION_MS, 0L).coerceAtLeast(0L))
             ACTION_VOLUME -> playbackPlayer.volume = intent.getIntExtra(EXTRA_VOLUME, 100).coerceIn(0, 100) / 100f
         }
-        progressHandler.removeCallbacks(progressTicker)
-        if (keepPlaying || syncConfig != null) progressHandler.post(progressTicker)
+        scheduleTicker()
         return START_NOT_STICKY
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (player?.playWhenReady != true && !keepPlaying) stopSelf()
+        onStartCommand(Intent(this, CryonPlaybackService::class.java).setAction(ACTION_STOP), 0, 0)
+        progressHandler.removeCallbacks(progressTicker)
+        tickerScheduled = false
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
@@ -299,6 +329,7 @@ class CryonPlaybackService : MediaSessionService() {
         worker.shutdownNow()
         radioWorker.shutdownNow()
         syncWorker.shutdownNow()
+        feedbackWorker.shutdownNow()
         latestState = ""
         super.onDestroy()
     }
@@ -314,7 +345,7 @@ class CryonPlaybackService : MediaSessionService() {
         val playbackPlayer = player ?: return
         val durationMs = playbackPlayer.duration.takeIf { it != C.TIME_UNSET }?.coerceAtLeast(0L) ?: 0L
         val payload = JSONObject().put("trackId", currentTrackId).put("state", state)
-            .put("playing", playbackPlayer.isPlaying).put("autoPlay", keepPlaying)
+            .put("playing", playbackPlayer.isPlaying).put("autoPlay", keepPlaying).put("commandId", commandId)
             .put("positionMs", playbackPlayer.currentPosition.coerceAtLeast(0L))
             .put("durationMs", durationMs).put("error", error.orEmpty())
             .put("radio", radioEnabled).put("playbackOnThisDevice", syncConfig == null || syncingLocally)
@@ -322,9 +353,15 @@ class CryonPlaybackService : MediaSessionService() {
             payload.put("queue", JSONArray(queue)).put("currentIndex", queueIndex)
         }
         latestState = payload.toString()
+        val liked = queue.getOrNull(queueIndex)?.optBoolean("liked") == true
+        if (liked != notificationLiked) {
+            notificationLiked = liked
+            mediaSession?.setMediaButtonPreferences(notificationButtons(liked))
+        }
         sendBroadcast(
             Intent(ACTION_STATE)
                 .setPackage(packageName)
+                .putExtra(EXTRA_PAYLOAD, latestState)
                 .putExtra(EXTRA_TRACK_ID, currentTrackId)
                 .putExtra(EXTRA_STATE, state)
                 .putExtra(EXTRA_PLAYING, playbackPlayer.isPlaying)
@@ -363,12 +400,12 @@ class CryonPlaybackService : MediaSessionService() {
     /** The service continues receiving LAN commands when WebView is suspended. */
     private fun syncDeviceState() {
         val config = syncConfig ?: return
-        if (syncInflight || !syncingLocally) return
+        if (uiForeground || syncInflight || !syncingLocally) return
         val p = player ?: return
         val revision = syncRevision
         val localSnapshot = JSONObject(config.toString()).put("queue", JSONArray(queue)).put("currentIndex", queueIndex)
             .put("isPlaying", keepPlaying).put("progress", p.currentPosition / 1000.0)
-            .put("radio", radioEnabled).put("repeat", repeat).put("shuffle", shuffle)
+            .put("radio", radioEnabled).put("repeat", repeat).put("shuffle", shuffle).put("seekNonce", syncSeekNonce)
         syncInflight = true
         syncWorker.execute {
             val result = runCatching {
@@ -383,7 +420,7 @@ class CryonPlaybackService : MediaSessionService() {
             }
             progressHandler.post {
                 syncInflight = false
-                if (syncConfig?.optString("baseUrl") != config.optString("baseUrl")) return@post
+                if (uiForeground || syncConfig?.optString("baseUrl") != config.optString("baseUrl")) return@post
                 val incoming = result.getOrNull() ?: return@post
                 if (incoming.optLong("revision") <= syncRevision) return@post
                 syncRevision = incoming.optLong("revision")
@@ -442,10 +479,42 @@ class CryonPlaybackService : MediaSessionService() {
     private fun backendTrack(track: JSONObject): JSONObject {
         val id = track.optString("id")
         return JSONObject().put("id", id.substringAfter(':')).put("service", track.optString("source", id.substringBefore(':')))
-            .put("title", track.optString("title")).put("artists", track.optJSONArray("artists") ?: JSONArray().put(track.optString("artist")))
+            .put("title", track.optString("title")).put("artists", track.optJSONArray("artists") ?: JSONArray().put(track.optString("primaryArtist").ifBlank { track.optString("artist") }))
             .put("album", track.optString("album")).put("durationMs", track.optLong("duration") * 1000)
             .put("artworkUrl", track.optString("coverUrl")).put("playableKind", track.optString("playableKind", "stream"))
             .put("externalUrl", track.optString("externalUrl"))
+    }
+
+    private fun feedbackKey(track: JSONObject): String =
+        (track.optString("primaryArtist").ifBlank { track.optString("artist") }.trim() + "|" + track.optString("title").trim()).lowercase(java.util.Locale.ROOT)
+
+    private fun rateCurrent(score: Int) {
+        val track = queue.getOrNull(queueIndex)?.takeIf { it.optString("id") == currentTrackId } ?: return
+        val trackCopy = JSONObject(track.toString())
+        if (score == -1) {
+            rejectedTracks.add(feedbackKey(track))
+            generation++
+            preloadingNext = false
+            radioLoading = false
+            val p = player ?: return
+            if (p.mediaItemCount > p.currentMediaItemIndex + 1) p.removeMediaItems(p.currentMediaItemIndex + 1, p.mediaItemCount)
+            for (index in queue.lastIndex downTo queueIndex + 1) {
+                if (rejectedTracks.contains(feedbackKey(queue[index]))) queue.removeAt(index)
+            }
+            skipNext()
+        }
+        feedbackWorker.execute {
+            val result = runCatching { request("/v1/library/feedback", JSONObject().put("track", backendTrack(trackCopy)).put("score", score)) }
+            progressHandler.post {
+                if (player == null) return@post
+                if (result.isSuccess) {
+                    queue.filter { it.optString("id") == trackCopy.optString("id") }.forEach { it.put("liked", score == 1) }
+                    publishState(stateFor(requireNotNull(player)))
+                } else {
+                    android.widget.Toast.makeText(this, "Не удалось сохранить оценку. Повторите ещё раз.", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     private fun recordCurrentHistory() {
@@ -506,6 +575,7 @@ class CryonPlaybackService : MediaSessionService() {
         return MediaItem.Builder().setMediaId(track.getString("id")).setUri(uri)
             .setMimeType(resolved.optString("mimeType").takeIf { it.isNotBlank() })
             .setMediaMetadata(MediaMetadata.Builder().setTitle(track.optString("title")).setArtist(track.optString("artist"))
+                .setDurationMs((track.optLong("duration") * 1000).takeIf { it > 0 })
                 .setArtworkUri(track.optString("coverUrl").takeIf { it.isNotBlank() }?.let(android.net.Uri::parse)).build()).build()
     }
 
@@ -614,7 +684,7 @@ class CryonPlaybackService : MediaSessionService() {
                 val candidates = result.getOrNull()?.optJSONArray("tracks") ?: JSONArray()
                 val known = queue.map { it.optString("id") }.toMutableSet()
                 val fresh = (0 until candidates.length()).map { frontendTrack(candidates.getJSONObject(it)) }
-                    .filter { !recentIds.contains(it.optString("id")) && known.add(it.optString("id")) }.take(12)
+                    .filter { !rejectedTracks.contains(feedbackKey(it)) && !recentIds.contains(it.optString("id")) && known.add(it.optString("id")) }.take(12)
                 if (fresh.isEmpty()) { radioAnchorOffset++; retryRadioAt = System.currentTimeMillis() + 5000; return@post }
                 radioAnchorOffset = 0
                 if (queueIndex > 100) { val remove = queueIndex - 100; repeat(remove) { queue.removeAt(0) }; queueIndex = 100 }
@@ -634,10 +704,14 @@ class CryonPlaybackService : MediaSessionService() {
         const val ACTION_QUEUE = "ru.cryon.app.action.QUEUE"
         const val ACTION_SYNC = "ru.cryon.app.action.SYNC"
         const val EXTRA_QUEUE = "queue"
+        const val EXTRA_PAYLOAD = "payload"
+        const val EXTRA_COMMAND_ID = "commandId"
         const val ACTION_STATE = "ru.cryon.app.action.PLAYBACK_STATE"
         const val ACTION_REMOTE_COMMAND = "ru.cryon.app.action.REMOTE_COMMAND"
         const val ACTION_PREVIOUS = "ru.cryon.app.action.PREVIOUS"
         const val ACTION_NEXT = "ru.cryon.app.action.NEXT"
+        const val ACTION_LIKE = "ru.cryon.app.action.LIKE"
+        const val ACTION_DISLIKE = "ru.cryon.app.action.DISLIKE"
         const val EXTRA_STREAM_URL = "streamUrl"
         const val EXTRA_MIME_TYPE = "mimeType"
         const val EXTRA_TRACK_ID = "trackId"
@@ -660,6 +734,7 @@ class CryonPlaybackService : MediaSessionService() {
         private const val CACHE_SIZE_BYTES = 256L * 1024L * 1024L
         private const val PROGRESS_INTERVAL_MS = 500L
         @Volatile var latestState: String = ""
+        @Volatile var uiForeground: Boolean = false
 
         fun command(context: Context, action: String, configure: Intent.() -> Unit = {}) {
             val intent = Intent(context, CryonPlaybackService::class.java).setAction(action).apply(configure)

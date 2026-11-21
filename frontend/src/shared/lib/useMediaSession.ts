@@ -56,7 +56,7 @@ export function useMediaSession(): void {
   // Обработчики действий ОС — регистрируем один раз. Внутри читаем актуальный
   // стор через getState(), поэтому пересоздавать их при смене трека не нужно.
   useEffect(() => {
-    if (!("mediaSession" in navigator)) return;
+    if (hasNativeAndroidPlayer() || !("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
     const store = () => usePlayerStore.getState();
     const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
@@ -112,6 +112,7 @@ export function useMediaSession(): void {
   useEffect(() => {
     const nativeBridge = (window as Window & { CryonAndroid?: { updateNowPlaying?: (title: string, artist: string, playing: boolean, artworkUrl: string, duration: number, position: number, quality: string, liked: boolean, radio: boolean) => void; clearNowPlaying?: () => void } }).CryonAndroid;
     const nativePlayerOwnsSession = hasNativeAndroidPlayer();
+    if (nativePlayerOwnsSession) return;
     if (!track) {
       if (!nativePlayerOwnsSession) nativeBridge?.clearNowPlaying?.();
       if ("mediaSession" in navigator) navigator.mediaSession.metadata = null;
@@ -133,11 +134,11 @@ export function useMediaSession(): void {
       if (track) nativeBridge?.updateNowPlaying?.(track.title, track.artist, isPlaying, coverUrl ?? "", duration, progress, track.quality ?? "", Boolean(track.liked), radio);
       else nativeBridge?.clearNowPlaying?.();
     }
-    if (!("mediaSession" in navigator)) return;
+    if (hasNativeAndroidPlayer() || !("mediaSession" in navigator)) return;
     navigator.mediaSession.playbackState = track ? (isPlaying ? "playing" : "paused") : "none";
   }, [isPlaying, track, coverUrl, radio, progress, duration]);
   useEffect(() => {
-    if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
+    if (hasNativeAndroidPlayer() || !("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
     const update = () => {
       const s = usePlayerStore.getState();
       const duration = s.effectiveDuration();

@@ -201,7 +201,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private inner class AndroidBridge {
+    private inner class AndroidBridge : NativePlaybackBridge(this@MainActivity) {
         @JavascriptInterface
         fun copyYandexCode(code: String) {
             if (!code.matches(Regex("[A-Za-z0-9-]{1,32}"))) return
@@ -294,57 +294,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun nativePlay(streamUrl: String, trackId: String, title: String, artist: String, artworkUrl: String, durationMs: Long, autoPlay: Boolean, startPositionMs: Long, mimeType: String) {
-            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_PLAY) {
-                putExtra(CryonPlaybackService.EXTRA_STREAM_URL, streamUrl)
-                putExtra(CryonPlaybackService.EXTRA_TRACK_ID, trackId)
-                putExtra(CryonPlaybackService.EXTRA_TITLE, title)
-                putExtra(CryonPlaybackService.EXTRA_ARTIST, artist)
-                putExtra(CryonPlaybackService.EXTRA_ARTWORK_URL, artworkUrl)
-                putExtra(CryonPlaybackService.EXTRA_DURATION_MS, durationMs)
-                putExtra(CryonPlaybackService.EXTRA_AUTO_PLAY, autoPlay)
-                putExtra(CryonPlaybackService.EXTRA_POSITION_MS, startPositionMs.coerceAtLeast(0L))
-                putExtra(CryonPlaybackService.EXTRA_MIME_TYPE, mimeType)
-            }
-        }
-
-        @JavascriptInterface
-        fun nativePause() { CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_PAUSE) }
-
-        @JavascriptInterface
-        fun nativeSetQueue(json: String) {
-            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_QUEUE) { putExtra(CryonPlaybackService.EXTRA_QUEUE, json) }
-        }
-
-        @JavascriptInterface
-        fun nativeGetState(): String = CryonPlaybackService.latestState
-
-        @JavascriptInterface
-        fun nativeConfigureSync(json: String) {
-            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_SYNC) { putExtra(CryonPlaybackService.EXTRA_QUEUE, json) }
-        }
-
-        @JavascriptInterface
-        fun nativeResume() { CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_RESUME) }
-
-        @JavascriptInterface
-        fun nativeStop() { CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_STOP) }
-
-        @JavascriptInterface
-        fun nativeSeek(positionMs: Long) {
-            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_SEEK) {
-                putExtra(CryonPlaybackService.EXTRA_POSITION_MS, positionMs)
-            }
-        }
-
-        @JavascriptInterface
-        fun nativeSetVolume(volume: Int) {
-            CryonPlaybackService.command(this@MainActivity, CryonPlaybackService.ACTION_VOLUME) {
-                putExtra(CryonPlaybackService.EXTRA_VOLUME, volume)
-            }
-        }
-
-        @JavascriptInterface
         fun scanDeviceMusic(): String {
             if (!hasMediaPermission()) {
                 runOnUiThread {
@@ -419,13 +368,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun dispatchNativePlaybackState(intent: Intent) {
         if (!this::webView.isInitialized) return
-        val payload = CryonPlaybackService.latestState.takeIf { it.isNotBlank() }?.let(::JSONObject) ?: JSONObject()
-            .put("trackId", intent.getStringExtra(CryonPlaybackService.EXTRA_TRACK_ID).orEmpty())
-            .put("state", intent.getStringExtra(CryonPlaybackService.EXTRA_STATE).orEmpty())
-            .put("playing", intent.getBooleanExtra(CryonPlaybackService.EXTRA_PLAYING, false))
-            .put("positionMs", intent.getLongExtra(CryonPlaybackService.EXTRA_POSITION_MS, 0L))
-            .put("durationMs", intent.getLongExtra(CryonPlaybackService.EXTRA_DURATION_MS, 0L))
-            .put("error", intent.getStringExtra(CryonPlaybackService.EXTRA_ERROR).orEmpty())
+        val payload = intent.getStringExtra(CryonPlaybackService.EXTRA_PAYLOAD) ?: return
         runOnUiThread {
             if (this::webView.isInitialized) {
                 webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('cryon:native-playback', { detail: $payload }))", null)
@@ -637,8 +580,14 @@ class MainActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onPause() {
+        CryonPlaybackService.uiForeground = false
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        CryonPlaybackService.uiForeground = true
         if (pendingUpdatePath != null && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls())) {
             openUpdateInstaller()
         }

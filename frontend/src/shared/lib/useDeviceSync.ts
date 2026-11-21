@@ -73,7 +73,7 @@ export function startDeviceSync(): () => void {
       radio: s.radio,
       repeat: s.repeat,
       shuffle: s.shuffle,
-      seekNonce: s.seekNonce,
+      seekNonce: s.seekRevision,
       playbackDeviceId: s.playbackDeviceId,
     };
   };
@@ -81,7 +81,7 @@ export function startDeviceSync(): () => void {
   let pendingIntent:
     { desired: ReturnType<typeof snapshot>; baseline: ReturnType<typeof snapshot> } | undefined;
   const tick = async () => {
-    if (busy || stopped) return;
+    if (busy || stopped || document.visibilityState === "hidden") return;
     busy = true;
     try {
       const s = usePlayerStore.getState();
@@ -118,6 +118,10 @@ export function startDeviceSync(): () => void {
         releaseDeviceId?: string;
       };
       if (stopped) return;
+      // A user command may have arrived while the GET/PUT was in flight.
+      // Rebase that intent over the reply instead of replacing it with it.
+      if (initialized && lastSignature && signature() !== lastSignature && !pendingIntent)
+        pendingIntent = { desired: snapshot(), baseline: JSON.parse(lastSignature) as ReturnType<typeof snapshot> };
       activeOwner = incoming.activePlaybackDeviceId ?? incoming.playbackDeviceId ?? "host";
       releaseDeviceId = incoming.releaseDeviceId || "";
       if (
@@ -176,6 +180,8 @@ export function startDeviceSync(): () => void {
           patch.seekTarget = desired.progress;
           patch.progress = desired.progress;
           patch.seekNonce = usePlayerStore.getState().seekNonce + 1;
+          patch.seekRevision = usePlayerStore.getState().seekRevision + 1;
+          patch.remoteSeekNonce = patch.seekRevision;
         }
         applying = true;
         usePlayerStore.setState(patch);
@@ -225,8 +231,13 @@ export function startDeviceSync(): () => void {
       busy = false;
     }
   };
-  const off = usePlayerStore.subscribe(() => {
-    if (!applying) void tick();
+  const off = usePlayerStore.subscribe((state, previous) => {
+    // Position/duration observations are rendered locally. Only semantic
+    // changes request an immediate sync; position uses the timed heartbeat.
+    if (!applying && (state.queue !== previous.queue || state.currentIndex !== previous.currentIndex ||
+      state.isPlaying !== previous.isPlaying || state.volume !== previous.volume || state.muted !== previous.muted ||
+      state.radio !== previous.radio || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle ||
+      state.seekRevision !== previous.seekRevision || state.playbackDeviceId !== previous.playbackDeviceId)) void tick();
   });
   const timer = window.setInterval(() => {
     void tick();

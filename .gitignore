@@ -47,6 +47,7 @@ android/.gradle/
 android/local.properties
 android/app/libs/*.aar
 android/app/libs/*.jar
+android/app/src/debug/assets/foreground-test/
 
 # Мобильный пакет: dist вкладывается при сборке (копия frontend/dist)
 mobile/dist/

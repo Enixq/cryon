@@ -13,6 +13,32 @@ afterEach(() => {
   delete (window as Window & { __CRYON_BASE__?: string }).__CRYON_BASE__;
 });
 describe("device ownership and transport", () => {
+  it("does not sync each position observation or echo a received seek", async () => {
+    vi.useFakeTimers();
+    localStorage.setItem("cryon.device.id", "pc");
+    setConfiguredBaseUrl("");
+    (window as Window & { __CRYON_BASE__?: string }).__CRYON_BASE__ = "http://127.0.0.1:12345";
+    const track = { id: "youtube:0", title: "Song", artist: "Artist", source: "youtube" as const, duration: 180, accent: "violet" as const };
+    usePlayerStore.setState({ queue: [track], currentIndex: 0, isPlaying: true, playbackOnThisDevice: true, seekRevision: 0, remoteSeekNonce: 0 });
+    let shared = { deviceId: "phone", revision: 1, queue: [track], currentIndex: 0, isPlaying: true, progress: 20, volume: 68, muted: false, playbackDeviceId: "host", seekNonce: 1 };
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") { shared = { ...JSON.parse(String(init.body)), revision: shared.revision + 1 }; return { ok: true, json: async () => ({ revision: shared.revision }) }; }
+      return { ok: true, json: async () => shared };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    stop = startDeviceSync();
+    await vi.advanceTimersByTimeAsync(0);
+    const count = fetchMock.mock.calls.length;
+    const engineSeek = usePlayerStore.getState().seekNonce;
+    for (let i = 0; i < 30; i++) {
+      usePlayerStore.getState().setEnginePosition(20 + i / 100);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(count);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(shared.seekNonce).toBe(1);
+    expect(usePlayerStore.getState().seekNonce).toBe(engineSeek);
+  });
   it("retries next when a host heartbeat wins the revision race", async () => {
     vi.useFakeTimers();
     localStorage.setItem("cryon.device.id", "phone");

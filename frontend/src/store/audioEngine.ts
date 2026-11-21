@@ -77,6 +77,8 @@ export function useAudioEngine() {
   const fadingOutRef = useRef<boolean>(false);
   const nativeEndHandledRef = useRef<string | null>(null);
   const pendingNativeTrackRef = useRef<string | null>(null);
+  const observingNativeRef = useRef(false);
+  const nativeCommandRef = useRef(0);
   // Защита от повторного запроса одной и той же неработающей версии и
   // позиция, с которой нужно продолжить на найденной альтернативе.
   const fallbackSessionRef = useRef(new PlaybackFallbackSession());
@@ -108,6 +110,20 @@ export function useAudioEngine() {
   const normalize = usePlaybackSettingsStore((s) => s.normalizeVolume);
 
   const track = playbackOnThisDevice ? queue[currentIndex] : undefined;
+  const trackId = track?.id;
+
+  // Send user intent synchronously. Native observations must never be echoed
+  // as commands, and delayed broadcasts cannot undo a newer user command.
+  useEffect(() => {
+    if (!hasNativeAndroidPlayer()) return;
+    return usePlayerStore.subscribe((state, previous) => {
+      if (observingNativeRef.current || !state.playbackOnThisDevice) return;
+      if (state.currentTrack()?.id !== previous.currentTrack()?.id)
+        pendingNativeTrackRef.current = state.currentTrack()?.id ?? null;
+      if (state.isPlaying !== previous.isPlaying)
+        nativeCommandRef.current = state.isPlaying ? resumeNativeAndroidPlayer() : pauseNativeAndroidPlayer();
+    });
+  }, []);
 
   useEffect(() => {
     if (!hasNativeAndroidQueue() || !playbackOnThisDevice) return;
@@ -210,17 +226,24 @@ export function useAudioEngine() {
   useEffect(() => {
     if (!hasNativeAndroidPlayer()) return;
     return subscribeNativeAndroidPlayback((state) => {
+      if (state.commandId !== undefined && state.commandId < nativeCommandRef.current) return;
+      observingNativeRef.current = true;
+      try {
       let store = usePlayerStore.getState();
       if (state.playbackOnThisDevice === false) { usePlayerStore.setState({ playbackOnThisDevice: false }); return; }
       if (!store.playbackOnThisDevice) return;
       if (pendingNativeTrackRef.current && pendingNativeTrackRef.current !== state.trackId) return;
-      if (pendingNativeTrackRef.current === state.trackId) pendingNativeTrackRef.current = null;
+      if (pendingNativeTrackRef.current === state.trackId) {
+        // Queue/configuration frames can refer to this id before PLAY applies.
+        if (state.state !== "ready" && state.state !== "error") return;
+        pendingNativeTrackRef.current = null;
+      }
       if (hasNativeAndroidQueue() && state.queue && state.currentIndex !== undefined && state.queue[state.currentIndex]?.id === state.trackId) {
         const switched = store.currentTrack()?.id !== state.trackId;
         if (switched && store.radio && store.currentTrack()) recordRadioSignal(store.currentTrack()!, "completed");
         loadedTrackIdRef.current = state.trackId;
         const queueChanged = JSON.stringify(store.queue) !== JSON.stringify(state.queue);
-        usePlayerStore.setState({ ...(queueChanged ? { queue: state.queue } : {}), currentIndex: state.currentIndex, isPlaying: state.autoPlay ?? state.playing, radio: state.radio ?? store.radio, ...(switched ? { engineDuration: 0 } : {}) });
+        usePlayerStore.setState({ ...(queueChanged ? { queue: state.queue } : {}), currentIndex: state.currentIndex, isPlaying: state.state === "error" ? store.isPlaying : state.autoPlay ?? state.playing, radio: state.radio ?? store.radio, ...(switched ? { engineDuration: 0 } : {}) });
         store = usePlayerStore.getState();
       }
       const current = store.currentTrack();
@@ -256,6 +279,7 @@ export function useAudioEngine() {
         loadedTrackIdRef.current = null;
         store.next();
       })();
+      } finally { observingNativeRef.current = false; }
     });
   }, [requestPlaybackFallback]);
 
@@ -433,7 +457,7 @@ export function useAudioEngine() {
     // звучать под ним.
     const wasMpv = playingViaMpvRef.current;
     playingViaMpvRef.current = false;
-    if (hasNativeAndroidPlayer()) stopNativeAndroidPlayer();
+    if (hasNativeAndroidPlayer()) nativeCommandRef.current = pauseNativeAndroidPlayer();
     const prevEl = audioRef.current;
     if (prevEl) {
       prevEl.pause();
@@ -508,7 +532,7 @@ export function useAudioEngine() {
         const state = usePlayerStore.getState();
         const startPositionSeconds = pendingSeekRef.current?.trackId === resolved.track.id ? pendingSeekRef.current.position : fallbackStartPositionRef.current.get(resolved.track.id) ?? 0;
         fallbackStartPositionRef.current.delete(resolved.track.id);
-        playNativeAndroidTrack(resolved.track, streamUrl, state.isPlaying, startPositionSeconds, resolved.mimeType);
+        nativeCommandRef.current = playNativeAndroidTrack(resolved.track, streamUrl, state.isPlaying, startPositionSeconds, resolved.mimeType);
         setNativeAndroidPlayerVolume(state.muted ? 0 : state.volume);
         setEnginePosition(startPositionSeconds);
         return;
@@ -630,15 +654,13 @@ export function useAudioEngine() {
     return () => {
       cancelled = true;
     };
-  }, [track, requestPlaybackFallback]);
+  }, [trackId, requestPlaybackFallback]);
 
   // Пауза/воспроизведение.
   useEffect(() => {
     if (!track) return;
     (async () => {
       if (hasNativeAndroidPlayer()) {
-        if (isPlaying) resumeNativeAndroidPlayer();
-        else pauseNativeAndroidPlayer();
         return;
       }
       if (playingViaMpvRef.current) {
@@ -658,7 +680,7 @@ export function useAudioEngine() {
         el.pause();
       }
     })();
-  }, [isPlaying, track]);
+  }, [isPlaying, trackId]);
 
   // Громкость.
   useEffect(() => {

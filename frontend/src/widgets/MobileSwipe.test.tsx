@@ -44,4 +44,22 @@ describe("mobile player swipes", () => {
     fireEvent.pointerUp(coverButton, { clientX: 120, clientY: 103, pointerId: 1 });
     expect(usePlayerStore.getState().currentTrack()?.id).toBe("third");
   });
+
+  it("previews touch seeking and sends one seek when the thumb is released", () => {
+    class Pointer extends MouseEvent { pointerId = 1; }
+    vi.stubGlobal("PointerEvent", Pointer);
+    usePlayerStore.setState({ queue, currentIndex: 1, isPlaying: true, progress: 40 });
+    const initial = usePlayerStore.getState().seekNonce;
+    const view = render(<MemoryRouter><MobileNowPlaying /></MemoryRouter>);
+    const slider = screen.getByRole("slider", { name: "Перемотка воспроизведения" });
+    vi.spyOn(slider, "getBoundingClientRect").mockReturnValue({ left: 0, width: 180 } as DOMRect);
+    fireEvent.pointerDown(slider, { clientX: 40, button: 0 });
+    fireEvent.pointerMove(slider, { clientX: 100 });
+    expect(usePlayerStore.getState().seekNonce).toBe(initial);
+    expect(slider.getAttribute("aria-valuenow")).toBe("100");
+    fireEvent.pointerUp(slider, { clientX: 120 });
+    expect(usePlayerStore.getState().seekNonce).toBe(initial + 1);
+    expect(usePlayerStore.getState().seekTarget).toBe(120);
+    view.unmount();
+  });
 });

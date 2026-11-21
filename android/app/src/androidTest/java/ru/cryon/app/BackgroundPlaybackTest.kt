@@ -1,6 +1,14 @@
 package ru.cryon.app
 
 import android.content.Intent
+import android.content.ComponentName
+import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import androidx.media3.session.SessionCommand
+import android.os.Bundle
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Test
@@ -116,27 +124,113 @@ class BackgroundPlaybackTest {
         }
     }
 
-    private class Fixture : AutoCloseable {
+    @Test fun foregroundWebViewDoesNotEchoObservationsAndKeepsUserCommands() {
+        Fixture(30).use { fixture ->
+            var activity: PlaybackTestActivity? = null
+            try {
+                command(CryonPlaybackService.ACTION_STOP)
+                val tracks = JSONArray().put(fixture.track(0)).put(fixture.track(1).put("source", "soundcloud").put("id", "soundcloud:test-1"))
+                val launch = Intent(context, PlaybackTestActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra("testBase", fixture.base).putExtra("testQueue", tracks.toString())
+                activity = instrumentation.startActivitySync(launch) as PlaybackTestActivity
+                val foreground = activity
+                fun js(script: String): String {
+                    val latch = CountDownLatch(1)
+                    var result = ""
+                    instrumentation.runOnMainSync { foreground.webView!!.evaluateJavascript(script) { result = it; latch.countDown() } }
+                    check(latch.await(5, TimeUnit.SECONDS)) { "WebView did not respond" }
+                    return result
+                }
+                fun counts() = JSONObject(org.json.JSONTokener(js("JSON.stringify(window.testCommands)")).nextValue() as String)
+                try { waitFor { state().optBoolean("playing") } }
+                catch (error: Exception) { throw IllegalStateException("Foreground start failed: " + js("JSON.stringify({commands:window.testCommands,state:window.testPlayer?.getState(),body:document.body.innerText})"), error) }
+                Thread.sleep(3500)
+                check(state().optBoolean("playing") && state().optLong("positionMs") > 2000) { "Foreground playback stalled: ${state()}" }
+                val initial = counts()
+                check(initial.optInt("play") == 1 && initial.optInt("pause") <= 1 && initial.optInt("resume") <= 1) { "UI echoed state: $initial" }
+                js("window.testPlayer.getState().pause()")
+                waitFor { !state().optBoolean("playing") && !state().optBoolean("autoPlay") }
+                Thread.sleep(1200)
+                check(!state().optBoolean("playing")) { "Pause was overwritten" }
+                js("window.testPlayer.getState().play()")
+                waitFor { state().optBoolean("playing") }
+                js("window.testPlayer.getState().seek(12)")
+                waitFor { state().optLong("positionMs") >= 12000 }
+                js("window.testPlayer.getState().next()")
+                waitFor { state().optString("trackId") == "soundcloud:test-1" && state().optBoolean("playing") }
+                Thread.sleep(1500)
+                check(state().optBoolean("playing")) { "Source switch lost autoplay" }
+                val final = counts()
+                check(final.optInt("play") == 2 && final.optInt("pause") <= 3 && final.optInt("resume") <= 2) { "Transport oscillated: $final" }
+            } finally {
+                command(CryonPlaybackService.ACTION_STOP)
+                instrumentation.runOnMainSync { activity?.finish() }
+                CryonPlaybackService.uiForeground = false
+            }
+        }
+    }
+
+    @Test fun notificationControllerCanSeekAndRateAfterConnectingBeforeTrackLoad() {
+        Fixture(30).use { fixture ->
+            val activity = instrumentation.startActivitySync(Intent(context, PlaybackTestActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            var controller: MediaController? = null
+            try {
+                command(CryonPlaybackService.ACTION_STOP)
+                var future: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
+                instrumentation.runOnMainSync { future = MediaController.Builder(context, SessionToken(context, ComponentName(context, CryonPlaybackService::class.java))).buildAsync() }
+                controller = future!!.get(10, TimeUnit.SECONDS)
+                val remote = controller
+                val tracks = JSONArray().put(fixture.track(0)).put(fixture.track(1))
+                command(CryonPlaybackService.ACTION_QUEUE) { putExtra(CryonPlaybackService.EXTRA_QUEUE, JSONObject().put("queue", tracks).put("currentIndex", 0).put("serverBaseUrl", fixture.base).toString()) }
+                command(CryonPlaybackService.ACTION_PLAY) {
+                    putExtra(CryonPlaybackService.EXTRA_TRACK_ID, "youtube:test-0")
+                    putExtra(CryonPlaybackService.EXTRA_STREAM_URL, fixture.base + "/stream/first")
+                    putExtra(CryonPlaybackService.EXTRA_AUTO_PLAY, true)
+                }
+                waitFor { state().optBoolean("playing") }
+                instrumentation.runOnMainSync {
+                    check(remote.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)) { "Notification seek remained disabled" }
+                    remote.pause()
+                    remote.seekTo(12000)
+                    remote.sendCustomCommand(SessionCommand(CryonPlaybackService.ACTION_LIKE, Bundle.EMPTY), Bundle.EMPTY)
+                }
+                waitFor { state().optLong("positionMs") >= 12000 && !state().optBoolean("playing") && fixture.feedbackScores.contains(1) }
+                instrumentation.runOnMainSync { remote.sendCustomCommand(SessionCommand(CryonPlaybackService.ACTION_DISLIKE, Bundle.EMPTY), Bundle.EMPTY) }
+                waitFor { fixture.feedbackScores.contains(-1) && state().optString("trackId") == "youtube:test-1" && state().optBoolean("playing") }
+                instrumentation.runOnMainSync {
+                    val manager = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                    manager.appTasks.forEach { it.finishAndRemoveTask() }
+                }
+                waitFor { !state().optBoolean("playing") && state().optString("trackId").isBlank() }
+            } finally {
+                instrumentation.runOnMainSync { controller?.release(); activity.finish() }
+                command(CryonPlaybackService.ACTION_STOP)
+            }
+        }
+    }
+
+    private class Fixture(private val durationSeconds: Int = 2) : AutoCloseable {
         private val socket = ServerSocket(0)
         private val executor = Executors.newCachedThreadPool()
         val base = "http://127.0.0.1:${socket.localPort}"
         val relatedRequests = AtomicInteger()
         val releaseRequests = AtomicInteger()
         val historyRequests = AtomicInteger()
+        val feedbackScores = java.util.concurrent.CopyOnWriteArrayList<Int>()
         @Volatile var resolveDelayMs = 0L
         private val nextTrack = AtomicInteger(2)
         private var shared = JSONObject()
-        private val wav = ByteBuffer.allocate(32_044).order(ByteOrder.LITTLE_ENDIAN).apply {
-            put("RIFF".toByteArray()); putInt(32_036); put("WAVEfmt ".toByteArray()); putInt(16)
+        private val wav = ByteBuffer.allocate(durationSeconds * 16_000 + 44).order(ByteOrder.LITTLE_ENDIAN).apply {
+            put("RIFF".toByteArray()); putInt(durationSeconds * 16_000 + 36); put("WAVEfmt ".toByteArray()); putInt(16)
             putShort(1); putShort(1); putInt(8000); putInt(16000); putShort(2); putShort(16)
-            put("data".toByteArray()); putInt(32_000); repeat(16_000) { putShort(0) }
+            put("data".toByteArray()); putInt(durationSeconds * 16_000); repeat(durationSeconds * 8000) { putShort(0) }
         }.array()
         init {
             executor.execute {
                 while (!socket.isClosed) {
                     val peer = runCatching { socket.accept() }.getOrNull() ?: break
                     executor.execute {
-                        peer.use {
+                        runCatching { peer.use {
                             val input = peer.getInputStream().buffered()
                             fun line(): String { val bytes = mutableListOf<Byte>(); while (true) { val b = input.read(); if (b < 0 || b == 10) break; if (b != 13) bytes.add(b.toByte()) }; return bytes.toByteArray().toString(Charsets.UTF_8) }
                             val request = line().split(' ')
@@ -148,6 +242,8 @@ class BackgroundPlaybackTest {
                             val json = if (body.isEmpty()) JSONObject() else JSONObject(body.toString(Charsets.UTF_8))
                             val path = request.getOrElse(1) { "" }
                             val response: ByteArray = when {
+                                request[0] == "OPTIONS" -> "{}".toByteArray()
+                                path == "/v1/library/feedback" -> { feedbackScores.add(json.optInt("score")); "{}".toByteArray() }
                                 path == "/v1/library/history" -> { historyRequests.incrementAndGet(); "{}".toByteArray() }
                                 path.startsWith("/stream/") -> wav
                                 path == "/v1/playback/resolve" -> {
@@ -166,15 +262,15 @@ class BackgroundPlaybackTest {
                                 else -> "{}".toByteArray()
                             }
                             peer.getOutputStream().apply {
-                                write("HTTP/1.1 200 OK\r\nContent-Length: ${response.size}\r\nContent-Type: ${if (path.startsWith("/stream/")) "audio/wav" else "application/json"}\r\nConnection: close\r\n\r\n".toByteArray())
+                                write("HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\nAccess-Control-Allow-Methods: *\r\nContent-Length: ${response.size}\r\nContent-Type: ${if (path.startsWith("/stream/")) "audio/wav" else "application/json"}\r\nConnection: close\r\n\r\n".toByteArray())
                                 write(response); flush()
                             }
-                        }
+                        } }
                     }
                 }
             }
         }
-        fun track(id: Int) = JSONObject().put("id", "youtube:test-$id").put("source", "youtube").put("title", "Track $id").put("artist", "Artist").put("duration", 2).put("accent", "violet")
+        fun track(id: Int) = JSONObject().put("id", "youtube:test-$id").put("source", "youtube").put("title", "Track $id").put("artist", "Artist").put("duration", durationSeconds).put("accent", "violet")
         fun snapshot(queue: JSONArray, index: Int) = JSONObject().put("queue", queue).put("currentIndex", index).put("playbackDeviceId", "phone").put("isPlaying", true).put("progress", 0).put("volume", 50)
         fun remoteChange(queue: JSONArray, index: Int, playing: Boolean) = synchronized(this) {
             shared = snapshot(queue, index).put("deviceId", "desktop").put("revision", shared.optLong("revision") + 1).put("isPlaying", playing)

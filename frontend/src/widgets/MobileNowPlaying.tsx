@@ -71,6 +71,8 @@ export function MobileNowPlaying() {
   const favoriteIds = useFavoriteIds();
   const feedback = useRecoFeedback();
   const isFavorite = track ? favoriteIds.has(track.id) : false;
+  const [seekPreview, setSeekPreview] = useState<{ id: string; value: number } | null>(null);
+  const displayProgress = seekPreview?.id === track?.id ? seekPreview!.value : progress;
   const [showQueue, setShowQueue] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
   const lyrics = useLyrics(track);
@@ -284,9 +286,9 @@ export function MobileNowPlaying() {
 
           {/* Перемотка */}
           <div className={cn("mt-3 flex flex-col gap-1.5 sm:mt-4", (showQueue || showLyrics) && "hidden")} data-noswipe>
-            <Slider value={progress} max={duration || 100} onChange={seek} ariaLabel="Перемотка воспроизведения" />
+            <Slider key={track.id} value={displayProgress} max={duration || 100} visibleThumb onChange={(value) => setSeekPreview({ id: track.id, value })} onCommit={(value) => { seek(value); setSeekPreview(null); }} onCancel={() => setSeekPreview(null)} ariaLabel="Перемотка воспроизведения" />
             <div className="flex justify-between text-xs tabular-nums text-slate-400">
-              <span>{formatDuration(progress)}</span>
+              <span>{formatDuration(displayProgress)}</span>
               <span>{formatDuration(duration)}</span>
             </div>
           </div>

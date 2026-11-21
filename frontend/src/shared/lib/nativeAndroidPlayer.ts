@@ -12,15 +12,16 @@ export type NativePlaybackState = {
   autoPlay?: boolean;
   radio?: boolean;
   playbackOnThisDevice?: boolean;
+  commandId?: number;
 };
 
 type NativeAndroidBridge = {
   savePlaybackReport?: (report: string) => void;
   installUpdate?: () => void;
-  nativePlay?: (streamUrl: string, trackId: string, title: string, artist: string, artworkUrl: string, durationMs: number, autoPlay: boolean, startPositionMs: number, mimeType: string) => void;
-  nativePause?: () => void;
-  nativeResume?: () => void;
-  nativeStop?: () => void;
+  nativePlay?: (streamUrl: string, trackId: string, title: string, artist: string, artworkUrl: string, durationMs: number, autoPlay: boolean, startPositionMs: number, mimeType: string, commandId?: number) => void;
+  nativePause?: (commandId?: number) => void;
+  nativeResume?: (commandId?: number) => void;
+  nativeStop?: (commandId?: number) => void;
   nativeSeek?: (positionMs: number) => void;
   nativeSetVolume?: (volume: number) => void;
   nativeSetQueue?: (json: string) => void;
@@ -35,6 +36,8 @@ declare global {
 }
 
 const eventName = "cryon:native-playback";
+let lastCommandId = 0;
+function nextCommandId(): number { return lastCommandId = Math.max(Date.now() * 1000, lastCommandId + 1); }
 
 function bridge(): NativeAndroidBridge | undefined {
   return typeof window === "undefined" ? undefined : window.CryonAndroid;
@@ -48,7 +51,8 @@ export function hasNativeAndroidQueue(): boolean { return typeof bridge()?.nativ
 export function updateNativeAndroidQueue(state: object): void { bridge()?.nativeSetQueue?.(JSON.stringify(state)); }
 export function configureNativeAndroidSync(state: object): void { bridge()?.nativeConfigureSync?.(JSON.stringify(state)); }
 
-export function playNativeAndroidTrack(track: Track, streamUrl: string, autoPlay: boolean, startPositionSeconds = 0, mimeType = ""): void {
+export function playNativeAndroidTrack(track: Track, streamUrl: string, autoPlay: boolean, startPositionSeconds = 0, mimeType = ""): number {
+  const commandId = nextCommandId();
   bridge()?.nativePlay?.(
     streamUrl,
     track.id,
@@ -59,12 +63,14 @@ export function playNativeAndroidTrack(track: Track, streamUrl: string, autoPlay
     autoPlay,
     Math.max(0, Math.round(startPositionSeconds * 1000)),
     mimeType,
+    commandId,
   );
+  return commandId;
 }
 
-export function pauseNativeAndroidPlayer(): void { bridge()?.nativePause?.(); }
-export function resumeNativeAndroidPlayer(): void { bridge()?.nativeResume?.(); }
-export function stopNativeAndroidPlayer(): void { bridge()?.nativeStop?.(); }
+export function pauseNativeAndroidPlayer(): number { const id = nextCommandId(); bridge()?.nativePause?.(id); return id; }
+export function resumeNativeAndroidPlayer(): number { const id = nextCommandId(); bridge()?.nativeResume?.(id); return id; }
+export function stopNativeAndroidPlayer(): number { const id = nextCommandId(); bridge()?.nativeStop?.(id); return id; }
 export async function stopNativeAndroidPlayerAndWait(): Promise<void> {
   stopNativeAndroidPlayer();
   if (!bridge()?.nativeGetState) return;

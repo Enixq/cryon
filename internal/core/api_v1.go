@@ -37,6 +37,7 @@ func (a *App) APIHandler() http.Handler {
 	mux.HandleFunc("/v1/recommendations", a.handleAPIRecommendations)
 	mux.HandleFunc("/v1/recommendations/", a.handleAPIRecommendationByKind)
 	mux.HandleFunc("/v1/library/favorites", a.handleAPIFavorites)
+	mux.HandleFunc("/v1/library/feedback", a.handleAPILibraryFeedback)
 	mux.HandleFunc("/v1/library/history", a.handleAPIHistory)
 	mux.HandleFunc("/v1/library/local/tracks", a.handleAPILocalTracks)
 	mux.HandleFunc("/v1/library/local/folders", a.handleAPILocalFolders)
@@ -424,6 +425,59 @@ func (a *App) handleAPIRecommendationByKind(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeAPITracks(w, tracks)
+}
+
+// Native notification actions use the same durable feedback and library as UI.
+func (a *App) handleAPILibraryFeedback(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		state, err := a.RecoFeedbackState()
+		if err != nil {
+			writeAPIAppError(w, err)
+			return
+		}
+		writeAPIJSON(w, http.StatusOK, state)
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "требуется GET или POST")
+		return
+	}
+	var req struct {
+		Track domain.Track `json:"track"`
+		Score int          `json:"score"`
+	}
+	if err := decodeAPIJSON(w, r, &req); err != nil {
+		return
+	}
+	if err := validateAPITrack(req.Track); err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Score < -1 || req.Score > 1 {
+		writeAPIError(w, http.StatusBadRequest, "некорректная оценка")
+		return
+	}
+	if req.Score == 1 {
+		if err := a.AddFavorite(req.Track); err != nil {
+			writeAPIAppError(w, err)
+			return
+		}
+	} else {
+		if err := a.RemoveFavorite(string(req.Track.Service), req.Track.ID); err != nil {
+			writeAPIAppError(w, err)
+			return
+		}
+	}
+	artist := strings.Join(req.Track.Artists, ", ")
+	if len(req.Track.Artists) > 0 {
+		artist = req.Track.Artists[0]
+	}
+	state, err := a.SetRecoFeedback(artist, req.Track.Title, req.Score)
+	if err != nil {
+		writeAPIAppError(w, err)
+		return
+	}
+	writeAPIJSON(w, http.StatusOK, state)
 }
 
 func (a *App) handleAPIFavorites(w http.ResponseWriter, r *http.Request) {

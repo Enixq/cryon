@@ -30,6 +30,35 @@ vi.mock("../shared/api/client", async (importOriginal) => ({
 const track = (id: string): Track => ({ id, source: id.split(":")[0] as Track["source"], title: "Song", artist: "Artist", duration: 180, accent: "violet" });
 
 describe("Android playback fallback", () => {
+  it("does not echo foreground metadata updates or let old broadcasts undo pause", async () => {
+    const first = track("youtube:first");
+    const nativePlay = vi.fn(), nativePause = vi.fn(), nativeResume = vi.fn();
+    window.CryonAndroid = { nativePlay, nativePause, nativeResume, nativeSetQueue: vi.fn(), nativeStop: vi.fn(), nativeSetVolume: vi.fn() };
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    vi.mocked(resolvePlaybackV1).mockImplementation(async item => ({ track: item, streamUrl: "/stream/audio" }));
+    usePlayerStore.setState({ queue: [first], currentIndex: 0, isPlaying: true, playbackOnThisDevice: true });
+    const { unmount } = renderHook(() => useAudioEngine());
+    await waitFor(() => expect(nativePlay).toHaveBeenCalledTimes(1));
+    const playAck = nativePlay.mock.calls[0][9];
+    const baseline = nativeResume.mock.calls.length;
+    for (let i = 0; i < 20; i++) act(() => window.dispatchEvent(new CustomEvent("cryon:native-playback", {
+      detail: { trackId: first.id, queue: [{ ...first, quality: `quality-${i}` }], currentIndex: 0, state: "ready", playing: true, autoPlay: true, commandId: playAck, positionMs: i * 500, durationMs: 180000 },
+    })));
+    expect(nativeResume).toHaveBeenCalledTimes(baseline);
+    act(() => usePlayerStore.getState().pause());
+    const pauseAck = nativePause.mock.calls[nativePause.mock.calls.length - 1][0];
+    act(() => window.dispatchEvent(new CustomEvent("cryon:native-playback", {
+      detail: { trackId: first.id, queue: [first], currentIndex: 0, state: "ready", playing: true, autoPlay: true, commandId: playAck, positionMs: 11000, durationMs: 180000 },
+    })));
+    expect(usePlayerStore.getState().isPlaying).toBe(false);
+    act(() => window.dispatchEvent(new CustomEvent("cryon:native-playback", {
+      detail: { trackId: first.id, queue: [first], currentIndex: 0, state: "ready", playing: false, autoPlay: false, commandId: pauseAck, positionMs: 11000, durationMs: 180000 },
+    })));
+    expect(usePlayerStore.getState().isPlaying).toBe(false);
+    expect(nativePlay).toHaveBeenCalledTimes(1);
+    unmount();
+  });
   beforeEach(() => {
     vi.mocked(playerBackendAvailable).mockResolvedValue(false);
     vi.mocked(playerSetEqualizer).mockResolvedValue(undefined);

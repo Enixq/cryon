@@ -38,6 +38,8 @@ interface PlayerState {
   /** Цель перемотки в секундах и счётчик запросов (для движка звука). */
   seekTarget: number;
   seekNonce: number;
+  /** Shared seek revision; engine observations never increment it. */
+  seekRevision: number;
 
   // Производные
   currentTrack: () => Track | undefined;
@@ -102,6 +104,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   radio: false,
   seekTarget: 0,
   seekNonce: 0,
+  seekRevision: 0,
   engineDuration: 0,
 
   currentTrack: () => {
@@ -163,7 +166,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const max = get().effectiveDuration();
     const target = clamp(seconds, 0, max);
     // Обновляем прогресс сразу для отзывчивости и сигналим движку звука.
-    set((s) => ({ progress: target, seekTarget: target, seekNonce: s.seekNonce + 1 }));
+    set((s) => ({ progress: target, seekTarget: target, seekNonce: s.seekNonce + 1, seekRevision: s.seekRevision + 1, remoteSeekNonce: s.seekRevision + 1 }));
   },
 
   // Позиция, пришедшая от реального движка воспроизведения.
@@ -304,6 +307,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       queue, currentIndex, isPlaying: state.isPlaying,
       progress: sameTrack && !needsSeek && old.playbackOnThisDevice ? old.progress : target,
       remoteSeekNonce: state.seekNonce ?? old.remoteSeekNonce,
+      seekRevision: state.seekNonce ?? old.seekRevision,
       volume: clamp(Math.round(state.volume), 0, 100), muted: state.muted,
       radio: state.radio ?? old.radio, repeat: state.repeat ?? old.repeat, shuffle: state.shuffle ?? old.shuffle,
       playbackOnThisDevice: state.playbackOnThisDevice ?? old.playbackOnThisDevice,
