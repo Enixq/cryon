@@ -10,6 +10,10 @@ import "github.com/wailsapp/wails/v2/pkg/runtime"
 // main). Тег `!android` исключает файл (и импорт Wails) из gomobile-сборки.
 type wailsHost struct{ app *App }
 
+func (h *wailsHost) SaveFile(name string) (string, error) {
+	return runtime.SaveFileDialog(h.app.ctx, runtime.SaveDialogOptions{Title: "Сохранить трек", DefaultFilename: name})
+}
+
 func (h *wailsHost) Emit(event string, data ...interface{}) {
 	runtime.EventsEmit(h.app.ctx, event, data...)
 }

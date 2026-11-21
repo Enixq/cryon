@@ -4,7 +4,12 @@ import { clamp } from "../shared/lib/format";
 import { initialQueue } from "../mocks/data";
 import { isWailsRuntime, addFavorite, removeFavorite } from "../shared/api/client";
 import { notify } from "./notificationStore";
-import { consumeRadioCompletion, isRadioArtistBlocked, recordRadioSignal, resetRadioSession } from "./radioSession";
+import {
+  consumeRadioCompletion,
+  isRadioArtistBlocked,
+  recordRadioSignal,
+  resetRadioSession,
+} from "./radioSession";
 
 // В настоящем приложении (Wails) очередь стартует пустой — иначе Play по
 // демо-трекам без реального источника даёт тишину. Мок-очередь нужна только
@@ -80,7 +85,20 @@ interface PlayerState {
   /** Добавить несколько треков в конец очереди (дедуп по id). Для радио. */
   appendToQueue: (tracks: Track[]) => void;
   /** Применить состояние очереди, пришедшее от сопряжённого устройства. */
-  replaceRemoteState: (state: { queue: Track[]; currentIndex: number; isPlaying: boolean; progress: number; volume: number; muted: boolean; radio?: boolean; repeat?: RepeatMode; shuffle?: boolean; seekNonce?: number; playbackOnThisDevice?: boolean; playbackDeviceId?: string }) => void;
+  replaceRemoteState: (state: {
+    queue: Track[];
+    currentIndex: number;
+    isPlaying: boolean;
+    progress: number;
+    volume: number;
+    muted: boolean;
+    radio?: boolean;
+    repeat?: RepeatMode;
+    shuffle?: boolean;
+    seekNonce?: number;
+    playbackOnThisDevice?: boolean;
+    playbackDeviceId?: string;
+  }) => void;
   /** Поставить трек следующим после текущего. */
   playNext: (track: Track) => void;
   /** Переключить лайк с сохранением в избранное (backend). */
@@ -112,7 +130,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     return queue[currentIndex];
   },
 
-  play: () => set({ isPlaying: true }),
+  play: () => set({ isPlaying: true, radioWaiting: false }),
   pause: () => set({ isPlaying: false, radioWaiting: false }),
   togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying, radioWaiting: false })),
 
@@ -122,7 +140,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     const current = queue[currentIndex];
     const duration = get().effectiveDuration();
     const completed = Boolean(get().radio && current && consumeRadioCompletion(current));
-    if (get().radio && current && !completed && get().isPlaying && (duration <= 0 || get().progress / duration < 0.5)) {
+    if (
+      get().radio &&
+      current &&
+      !completed &&
+      get().isPlaying &&
+      (duration <= 0 || get().progress / duration < 0.5)
+    ) {
       recordRadioSignal(current, "skipped");
     }
     if (repeat === "one") {
@@ -135,18 +159,37 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     let nextIndex: number;
     if (shuffle) {
-      const eligible = queue.map((track, index) => ({ track, index })).filter(({ track, index }) => index !== currentIndex && (!get().radio || (index > currentIndex && !isRadioArtistBlocked(track))));
-      if (eligible.length === 0) { if (get().radio) set({ isPlaying: false, radioWaiting: true }); return; }
+      const eligible = queue
+        .map((track, index) => ({ track, index }))
+        .filter(
+          ({ track, index }) =>
+            index !== currentIndex &&
+            (!get().radio || (index > currentIndex && !isRadioArtistBlocked(track))),
+        );
+      if (eligible.length === 0) {
+        if (get().radio) set({ isPlaying: false, radioWaiting: true });
+        return;
+      }
       nextIndex = eligible[Math.floor(Math.random() * eligible.length)].index;
     } else {
       nextIndex = currentIndex + 1;
-      while (get().radio && nextIndex < queue.length && isRadioArtistBlocked(queue[nextIndex])) nextIndex++;
+      while (get().radio && nextIndex < queue.length && isRadioArtistBlocked(queue[nextIndex]))
+        nextIndex++;
       if (nextIndex >= queue.length) {
         nextIndex = repeat === "all" && !get().radio ? 0 : currentIndex;
-        if (get().radio) { set({ isPlaying: false, radioWaiting: true }); return; }
+        if (get().radio) {
+          set({ isPlaying: false, radioWaiting: true });
+          return;
+        }
       }
     }
-    set({ currentIndex: nextIndex, progress: 0, isPlaying: true, engineDuration: 0, radioWaiting: false });
+    set({
+      currentIndex: nextIndex,
+      progress: 0,
+      isPlaying: true,
+      engineDuration: 0,
+      radioWaiting: false,
+    });
   },
 
   previous: () => {
@@ -159,14 +202,26 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
     const prevIndex = currentIndex - 1 < 0 ? 0 : currentIndex - 1;
-    set({ currentIndex: prevIndex, progress: 0, isPlaying: true, engineDuration: 0 });
+    set({
+      currentIndex: prevIndex,
+      progress: 0,
+      isPlaying: true,
+      engineDuration: 0,
+      radioWaiting: false,
+    });
   },
 
   seek: (seconds) => {
     const max = get().effectiveDuration();
     const target = clamp(seconds, 0, max);
     // Обновляем прогресс сразу для отзывчивости и сигналим движку звука.
-    set((s) => ({ progress: target, seekTarget: target, seekNonce: s.seekNonce + 1, seekRevision: s.seekRevision + 1, remoteSeekNonce: s.seekRevision + 1 }));
+    set((s) => ({
+      progress: target,
+      seekTarget: target,
+      seekNonce: s.seekNonce + 1,
+      seekRevision: s.seekRevision + 1,
+      remoteSeekNonce: s.seekRevision + 1,
+    }));
   },
 
   // Позиция, пришедшая от реального движка воспроизведения.
@@ -197,8 +252,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   setVolume: (value) => set({ volume: clamp(Math.round(value), 0, 100), muted: false }),
-  nudgeVolume: (delta) =>
-    set((s) => ({ volume: clamp(s.volume + delta, 0, 100), muted: false })),
+  nudgeVolume: (delta) => set((s) => ({ volume: clamp(s.volume + delta, 0, 100), muted: false })),
   toggleMute: () => set((s) => ({ muted: !s.muted })),
 
   toggleShuffle: () => set((s) => ({ shuffle: !s.shuffle })),
@@ -217,18 +271,35 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // прослушивание попадало в SQLite дважды: список истории показывал
     // дубли, а профиль вкусов удваивал вес артиста.
     if (queue && queue.length > 0) {
-      const index = Math.max(0, queue.findIndex((t) => t.id === track.id));
-      set({ queue, currentIndex: index, progress: 0, isPlaying: true, engineDuration: 0 });
+      const index = Math.max(
+        0,
+        queue.findIndex((t) => t.id === track.id),
+      );
+      set({
+        queue,
+        currentIndex: index,
+        progress: 0,
+        isPlaying: true,
+        engineDuration: 0,
+        radioWaiting: false,
+      });
       return;
     }
     // Добавляем в текущую очередь, если трека там ещё нет.
     const existing = get().queue.findIndex((t) => t.id === track.id);
     if (existing >= 0) {
-      set({ currentIndex: existing, progress: 0, isPlaying: true, engineDuration: 0 });
+      set({
+        currentIndex: existing,
+        progress: 0,
+        isPlaying: true,
+        engineDuration: 0,
+        radioWaiting: false,
+      });
     } else {
       set((s) => ({
         queue: [...s.queue, track],
         currentIndex: s.queue.length,
+        radioWaiting: false,
         progress: 0,
         isPlaying: true,
         engineDuration: 0,
@@ -239,7 +310,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   playAt: (index) => {
     const { queue } = get();
     if (index < 0 || index >= queue.length) return;
-    set({ currentIndex: index, progress: 0, isPlaying: true, engineDuration: 0 });
+    set({
+      currentIndex: index,
+      progress: 0,
+      isPlaying: true,
+      engineDuration: 0,
+      radioWaiting: false,
+    });
   },
 
   replaceCurrentTrack: (track) =>
@@ -264,7 +341,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     let nextIndex = currentIndex;
     if (idx < currentIndex) nextIndex = currentIndex - 1;
     if (idx === currentIndex) nextIndex = clamp(currentIndex, 0, Math.max(0, nextQueue.length - 1));
-    set({ queue: nextQueue, currentIndex: nextIndex, engineDuration: idx === currentIndex ? 0 : get().engineDuration });
+    set({
+      queue: nextQueue,
+      currentIndex: nextIndex,
+      engineDuration: idx === currentIndex ? 0 : get().engineDuration,
+    });
   },
 
   clearQueue: () => {
@@ -273,9 +354,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   addToQueue: (track) =>
-    set((s) =>
-      s.queue.some((t) => t.id === track.id) ? s : { queue: [...s.queue, track] },
-    ),
+    set((s) => (s.queue.some((t) => t.id === track.id) ? s : { queue: [...s.queue, track] })),
 
   appendToQueue: (tracks) =>
     set((s) => {
@@ -289,34 +368,42 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return { queue: [...s.queue, ...fresh] };
     }),
 
-  replaceRemoteState: (state) => set((old) => {
-    // Reuse unchanged track objects: the audio engine reloads when the current
-    // object changes, so recreating the whole queue on every remote command
-    // restarted playback even for pause or volume changes.
-    const oldTracks = new Map(old.queue.map((track) => [track.id, track]));
-    const queue = state.queue.map((track) => {
-      const existing = oldTracks.get(track.id);
-      return existing && JSON.stringify(existing) === JSON.stringify(track) ? existing : track;
-    });
-    const currentIndex = clamp(state.currentIndex, 0, Math.max(0, queue.length - 1));
-    const sameTrack = old.currentTrack()?.id === queue[currentIndex]?.id;
-    const target = Math.max(0, state.progress);
-    const explicitSeek = state.seekNonce !== undefined && state.seekNonce !== old.remoteSeekNonce;
-    const needsSeek = sameTrack ? explicitSeek || Math.abs(old.progress - target) > 3 : target > 0;
-    return {
-      queue, currentIndex, isPlaying: state.isPlaying,
-      progress: sameTrack && !needsSeek && old.playbackOnThisDevice ? old.progress : target,
-      remoteSeekNonce: state.seekNonce ?? old.remoteSeekNonce,
-      seekRevision: state.seekNonce ?? old.seekRevision,
-      volume: clamp(Math.round(state.volume), 0, 100), muted: state.muted,
-      radio: state.radio ?? old.radio, repeat: state.repeat ?? old.repeat, shuffle: state.shuffle ?? old.shuffle,
-      playbackOnThisDevice: state.playbackOnThisDevice ?? old.playbackOnThisDevice,
-      playbackDeviceId: state.playbackDeviceId ?? old.playbackDeviceId,
-      radioWaiting: false,
-      engineDuration: sameTrack ? old.engineDuration : 0,
-      ...(needsSeek ? { seekTarget: target, seekNonce: old.seekNonce + 1 } : {}),
-    };
-  }),
+  replaceRemoteState: (state) =>
+    set((old) => {
+      // Reuse unchanged track objects: the audio engine reloads when the current
+      // object changes, so recreating the whole queue on every remote command
+      // restarted playback even for pause or volume changes.
+      const oldTracks = new Map(old.queue.map((track) => [track.id, track]));
+      const queue = state.queue.map((track) => {
+        const existing = oldTracks.get(track.id);
+        return existing && JSON.stringify(existing) === JSON.stringify(track) ? existing : track;
+      });
+      const currentIndex = clamp(state.currentIndex, 0, Math.max(0, queue.length - 1));
+      const sameTrack = old.currentTrack()?.id === queue[currentIndex]?.id;
+      const target = Math.max(0, state.progress);
+      const explicitSeek = state.seekNonce !== undefined && state.seekNonce !== old.remoteSeekNonce;
+      const needsSeek = sameTrack
+        ? explicitSeek || Math.abs(old.progress - target) > 3
+        : target > 0;
+      return {
+        queue,
+        currentIndex,
+        isPlaying: state.isPlaying,
+        progress: sameTrack && !needsSeek && old.playbackOnThisDevice ? old.progress : target,
+        remoteSeekNonce: state.seekNonce ?? old.remoteSeekNonce,
+        seekRevision: state.seekNonce ?? old.seekRevision,
+        volume: clamp(Math.round(state.volume), 0, 100),
+        muted: state.muted,
+        radio: state.radio ?? old.radio,
+        repeat: state.repeat ?? old.repeat,
+        shuffle: state.shuffle ?? old.shuffle,
+        playbackOnThisDevice: state.playbackOnThisDevice ?? old.playbackOnThisDevice,
+        playbackDeviceId: state.playbackDeviceId ?? old.playbackDeviceId,
+        radioWaiting: false,
+        engineDuration: sameTrack ? old.engineDuration : 0,
+        ...(needsSeek ? { seekTarget: target, seekNonce: old.seekNonce + 1 } : {}),
+      };
+    }),
 
   playNext: (track) =>
     set((s) => {

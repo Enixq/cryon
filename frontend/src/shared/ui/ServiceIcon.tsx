@@ -26,7 +26,7 @@ const BRAND_BG: Record<SourceId, string> = {
  * масштабироваться в sidebar, карточках и настройках.
  */
 export function ServiceIcon({ id, size = 20, badge = false, className }: ServiceIconProps) {
-  const glyph = renderGlyph(id, badge ? Math.round(size * 0.62) : size);
+  const glyph = renderGlyph(id, badge ? Math.round(size * 0.76) : size, badge);
   if (!badge) {
     return <span className={cn("inline-grid place-items-center", className)}>{glyph}</span>;
   }
@@ -40,11 +40,18 @@ export function ServiceIcon({ id, size = 20, badge = false, className }: Service
   );
 }
 
-function renderGlyph(id: SourceId, s: number) {
+function renderGlyph(id: SourceId, s: number, badge: boolean) {
   switch (id) {
     case "spotify":
       return (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="#1db954" role="img" aria-label="Spotify">
+        <svg
+          width={s}
+          height={s}
+          viewBox="0 0 24 24"
+          fill="#1db954"
+          role="img"
+          aria-label="Spotify"
+        >
           <circle cx="12" cy="12" r="12" fill="#1db954" />
           <path
             d="M17.6 10.9c-3-1.8-8-2-10.9-1.1a.9.9 0 1 1-.5-1.7c3.3-1 8.8-.8 12.3 1.3a.9.9 0 1 1-.9 1.5zm-.1 2.7c-2.6-1.6-6.5-2-9.5-1.1a.75.75 0 1 1-.4-1.4c3.4-1 7.8-.6 10.7 1.2a.75.75 0 1 1-.8 1.3zm-1.2 2.6c-2-1.3-4.7-1.6-7.7-.9a.6.6 0 1 1-.3-1.2c3.3-.8 6.3-.4 8.6 1a.6.6 0 1 1-.6 1.1z"
@@ -55,7 +62,7 @@ function renderGlyph(id: SourceId, s: number) {
     case "soundcloud":
       return (
         <svg width={s} height={s} viewBox="0 0 24 24" role="img" aria-label="SoundCloud">
-          <g fill="#ff5500">
+          <g fill={badge ? "#fff" : "#ff5500"}>
             <rect x="2" y="12" width="1.4" height="6" rx="0.7" />
             <rect x="4.4" y="10.5" width="1.4" height="7.5" rx="0.7" />
             <rect x="6.8" y="9" width="1.4" height="9" rx="0.7" />
@@ -63,7 +70,7 @@ function renderGlyph(id: SourceId, s: number) {
           </g>
           <path
             d="M12 8.5c.4-2 2.2-3.5 4.4-3.5A4.5 4.5 0 0 1 20.9 9c1.7.1 3.1 1.5 3.1 3.3 0 1.9-1.5 3.4-3.4 3.4H12z"
-            fill="#ff5500"
+            fill={badge ? "#fff" : "#ff5500"}
             transform="translate(-1 0)"
           />
         </svg>
@@ -79,10 +86,9 @@ function renderGlyph(id: SourceId, s: number) {
     case "yandex":
       return (
         <svg width={s} height={s} viewBox="0 0 24 24" role="img" aria-label="Яндекс Музыка">
-          <circle cx="12" cy="12" r="11" fill="#ffdb4d" />
           <path
-            d="M13.1 6h-2.2C8.7 6 7.2 7.4 7.2 9.4c0 1.5.7 2.5 2 3.2L7 18h2l2-4.9h.9V18h1.9V6z"
-            fill="#000"
+            fill={badge ? "#111" : "#ffdb4d"}
+            d="M12 1l1.8 6.2L19 3l-2.5 6.2L23 8l-5.2 4 5.2 4-6.5-1.2L19 21l-5.2-4.2L12 23l-1.8-6.2L5 21l2.5-6.2L1 16l5.2-4L1 8l6.5 1.2L5 3l5.2 4.2z"
           />
         </svg>
       );

@@ -10,6 +10,8 @@ import { useRecoFeedback } from "../shared/lib/useRecoFeedback";
 import {
   isWailsRuntime,
   listDailyMix,
+  listHistory,
+  listRecommendations,
   listNewReleases,
   listFavorites,
   listWeeklyDiscoveries,
@@ -18,6 +20,7 @@ import {
   onRecoChanged,
 } from "../shared/api/client";
 import { tracks as mockTracks } from "../mocks/data";
+import { catalogCollection } from "../shared/api/collections";
 import type { Track } from "../shared/types";
 
 /** Данные для веб-режима (без Wails-биндингов). */
@@ -54,17 +57,38 @@ interface CollectionMeta {
 // с главной не менял заголовок под пользователем.
 const newReleasesMeta: CollectionMeta = {
   title: "Радар новинок",
-  subtitle: "Свежие релизы из подключённых сервисов — сначала ваши исполнители",
+  subtitle: "Подтверждённые релизы ваших и похожих артистов за последние 7 дней",
   emptyHint:
-    "Новинки приходят из подключённых сервисов. Подключите Yandex Music или Spotify в настройках — и релизы появятся здесь.",
+    "За последние 7 дней подтверждённых новинок не найдено. Радар проверяет даты в каталогах и обновляется каждый день.",
 };
 
 const collectionMeta: Record<string, CollectionMeta> = {
+  "for-you": {
+    title: "Специально для вас",
+    subtitle: "Новые песни по вашим предпочтениям",
+    emptyHint: "Послушайте музыку и добавьте любимые треки в библиотеку.",
+    rateable: true,
+  },
+  recent: {
+    title: "Недавно прослушано",
+    subtitle: "Ваша история в одном плейлисте",
+    emptyHint: "Здесь появится прослушанная музыка.",
+  },
+  "russia-chart": {
+    title: "Чарт России",
+    subtitle: "Актуальный чарт Яндекс Музыки",
+    emptyHint: "Российский чарт пока недоступен. Проверьте подключение Яндекс Музыки.",
+  },
+  "world-chart": {
+    title: "Мировой чарт",
+    subtitle: "Популярные треки из мирового каталога Deezer",
+    emptyHint: "Чарт пока недоступен. Проверьте подключение источников.",
+  },
   m1: {
     title: "Мой микс",
     subtitle: "На основе ваших прослушиваний, обновляется раз в сутки",
     emptyHint:
-      "Микс собирается по вашим прослушиваниям и избранному. Послушайте несколько треков — и он появится здесь.",
+      "Микс собирается по избранному и истории из доступных источников. Добавьте любимые песни и проверьте подключение сервисов.",
     rateable: true,
   },
   m2: newReleasesMeta,
@@ -124,6 +148,15 @@ export function CollectionPage() {
     queryFn: async () => {
       if (!kind) return [];
       switch (kind) {
+        case "for-you":
+          return listRecommendations(40);
+        case "recent":
+          return [
+            ...new Map((await listHistory()).map((row) => [row.track.id, row.track])).values(),
+          ];
+        case "russia-chart":
+        case "world-chart":
+          return catalogCollection(kind);
         case "m1":
           return listDailyMix(40);
         case "m2":
@@ -162,7 +195,9 @@ export function CollectionPage() {
   const items = useMemo(() => {
     const all = data ?? [];
     // Дизлайкнутый трек исчезает из подборки сразу, не дожидаясь пересборки.
-    return rateable || kind === "m2" || kind === "new-releases" ? all.filter((t) => rateScore(t) >= 0) : all;
+    return rateable || kind === "m2" || kind === "new-releases"
+      ? all.filter((t) => rateScore(t) >= 0)
+      : all;
   }, [data, kind, rateable, rateScore]);
 
   const handlePlay = (track: Track) => {

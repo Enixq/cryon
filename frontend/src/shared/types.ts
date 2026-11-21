@@ -1,23 +1,10 @@
 // Единые доменные типы приложения Cryon2.
 // На этом этапе используются моковыми данными, позже будут заполняться из backend.
 
-export type SourceId =
-  | "youtube"
-  | "soundcloud"
-  | "spotify"
-  | "yandex"
-  | "vk"
-  | "local";
+export type SourceId = "youtube" | "soundcloud" | "spotify" | "yandex" | "vk" | "local";
 
 export type AccentColor =
-  | "violet"
-  | "cyan"
-  | "pink"
-  | "orange"
-  | "rose"
-  | "amber"
-  | "slate"
-  | "emerald";
+  "violet" | "cyan" | "pink" | "orange" | "rose" | "amber" | "slate" | "emerald";
 
 export interface Track {
   id: string;
@@ -27,6 +14,8 @@ export interface Track {
   primaryArtist?: string;
   artists?: string[];
   album?: string;
+  releaseDate?: string;
+  genre?: string;
   source: SourceId;
   /** Длительность трека в секундах. */
   duration: number;

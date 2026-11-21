@@ -9,12 +9,15 @@
 package lyrics
 
 import (
+	"Cryon2/internal/domain"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -37,7 +40,8 @@ type Result struct {
 	Plain        string `json:"plain"`
 	Instrumental bool   `json:"instrumental"`
 	// Found — нашёлся ли текст. false — не найден (не путать с инструментальным).
-	Found bool `json:"found"`
+	Found    bool   `json:"found"`
+	Provider string `json:"provider,omitempty"`
 }
 
 // apiTrack — ответ lrclib для одного трека.
@@ -67,25 +71,30 @@ func New() *Client {
 // «не найдено» отдаётся как Result{Found:false}, а не ошибкой.
 func (c *Client) Get(ctx context.Context, artist, title, album string, durationS int) (Result, error) {
 	artist = strings.TrimSpace(artist)
-	title = strings.TrimSpace(title)
+	title = cleanTitle(title)
 	if artist == "" || title == "" {
 		return Result{}, nil
 	}
 
 	// 1) Точное совпадение по метаданным.
-	if t, ok, err := c.getExact(ctx, artist, title, album, durationS); err == nil && ok {
-		return toResult(t), nil
+	exactCtx, exactCancel := context.WithTimeout(ctx, 5*time.Second)
+	exact, exactOK, exactErr := c.getExact(exactCtx, artist, title, album, durationS)
+	exactCancel()
+	if exactErr == nil && exactOK && toResult(exact).Found {
+		return toResult(exact), nil
 	}
 
 	// 2) Фолбэк: поиск и ближайший результат.
-	t, ok, err := c.search(ctx, artist, title)
+	searchCtx, searchCancel := context.WithTimeout(ctx, 5*time.Second)
+	t, ok, err := c.search(searchCtx, artist, title, durationS)
+	searchCancel()
 	if err == nil && ok {
 		return toResult(t), nil
 	}
 	// SoundCloud uploads often have no album/duration metadata in LRCLIB's
 	// exact index. Try a second lyric provider with the artist/title pair.
 	if fallback, fallbackErr := c.getLyricsOVH(ctx, artist, title); fallbackErr == nil && fallback != "" {
-		return Result{Plain: fallback, Found: true}, nil
+		return Result{Plain: fallback, Found: true, Provider: "lyrics.ovh"}, nil
 	}
 	return Result{Found: false}, nil
 }
@@ -107,6 +116,7 @@ func (c *Client) getLyricsOVH(ctx context.Context, artist, title string) (string
 
 func toResult(t apiTrack) Result {
 	return Result{
+		Provider:     "LRCLIB",
 		Synced:       t.SyncedLyrics,
 		Plain:        t.PlainLyrics,
 		Instrumental: t.Instrumental,
@@ -142,7 +152,7 @@ func (c *Client) getExact(ctx context.Context, artist, title, album string, dura
 
 // search запрашивает /api/search и берёт первый результат, у которого есть
 // хоть какой-то текст (или он инструментальный).
-func (c *Client) search(ctx context.Context, artist, title string) (apiTrack, bool, error) {
+func (c *Client) search(ctx context.Context, artist, title string, durationS int) (apiTrack, bool, error) {
 	q := url.Values{}
 	q.Set("artist_name", artist)
 	q.Set("track_name", title)
@@ -157,6 +167,12 @@ func (c *Client) search(ctx context.Context, artist, title string) (apiTrack, bo
 	// Приоритет — синхронизированный текст, затем обычный.
 	var plainMatch *apiTrack
 	for i := range list {
+		if domain.MusicKey(cleanTitle(list[i].TrackName)) != domain.MusicKey(title) || domain.MusicKey(list[i].ArtistName) != domain.MusicKey(artist) {
+			continue
+		}
+		if durationS > 0 && list[i].Duration > 0 && math.Abs(list[i].Duration-float64(durationS)) > 15 {
+			continue
+		}
 		if list[i].SyncedLyrics != "" {
 			return list[i], true, nil
 		}
@@ -194,4 +210,32 @@ func (c *Client) doJSON(ctx context.Context, endpoint string, out any) (int, err
 		return resp.StatusCode, fmt.Errorf("lrclib: разбор ответа: %w", err)
 	}
 	return resp.StatusCode, nil
+}
+
+var lyricQualifier = regexp.MustCompile(`(?i)\s*[\[(](?:official(?: music)?(?: video| audio)?|lyrics?|lyric video|audio|video|текст(?: песни)?|клип)[\])]`)
+
+func cleanTitle(title string) string {
+	return strings.TrimSpace(lyricQualifier.ReplaceAllString(title, ""))
+}
+
+func (c *Client) GetProvider(ctx context.Context, artist, title, album string, durationS int, provider string) (Result, error) {
+	title = cleanTitle(title)
+	if provider == "ovh" {
+		text, err := c.getLyricsOVH(ctx, artist, title)
+		return Result{Plain: text, Found: text != "", Provider: "lyrics.ovh"}, err
+	}
+	if provider == "lrclib" {
+		if t, ok, err := c.getExact(ctx, artist, title, album, durationS); err == nil && ok && toResult(t).Found {
+			return toResult(t), nil
+		}
+		t, ok, err := c.search(ctx, artist, title, durationS)
+		if err != nil {
+			return Result{}, err
+		}
+		if ok {
+			return toResult(t), nil
+		}
+		return Result{Provider: "LRCLIB"}, nil
+	}
+	return c.Get(ctx, artist, title, album, durationS)
 }

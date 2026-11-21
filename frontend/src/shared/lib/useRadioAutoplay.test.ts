@@ -37,6 +37,25 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("radio prefetch", () => {
+  it("continues a favorites queue when its track metadata is replaced while loading", async () => {
+    let resolve!: (tracks: Track[]) => void;
+    vi.mocked(listRelatedTracks)
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done;
+          }),
+      )
+      .mockResolvedValue([]);
+    stop = startRadioAutoplay();
+    const seed = usePlayerStore.getState().queue[0];
+    usePlayerStore.getState().playTrack({ ...seed, liked: true }, [{ ...seed, liked: true }]);
+    usePlayerStore.getState().next();
+    resolve([track("fresh")]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(usePlayerStore.getState().currentTrack()?.id).toBe("fresh");
+    expect(usePlayerStore.getState().isPlaying).toBe(true);
+  });
   it("fills ahead, replenishes after next, and discards duplicate candidates", async () => {
     vi.mocked(listRelatedTracks)
       .mockResolvedValueOnce(Array.from({ length: 8 }, (_, i) => track(`a${i}`)))

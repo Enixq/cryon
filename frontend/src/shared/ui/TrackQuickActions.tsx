@@ -1,18 +1,31 @@
-﻿import { Heart, ListPlus, ListStart, MoreHorizontal, Share2, ThumbsDown } from "lucide-react";
+import {
+  Download,
+  Heart,
+  ListPlus,
+  ListStart,
+  MoreHorizontal,
+  Share2,
+  ThumbsDown,
+} from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePlayerStore } from "../../store/playerStore";
 import { useUiStore } from "../../store/uiStore";
 import type { Track } from "../types";
 import { AddToPlaylistButton } from "./AddToPlaylistButton";
+import { downloadTrack } from "../lib/downloadTrack";
+import { notify } from "../../store/notificationStore";
 import { cn } from "../lib/cn";
 import { useFavoriteIds } from "../lib/useFavorites";
 import { useRecoFeedback } from "../lib/useRecoFeedback";
 
-interface Props { track: Track; }
+interface Props {
+  track: Track;
+}
 
 export function TrackQuickActions({ track }: Props) {
   const [open, setOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -35,17 +48,32 @@ export function TrackQuickActions({ track }: Props) {
       const viewportMargin = 8;
       const menuWidth = Math.min(menu.width, window.innerWidth - viewportMargin * 2);
       const below = window.innerHeight - trigger.bottom;
-      const preferredTop = below >= menu.height + 6
-        ? trigger.bottom + 6
-        : trigger.top - menu.height - 6;
-      const top = Math.max(viewportMargin, Math.min(preferredTop, window.innerHeight - menu.height - viewportMargin));
-      const left = Math.max(viewportMargin, Math.min(trigger.right - menuWidth, window.innerWidth - menuWidth - viewportMargin));
+      const preferredTop =
+        below >= menu.height + 6 ? trigger.bottom + 6 : trigger.top - menu.height - 6;
+      const top = Math.max(
+        viewportMargin,
+        Math.min(preferredTop, window.innerHeight - menu.height - viewportMargin),
+      );
+      const left = Math.max(
+        viewportMargin,
+        Math.min(trigger.right - menuWidth, window.innerWidth - menuWidth - viewportMargin),
+      );
       setPosition({ top, left });
     };
     const dismiss = (event: PointerEvent) => {
-      if (!triggerRef.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false);
+      if ((event.target as Element).closest("[data-track-playlist-dialog]")) return;
+      if (
+        !triggerRef.current?.contains(event.target as Node) &&
+        !menuRef.current?.contains(event.target as Node)
+      )
+        setOpen(false);
     };
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus(); } };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
     place();
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
@@ -61,19 +89,145 @@ export function TrackQuickActions({ track }: Props) {
 
   return (
     <div className="relative flex items-center gap-0.5">
-      <button type="button" onClick={(event) => { event.stopPropagation(); addToQueue(track); }} className="hidden h-9 w-9 place-items-center rounded-full text-lg text-slate-400 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_18%,transparent)] hover:text-white active:scale-95 sm:grid" aria-label="Добавить в очередь">+</button>
-      <button ref={triggerRef} type="button" onClick={(event) => { event.stopPropagation(); setOpen((value) => !value); }} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-400 transition-colors hover:bg-white/10 hover:text-white active:scale-95" aria-label="Другие действия" aria-expanded={open}><MoreHorizontal size={17} /></button>
-      {open && createPortal(
-        <div ref={menuRef} role="menu" style={{ top: position.top, left: position.left }} className="fixed z-[100] max-h-[calc(100vh-16px)] w-56 max-w-[calc(100vw-16px)] overflow-visible rounded-xl border border-white/10 bg-[#171722] p-2 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-          <button type="button" onClick={(event) => { event.stopPropagation(); playNext(track); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"><ListStart size={15} />Играть дальше</button>
-          <button type="button" onClick={(event) => { event.stopPropagation(); addToQueue(track); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"><ListPlus size={15} />Добавить в очередь</button>
-          <button type="button" onClick={(event) => { event.stopPropagation(); playTrack(track, [track]); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"><ListPlus size={15} />Играть сейчас</button>
-          <button type="button" onClick={(event) => { event.stopPropagation(); toggleLikeWithTrack({ ...track, liked: isFavorite }); setOpen(false); }} className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-white/8", isFavorite ? "text-[#a855f7]" : "text-slate-200")}><Heart size={15} fill={isFavorite ? "currentColor" : "none"} />{isFavorite ? "Убрать из избранного" : "В избранное"}</button>
-          <button type="button" disabled={feedback.saving} onClick={(event) => { event.stopPropagation(); feedback.rate(track, -1); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8 disabled:opacity-50"><ThumbsDown size={15} />{disliked ? "Вернуть в рекомендации" : "Не рекомендовать трек"}</button>
-          <button type="button" onClick={(event) => { event.stopPropagation(); openShare(track); setOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"><Share2 size={15} />Поделиться</button>
-          <div className="mt-1 border-t border-white/8 pt-2"><AddToPlaylistButton track={track} opensUp alwaysVisible /></div>
-        </div>, document.body,
-      )}
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          addToQueue(track);
+        }}
+        className="hidden h-9 w-9 place-items-center rounded-full text-lg text-slate-400 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_18%,transparent)] hover:text-white active:scale-95 sm:grid"
+        aria-label="Добавить в очередь"
+      >
+        +
+      </button>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-400 transition-colors hover:bg-white/10 hover:text-white active:scale-95"
+        aria-label="Другие действия"
+        aria-expanded={open}
+      >
+        <MoreHorizontal size={17} />
+      </button>
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{ top: position.top, left: position.left }}
+            className="fixed z-[100] max-h-[calc(100vh-16px)] w-56 max-w-[calc(100vw-16px)] overflow-visible rounded-xl border border-white/10 bg-[#171722] p-2 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                playNext(track);
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"
+            >
+              <ListStart size={15} />
+              Играть дальше
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                addToQueue(track);
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"
+            >
+              <ListPlus size={15} />
+              Добавить в очередь
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                playTrack(track, [track]);
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"
+            >
+              <ListPlus size={15} />
+              Играть сейчас
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleLikeWithTrack({ ...track, liked: isFavorite });
+                setOpen(false);
+              }}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-white/8",
+                isFavorite ? "text-[#a855f7]" : "text-slate-200",
+              )}
+            >
+              <Heart size={15} fill={isFavorite ? "currentColor" : "none"} />
+              {isFavorite ? "Убрать из избранного" : "В избранное"}
+            </button>
+            <button
+              type="button"
+              disabled={feedback.saving}
+              onClick={(event) => {
+                event.stopPropagation();
+                feedback.rate(track, -1);
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8 disabled:opacity-50"
+            >
+              <ThumbsDown size={15} />
+              {disliked ? "Вернуть в рекомендации" : "Не рекомендовать трек"}
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                openShare(track);
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"
+            >
+              <Share2 size={15} />
+              Поделиться
+            </button>
+            <button
+              type="button"
+              disabled={downloading}
+              onClick={() => {
+                setDownloading(true);
+                void downloadTrack(track)
+                  .then((saved) => {
+                    if (saved)
+                      notify({
+                        kind: "success",
+                        title: "Трек сохранён",
+                        message: "Аудиофайл доступен другим плеерам.",
+                      });
+                  })
+                  .catch((error) =>
+                    notify({ kind: "error", title: "Не удалось скачать", message: error.message }),
+                  )
+                  .finally(() => setDownloading(false));
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8 disabled:opacity-50"
+            >
+              <Download size={15} />
+              {downloading ? "Скачивание…" : "Скачать аудиофайл"}
+            </button>
+            <div className="mt-1 flex items-center gap-2 border-t border-white/8 pt-2">
+              <AddToPlaylistButton track={track} opensUp alwaysVisible showLabel />
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

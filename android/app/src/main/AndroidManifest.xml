@@ -19,6 +19,7 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="Cryon"
         android:largeHeap="true"
         android:supportsRtl="true"
@@ -40,6 +41,7 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+        <activity android:name=".AudioExportActivity" android:exported="false" android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity
             android:name=".YandexVerificationActivity"
             android:exported="false"

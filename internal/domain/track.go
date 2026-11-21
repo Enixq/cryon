@@ -35,6 +35,8 @@ type Track struct {
 	Title        string       `json:"title"`
 	Artists      []string     `json:"artists"`
 	Album        string       `json:"album,omitempty"`
+	ReleaseDate  string       `json:"releaseDate,omitempty"`
+	Genre        string       `json:"genre,omitempty"`
 	DurationMs   int          `json:"durationMs,omitempty"`
 	PlayCount    int          `json:"playCount,omitempty"`
 	Quality      string       `json:"quality,omitempty"`

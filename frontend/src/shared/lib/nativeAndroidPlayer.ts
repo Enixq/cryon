@@ -16,9 +16,22 @@ export type NativePlaybackState = {
 };
 
 type NativeAndroidBridge = {
+  nativeDownload?: (url: string) => string;
+  nativeDownloadStatus?: (ticket: string) => string;
   savePlaybackReport?: (report: string) => void;
   installUpdate?: () => void;
-  nativePlay?: (streamUrl: string, trackId: string, title: string, artist: string, artworkUrl: string, durationMs: number, autoPlay: boolean, startPositionMs: number, mimeType: string, commandId?: number) => void;
+  nativePlay?: (
+    streamUrl: string,
+    trackId: string,
+    title: string,
+    artist: string,
+    artworkUrl: string,
+    durationMs: number,
+    autoPlay: boolean,
+    startPositionMs: number,
+    mimeType: string,
+    commandId?: number,
+  ) => void;
   nativePause?: (commandId?: number) => void;
   nativeResume?: (commandId?: number) => void;
   nativeStop?: (commandId?: number) => void;
@@ -37,7 +50,9 @@ declare global {
 
 const eventName = "cryon:native-playback";
 let lastCommandId = 0;
-function nextCommandId(): number { return lastCommandId = Math.max(Date.now() * 1000, lastCommandId + 1); }
+function nextCommandId(): number {
+  return (lastCommandId = Math.max(Date.now() * 1000, lastCommandId + 1));
+}
 
 function bridge(): NativeAndroidBridge | undefined {
   return typeof window === "undefined" ? undefined : window.CryonAndroid;
@@ -47,11 +62,23 @@ export function hasNativeAndroidPlayer(): boolean {
   return typeof bridge()?.nativePlay === "function";
 }
 
-export function hasNativeAndroidQueue(): boolean { return typeof bridge()?.nativeSetQueue === "function"; }
-export function updateNativeAndroidQueue(state: object): void { bridge()?.nativeSetQueue?.(JSON.stringify(state)); }
-export function configureNativeAndroidSync(state: object): void { bridge()?.nativeConfigureSync?.(JSON.stringify(state)); }
+export function hasNativeAndroidQueue(): boolean {
+  return typeof bridge()?.nativeSetQueue === "function";
+}
+export function updateNativeAndroidQueue(state: object): void {
+  bridge()?.nativeSetQueue?.(JSON.stringify(state));
+}
+export function configureNativeAndroidSync(state: object): void {
+  bridge()?.nativeConfigureSync?.(JSON.stringify(state));
+}
 
-export function playNativeAndroidTrack(track: Track, streamUrl: string, autoPlay: boolean, startPositionSeconds = 0, mimeType = ""): number {
+export function playNativeAndroidTrack(
+  track: Track,
+  streamUrl: string,
+  autoPlay: boolean,
+  startPositionSeconds = 0,
+  mimeType = "",
+): number {
   const commandId = nextCommandId();
   bridge()?.nativePlay?.(
     streamUrl,
@@ -68,9 +95,21 @@ export function playNativeAndroidTrack(track: Track, streamUrl: string, autoPlay
   return commandId;
 }
 
-export function pauseNativeAndroidPlayer(): number { const id = nextCommandId(); bridge()?.nativePause?.(id); return id; }
-export function resumeNativeAndroidPlayer(): number { const id = nextCommandId(); bridge()?.nativeResume?.(id); return id; }
-export function stopNativeAndroidPlayer(): number { const id = nextCommandId(); bridge()?.nativeStop?.(id); return id; }
+export function pauseNativeAndroidPlayer(): number {
+  const id = nextCommandId();
+  bridge()?.nativePause?.(id);
+  return id;
+}
+export function resumeNativeAndroidPlayer(): number {
+  const id = nextCommandId();
+  bridge()?.nativeResume?.(id);
+  return id;
+}
+export function stopNativeAndroidPlayer(): number {
+  const id = nextCommandId();
+  bridge()?.nativeStop?.(id);
+  return id;
+}
 export async function stopNativeAndroidPlayerAndWait(): Promise<void> {
   stopNativeAndroidPlayer();
   if (!bridge()?.nativeGetState) return;
@@ -80,20 +119,32 @@ export async function stopNativeAndroidPlayerAndWait(): Promise<void> {
     if (!saved) return;
     const state = JSON.parse(saved) as NativePlaybackState;
     if (!state.trackId && !state.playing) return;
-    await new Promise(resolve => window.setTimeout(resolve, 25));
+    await new Promise((resolve) => window.setTimeout(resolve, 25));
   }
   throw new Error("Android player did not acknowledge stop");
 }
-export function seekNativeAndroidPlayer(seconds: number): void { bridge()?.nativeSeek?.(Math.max(0, Math.round(seconds * 1000))); }
-export function setNativeAndroidPlayerVolume(volume: number): void { bridge()?.nativeSetVolume?.(Math.max(0, Math.min(100, Math.round(volume)))); }
+export function seekNativeAndroidPlayer(seconds: number): void {
+  bridge()?.nativeSeek?.(Math.max(0, Math.round(seconds * 1000)));
+}
+export function setNativeAndroidPlayerVolume(volume: number): void {
+  bridge()?.nativeSetVolume?.(Math.max(0, Math.min(100, Math.round(volume))));
+}
 
-export function subscribeNativeAndroidPlayback(listener: (state: NativePlaybackState) => void): () => void {
+export function subscribeNativeAndroidPlayback(
+  listener: (state: NativePlaybackState) => void,
+): () => void {
   if (typeof window === "undefined") return () => {};
   const handler = (event: Event) => listener((event as CustomEvent<NativePlaybackState>).detail);
   window.addEventListener(eventName, handler);
   const refresh = () => {
     const saved = bridge()?.nativeGetState?.();
-    if (saved) { try { listener(JSON.parse(saved) as NativePlaybackState); } catch { /* No saved session yet. */ } }
+    if (saved) {
+      try {
+        listener(JSON.parse(saved) as NativePlaybackState);
+      } catch {
+        /* No saved session yet. */
+      }
+    }
   };
   window.addEventListener("focus", refresh);
   document.addEventListener("visibilitychange", refresh);

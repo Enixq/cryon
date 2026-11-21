@@ -12,6 +12,8 @@ import { ArtistLink } from "../shared/ui/ArtistLink";
 import { useTrackCover } from "../shared/lib/useTrackCover";
 import { pluralWithCount } from "../shared/lib/format";
 import { listLocalTracks, listFavorites, listPlaylists } from "../shared/api/client";
+import { listSavedCollections } from "../shared/api/collections";
+import { CollectionCard } from "../shared/ui/CollectionCard";
 import type { Track } from "../shared/types";
 
 type Tab = "tracks" | "albums" | "artists" | "playlists";
@@ -25,7 +27,14 @@ type Tab = "tracks" | "albums" | "artists" | "playlists";
  * берутся через useTrackCover, а не напрямую из coverUrl (иначе локальные
  * треки показывали градиентную заглушку вместо реальной обложки).
  */
-function CoverFromTrack({ track, alt, className, rounded, iconSize, neon }: {
+function CoverFromTrack({
+  track,
+  alt,
+  className,
+  rounded,
+  iconSize,
+  neon,
+}: {
   track: Track;
   alt: string;
   className?: string;
@@ -80,6 +89,13 @@ export function LibraryPage() {
     queryFn: listPlaylists,
   });
 
+  const { data: saved = [] } = useQuery({
+    queryKey: ["savedCollections"],
+    queryFn: listSavedCollections,
+  });
+  const savedAlbums = saved.filter((item) => item.kind === "album");
+  const savedPlaylists = saved.filter((item) => item.kind === "playlist");
+
   // Объединяем локальные треки и избранное, дедуп по id.
   const allTracks = useMemo(() => {
     const seen = new Set<string>();
@@ -104,6 +120,15 @@ export function LibraryPage() {
     return map;
   }, [allTracks]);
 
+  const unsavedAlbums = Array.from(albumsMap.entries()).filter(([key]) => {
+    const [title, artist] = key.split("|");
+    return !savedAlbums.some(
+      (item) =>
+        item.title.toLocaleLowerCase() === title.toLocaleLowerCase() &&
+        (item.artist || "").toLocaleLowerCase() === (artist || "").toLocaleLowerCase(),
+    );
+  });
+
   // Группируем треки по артисту.
   const artistsMap = useMemo(() => {
     const map = new Map<string, Track[]>();
@@ -117,9 +142,9 @@ export function LibraryPage() {
 
   const tabs: TabItem<Tab>[] = [
     { id: "tracks", label: "Треки", count: allTracks.length },
-    { id: "albums", label: "Альбомы", count: albumsMap.size },
+    { id: "albums", label: "Альбомы", count: unsavedAlbums.length + savedAlbums.length },
     { id: "artists", label: "Исполнители", count: artistsMap.size },
-    { id: "playlists", label: "Плейлисты", count: playlists.length },
+    { id: "playlists", label: "Плейлисты", count: playlists.length + savedPlaylists.length },
   ];
 
   const handleAddFolder = () => navigate("/settings");
@@ -166,7 +191,9 @@ export function LibraryPage() {
             <div className="grid place-items-center rounded-2xl border border-white/8 bg-white/5 py-20 text-center text-slate-400">
               <div>
                 <FolderOpen size={40} className="mx-auto mb-3 opacity-40" />
-                <p className="mt-2">Нет треков. Добавьте папку с музыкой или перейдите в «Локальную музыку».</p>
+                <p className="mt-2">
+                  Нет треков. Добавьте папку с музыкой или перейдите в «Локальную музыку».
+                </p>
               </div>
             </div>
           )}
@@ -176,7 +203,17 @@ export function LibraryPage() {
       {/* Альбомы */}
       {tab === "albums" && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5 xl:grid-cols-5">
-          {Array.from(albumsMap.entries()).map(([key, tracks]) => {
+          {savedAlbums.map((item) => (
+            <CollectionCard
+              key={item.id}
+              title={item.title}
+              subtitle={item.artist || "Альбом"}
+              cover={item.artworkUrl}
+              source={item.service}
+              onOpen={() => navigate(`/saved/${encodeURIComponent(item.id)}`)}
+            />
+          ))}
+          {unsavedAlbums.map(([key, tracks]) => {
             const album = tracks[0];
             const albumName = album.album!;
             const artist = album.artist;
@@ -199,11 +236,14 @@ export function LibraryPage() {
                 <strong className="mt-3 truncate text-[15px] font-semibold text-white group-hover:text-[#c084fc]">
                   {albumName}
                 </strong>
-                <span className="truncate text-sm text-slate-400"><ArtistLink name={artist} /> · {pluralWithCount(tracks.length, "трек", "трека", "треков")}</span>
+                <span className="truncate text-sm text-slate-400">
+                  <ArtistLink name={artist} /> ·{" "}
+                  {pluralWithCount(tracks.length, "трек", "трека", "треков")}
+                </span>
               </button>
             );
           })}
-          {albumsMap.size === 0 && (
+          {unsavedAlbums.length === 0 && savedAlbums.length === 0 && (
             <div className="col-span-full grid place-items-center py-12 text-center text-slate-400">
               <p>Альбомы появятся после добавления треков.</p>
             </div>
@@ -235,8 +275,12 @@ export function LibraryPage() {
                   />
                   <TypeBadge label="Артист" />
                 </div>
-                <strong className="mt-3 truncate text-[15px] font-semibold text-white group-hover:text-[#c084fc]">{artist}</strong>
-                <span className="text-sm text-slate-400">{pluralWithCount(tracks.length, "трек", "трека", "треков")}</span>
+                <strong className="mt-3 truncate text-[15px] font-semibold text-white group-hover:text-[#c084fc]">
+                  {artist}
+                </strong>
+                <span className="text-sm text-slate-400">
+                  {pluralWithCount(tracks.length, "трек", "трека", "треков")}
+                </span>
               </button>
             );
           })}
@@ -251,10 +295,20 @@ export function LibraryPage() {
       {/* Плейлисты */}
       {tab === "playlists" && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 sm:gap-5 xl:grid-cols-5">
+          {savedPlaylists.map((item) => (
+            <CollectionCard
+              key={item.id}
+              title={item.title}
+              subtitle={`${item.tracks.length} треков`}
+              cover={item.artworkUrl}
+              source={item.service}
+              onOpen={() => navigate(`/saved/${encodeURIComponent(item.id)}`)}
+            />
+          ))}
           {playlists.map((p) => (
             <PlaylistCard key={p.id} playlist={p} onOpen={() => navigate(`/playlists/${p.id}`)} />
           ))}
-          {playlists.length === 0 && (
+          {playlists.length === 0 && savedPlaylists.length === 0 && (
             <div className="col-span-full grid place-items-center py-12 text-center text-slate-400">
               <p>Создайте первый плейлист.</p>
             </div>

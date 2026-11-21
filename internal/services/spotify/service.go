@@ -411,9 +411,10 @@ func (s *Service) NewReleases(ctx context.Context, limit int) ([]domain.Track, e
 	var nr struct {
 		Albums struct {
 			Items []struct {
-				ID        string `json:"id"`
-				Name      string `json:"name"`
-				ExternalU struct {
+				ReleaseDate string `json:"release_date"`
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				ExternalU   struct {
 					Spotify string `json:"spotify"`
 				} `json:"external_urls"`
 				Images []struct {
@@ -429,37 +430,21 @@ func (s *Service) NewReleases(ctx context.Context, limit int) ([]domain.Track, e
 		return nil, err
 	}
 
-	// Представляем альбом-новинку одним треком-обложкой (название альбома).
-	// Прямого списка треков browse/new-releases не даёт, а разворачивать каждый
-	// альбом — десятки лишних запросов; для радара достаточно карточки альбома.
-	out := make([]domain.Track, 0, len(nr.Albums.Items))
-	for _, al := range nr.Albums.Items {
-		if al.ID == "" || al.Name == "" {
+	out := []domain.Track{}
+	for _, album := range nr.Albums.Items {
+		if !domain.RecentRelease(album.ReleaseDate, time.Now()) {
 			continue
 		}
-		artists := make([]string, 0, len(al.Artists))
-		for _, a := range al.Artists {
-			if a.Name != "" {
-				artists = append(artists, a.Name)
-			}
+		tracks, err := s.recentAlbumTracks(ctx, token, album.ID, album.ReleaseDate)
+		if err == nil {
+			out = append(out, tracks...)
 		}
-		artwork := ""
-		if len(al.Images) > 0 {
-			artwork = al.Images[0].URL
+		if len(out) >= limit {
+			break
 		}
-		out = append(out, domain.Track{
-			ID:         al.ID,
-			Service:    domain.ServiceSpotify,
-			Title:      al.Name,
-			Artists:    artists,
-			Album:      al.Name,
-			ArtworkURL: artwork,
-			ExternalURL: firstNonEmpty(
-				al.ExternalU.Spotify,
-				"https://open.spotify.com/album/"+al.ID,
-			),
-			PlayableKind: domain.PlayableExternal,
-		})
+	}
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
@@ -468,8 +453,8 @@ var _ domain.ArtistReleaser = (*Service)(nil)
 
 // ArtistNewReleases возвращает свежие релизы КОНКРЕТНОГО исполнителя из каталога
 // Spotify: находим артиста по имени, берём его альбомы и синглы, свежие сверху.
-// Требует client_id/secret; без них — пусто. Как и в NewReleases, каждый альбом
-// представлен одной карточкой (треки Spotify защищены DRM и играются внешне).
+// Требует client_id/secret; без них — пусто. В результат попадают реальные
+// треки свежих альбомов с датой выпуска; воспроизведение ищет другую версию.
 // Используется для засева «Радара новинок» по вкусу (см. app.ListNewReleases).
 func (s *Service) ArtistNewReleases(ctx context.Context, artist string, limit int) ([]domain.Track, error) {
 	artist = strings.TrimSpace(artist)
@@ -531,37 +516,21 @@ func (s *Service) ArtistNewReleases(ctx context.Context, artist string, limit in
 		return ar.Items[i].ReleaseDate > ar.Items[j].ReleaseDate
 	})
 
-	out := make([]domain.Track, 0, len(ar.Items))
-	for _, al := range ar.Items {
-		if al.ID == "" || al.Name == "" {
+	out := []domain.Track{}
+	for _, album := range ar.Items {
+		if !domain.RecentRelease(album.ReleaseDate, time.Now()) {
 			continue
 		}
-		artists := make([]string, 0, len(al.Artists))
-		for _, a := range al.Artists {
-			if a.Name != "" {
-				artists = append(artists, a.Name)
-			}
+		tracks, err := s.recentAlbumTracks(ctx, token, album.ID, album.ReleaseDate)
+		if err == nil {
+			out = append(out, tracks...)
 		}
-		artwork := ""
-		if len(al.Images) > 0 {
-			artwork = al.Images[0].URL
-		}
-		out = append(out, domain.Track{
-			ID:         al.ID,
-			Service:    domain.ServiceSpotify,
-			Title:      al.Name,
-			Artists:    artists,
-			Album:      al.Name,
-			ArtworkURL: artwork,
-			ExternalURL: firstNonEmpty(
-				al.ExternalU.Spotify,
-				"https://open.spotify.com/album/"+al.ID,
-			),
-			PlayableKind: domain.PlayableExternal,
-		})
 		if len(out) >= limit {
 			break
 		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }

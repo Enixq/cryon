@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTrackListPlayer } from "../store/playerStore";
 import { recommendedPlaylists, tracks, userPlaylists } from "../mocks/data";
 import { accentStyle } from "../shared/ui/accents";
+import { PlaylistTrackPicker } from "../shared/ui/PlaylistTrackPicker";
 import { TrackRow } from "../shared/ui/TrackRow";
 import { sourceName } from "../shared/sources";
 import { ServiceIcon } from "../shared/ui/ServiceIcon";
@@ -79,8 +80,12 @@ export function PlaylistDetailPage() {
             <Music2 size={64} className="text-white/80" />
           </div>
           <div className="flex min-w-0 flex-col items-center gap-3 sm:items-start">
-            <span className="text-sm font-medium uppercase tracking-wider text-slate-400">Плейлист</span>
-            <h1 className="max-w-full break-words text-3xl font-black text-white sm:text-5xl">{meta?.title ?? "Плейлист"}</h1>
+            <span className="text-sm font-medium uppercase tracking-wider text-slate-400">
+              Плейлист
+            </span>
+            <h1 className="max-w-full break-words text-3xl font-black text-white sm:text-5xl">
+              {meta?.title ?? "Плейлист"}
+            </h1>
             {meta?.description && <p className="text-slate-400">{meta.description}</p>}
             <div className="flex items-center justify-center gap-2 text-sm text-slate-400 sm:justify-start">
               <span>{pluralWithCount(userTracks.length, "трек", "трека", "треков")}</span>
@@ -107,6 +112,7 @@ export function PlaylistDetailPage() {
           </div>
         </div>
 
+        <PlaylistTrackPicker playlistId={id} existing={userTracks} />
         {userTracks.length > 0 ? (
           <>
             <div className="flex items-center justify-center gap-4 sm:justify-start">
@@ -183,8 +189,12 @@ export function PlaylistDetailPage() {
           )}
         </div>
         <div className="flex min-w-0 flex-col items-center gap-3 sm:items-start">
-          <span className="text-sm font-medium uppercase tracking-wider text-slate-400">Плейлист</span>
-          <h1 className="max-w-full break-words text-3xl font-black text-white sm:text-5xl">{playlist.title}</h1>
+          <span className="text-sm font-medium uppercase tracking-wider text-slate-400">
+            Плейлист
+          </span>
+          <h1 className="max-w-full break-words text-3xl font-black text-white sm:text-5xl">
+            {playlist.title}
+          </h1>
           <p className="text-slate-400">{playlist.description}</p>
           <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-slate-400 sm:justify-start">
             <span>{sourceName(playlist.source)}</span>
@@ -301,7 +311,7 @@ function ReorderableTrackList({
       {order.map((track, i) => (
         <div
           key={track.id}
-          className={`group/row relative rounded-xl transition-colors ${
+          className={`group/row relative flex items-center rounded-xl transition-colors ${
             overIndex === i && dragIndex !== null ? "bg-white/5" : ""
           } ${dragIndex === i ? "opacity-50" : ""}`}
           onDragOver={(e) => handleDragOver(i, e)}
@@ -316,17 +326,19 @@ function ReorderableTrackList({
           >
             <GripVertical size={16} />
           </div>
-          <TrackRow
-            track={track}
-            index={i}
-            active={activeTrackId === track.id}
-            playing={playing}
-            onPlay={(t) => onPlay(t, order)}
-            showAlbum
-          />
+          <div className="min-w-0 flex-1">
+            <TrackRow
+              track={track}
+              index={i}
+              active={activeTrackId === track.id}
+              playing={playing}
+              onPlay={(t) => onPlay(t, order)}
+              showAlbum
+            />
+          </div>
           <button
             onClick={() => onRemove(track.id)}
-            className="absolute right-16 top-1/2 -translate-y-1/2 text-slate-500 opacity-0 transition-opacity hover:text-white group-hover/row:opacity-100"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-500 transition-opacity hover:bg-white/10 hover:text-white sm:opacity-0 sm:group-hover/row:opacity-100"
             aria-label="Убрать из плейлиста"
           >
             <Trash2 size={15} />

@@ -802,7 +802,7 @@ func (e *Engine) Recommendations(ctx context.Context, limit int) ([]domain.Track
 			var cached []domain.Track
 			if json.Unmarshal([]byte(raw), &cached) == nil && len(cached) > 0 {
 				filtered := filterUnseen(cached, profile)
-				if len(filtered) > 0 {
+				if len(filtered) >= limit {
 					return diversifyTracks(filtered, profile.recentArtists, limit, artistCap), nil
 				}
 			}
@@ -816,8 +816,8 @@ func (e *Engine) Recommendations(ctx context.Context, limit int) ([]domain.Track
 			logging.L().Debug("recommendations: онлайн-движок пуст, откат в оффлайн")
 		}
 	}
-	if len(tracks) == 0 {
-		tracks = e.offlineRecommendations(ctx, profile, seeds, limit)
+	if len(tracks) < limit {
+		tracks = append(tracks, e.offlineRecommendations(ctx, profile, seeds, limit)...)
 	}
 
 	tracks = diversifyTracks(filterRecommended(tracks, profile), profile.recentArtists, limit, artistCap)
@@ -1335,8 +1335,10 @@ func diversifyTracks(in []domain.Track, recent map[string]bool, limit, maxPerArt
 
 func filterRecommended(in []domain.Track, profile taste) []domain.Track {
 	out := make([]domain.Track, 0, len(in))
+	known := map[string]bool{}
 	for _, track := range in {
-		if !profile.blockedTracks[trackKey(track)] && !profile.blockedArtists[artistKey(track)] {
+		if !known[trackKey(track)] && !profile.blockedTracks[trackKey(track)] && !profile.blockedArtists[artistKey(track)] {
+			known[trackKey(track)] = true
 			out = append(out, track)
 		}
 	}
@@ -1544,6 +1546,9 @@ func (e *Engine) AutoMix(ctx context.Context, kind MixKind, limit int) ([]domain
 		limit = 20
 	}
 	seed := periodSeed(kind)
+	if kind == MixDaily {
+		return e.dailyMix(ctx, limit)
+	}
 
 	// «Открытия недели»: сначала пробуем настоящий 2-хоповый обход графа похожих
 	// артистов (задача 40) — он достаёт незнакомое, куда прямой similar к любимым

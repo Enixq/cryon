@@ -26,24 +26,21 @@ function accentFor(seed: string): AccentColor {
   return ACCENTS[Math.abs(hash) % ACCENTS.length];
 }
 
-const KNOWN_SOURCES: SourceId[] = [
-  "youtube",
-  "soundcloud",
-  "spotify",
-  "yandex",
-  "vk",
-  "local",
-];
+const KNOWN_SOURCES: SourceId[] = ["youtube", "soundcloud", "spotify", "yandex", "vk", "local"];
 
 function toSourceId(service: string): SourceId {
-  return (KNOWN_SOURCES as string[]).includes(service)
-    ? (service as SourceId)
-    : "local";
+  return (KNOWN_SOURCES as string[]).includes(service) ? (service as SourceId) : "local";
 }
 
 /** Удаляет ошибочно сохранённый текст меню старого парсера YouTube Music. */
 export function cleanTrackArtist(artist: string, source: SourceId): string {
-  if (source === "youtube" && /включить микс|добавить в очередь|войдите в аккаунт|play next|add to queue|sign in to/i.test(artist)) return "YouTube Music";
+  if (
+    source === "youtube" &&
+    /включить микс|добавить в очередь|войдите в аккаунт|play next|add to queue|sign in to/i.test(
+      artist,
+    )
+  )
+    return "YouTube Music";
   return artist || "Неизвестный исполнитель";
 }
 
@@ -59,9 +56,14 @@ export function mapTrack(src: domain.Track): Track {
     id: `${source}:${src.id}`,
     title: src.title || "Без названия",
     artist: cleanTrackArtist(artist, source),
-    primaryArtist: Array.isArray(src.artists) && src.artists[0] ? cleanTrackArtist(src.artists[0], source) : undefined,
+    primaryArtist:
+      Array.isArray(src.artists) && src.artists[0]
+        ? cleanTrackArtist(src.artists[0], source)
+        : undefined,
     artists: Array.isArray(src.artists) ? src.artists : undefined,
     album: src.album || undefined,
+    releaseDate: (src as domain.Track & { releaseDate?: string }).releaseDate,
+    genre: (src as domain.Track & { genre?: string }).genre,
     source,
     duration: src.durationMs ? Math.round(src.durationMs / 1000) : 0,
     playCount: src.playCount || undefined,
@@ -73,9 +75,7 @@ export function mapTrack(src: domain.Track): Track {
   };
 }
 
-function normalizeKind(
-  kind: string | undefined,
-): Track["playableKind"] {
+function normalizeKind(kind: string | undefined): Track["playableKind"] {
   if (kind === "embedded_web" || kind === "external_only") return kind;
   return "stream";
 }
@@ -133,15 +133,14 @@ export function toBackendTrack(t: Track): domain.Track {
     title: t.title,
     artists: t.artists?.length ? t.artists : t.artist ? [t.artist] : [],
     album: t.album || "",
+    releaseDate: t.releaseDate || "",
+    genre: t.genre || "",
     durationMs: t.duration ? t.duration * 1000 : 0,
     artworkUrl: t.coverUrl || "",
     externalUrl: t.externalUrl || "",
     playableKind:
       t.playableKind ||
-      (source === "youtube" ||
-      source === "soundcloud" ||
-      source === "yandex" ||
-      source === "local"
+      (source === "youtube" || source === "soundcloud" || source === "yandex" || source === "local"
         ? "stream"
         : "embedded_web"),
   } as domain.Track;

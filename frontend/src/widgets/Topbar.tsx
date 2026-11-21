@@ -11,6 +11,8 @@ export function Topbar() {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const setNowPlayingOpen = useUiStore((s) => s.setNowPlayingOpen);
   const openShare = useUiStore((s) => s.openShare);
+  const collapsed = useUiStore((state) => state.nowPlayingCollapsed);
+  const setCollapsed = useUiStore((state) => state.setNowPlayingCollapsed);
   const hasTrack = usePlayerStore((s) => s.queue.length > 0);
   // Кнопка «Сейчас играет» в топбаре нужна только когда встроенная панель
   // скрыта (узкий экран) — тогда она открывает выдвижную панель.
@@ -61,16 +63,18 @@ export function Topbar() {
           className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
           aria-label="Поиск"
         />
-        <kbd className="hidden rounded-md bg-white/10 px-2 py-0.5 text-xs text-slate-400 sm:block">Ctrl + K</kbd>
+        <kbd className="hidden rounded-md bg-white/10 px-2 py-0.5 text-xs text-slate-400 sm:block">
+          Ctrl + K
+        </kbd>
       </div>
 
       <div className="ml-auto flex items-center gap-3">
         {/* На узком экране встроенная панель «Сейчас играет» скрыта — кнопка
             открывает её как выдвижную поверх контента. */}
-        {isNarrow && hasTrack ? (
+        {hasTrack ? (
           <button
             type="button"
-            onClick={() => setNowPlayingOpen(true)}
+            onClick={() => (isNarrow ? setNowPlayingOpen(true) : setCollapsed(!collapsed))}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
             aria-label="Сейчас играет"
             title="Сейчас играет"

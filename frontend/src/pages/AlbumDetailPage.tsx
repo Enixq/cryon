@@ -6,8 +6,15 @@ import { accentStyle } from "../shared/ui/accents";
 import { TrackRow } from "../shared/ui/TrackRow";
 import { formatDuration, pluralWithCount } from "../shared/lib/format";
 import { useTrackCover } from "../shared/lib/useTrackCover";
-import { listLocalTracks, listFavorites, getAlbumTracks, resolveAlbum, openExternal } from "../shared/api/client";
+import {
+  listLocalTracks,
+  listFavorites,
+  getAlbumTracks,
+  resolveAlbum,
+  openExternal,
+} from "../shared/api/client";
 import { SOURCES } from "../shared/sources";
+import { SaveCollectionButton } from "../shared/ui/SaveCollectionButton";
 import { ArtistLink } from "../shared/ui/ArtistLink";
 import type { SourceId, Track } from "../shared/types";
 
@@ -64,8 +71,16 @@ export function AlbumDetailPage() {
   });
 
   // Локальная библиотека — фолбэк для навигации из «Медиатеки» (без state).
-  const { data: localTracks = [] } = useQuery({ queryKey: ["localTracks"], queryFn: listLocalTracks, enabled: !nav });
-  const { data: favorites = [] } = useQuery({ queryKey: ["favorites"], queryFn: listFavorites, enabled: !nav });
+  const { data: localTracks = [] } = useQuery({
+    queryKey: ["localTracks"],
+    queryFn: listLocalTracks,
+    enabled: !nav,
+  });
+  const { data: favorites = [] } = useQuery({
+    queryKey: ["favorites"],
+    queryFn: listFavorites,
+    enabled: !nav,
+  });
 
   const decodedKey = id ? decodeURIComponent(id) : "";
   const [keyAlbum, keyArtist] = decodedKey.split("|");
@@ -75,11 +90,12 @@ export function AlbumDetailPage() {
 
   // Итоговый список: каталог по id → добор по «исполнитель+название» → seed из
   // поиска → локальная библиотека.
-  const localAlbumTracks = !nav && keyAlbum
-    ? [...new Map([...localTracks, ...favorites].map((t) => [t.id, t])).values()].filter(
-        (t) => t.album === keyAlbum && (!keyArtist || t.artist === keyArtist),
-      )
-    : [];
+  const localAlbumTracks =
+    !nav && keyAlbum
+      ? [...new Map([...localTracks, ...favorites].map((t) => [t.id, t])).values()].filter(
+          (t) => t.album === keyAlbum && (!keyArtist || t.artist === keyArtist),
+        )
+      : [];
   const resolvedFull = Boolean(resolvedTracks && resolvedTracks.length > 0);
   const albumTracks: Track[] =
     catalogTracks && catalogTracks.length > 0
@@ -126,7 +142,11 @@ export function AlbumDetailPage() {
       <div className="flex flex-col items-center gap-4 text-center sm:flex-row sm:items-end sm:gap-6 sm:text-left">
         <div
           className="relative h-40 w-40 shrink-0 overflow-hidden rounded-2xl shadow-2xl sm:h-48 sm:w-48"
-          style={accent ? accentStyle(accent) : { background: "linear-gradient(135deg, #64748b, #94a3b8)" }}
+          style={
+            accent
+              ? accentStyle(accent)
+              : { background: "linear-gradient(135deg, #64748b, #94a3b8)" }
+          }
         >
           {coverUrl && (
             <img
@@ -138,8 +158,24 @@ export function AlbumDetailPage() {
           )}
         </div>
         <div className="flex min-w-0 flex-col items-center gap-3 sm:items-start">
-          <span className="text-sm font-medium uppercase tracking-wider text-slate-400">{kindLabel}</span>
-          <h1 className="max-w-full break-words text-3xl font-black text-white sm:text-5xl">{albumName}</h1>
+          <span className="text-sm font-medium uppercase tracking-wider text-slate-400">
+            {kindLabel}
+          </span>
+          <SaveCollectionButton
+            collection={{
+              id: `album:${nav?.service || albumTracks[0]?.source || "local"}:${nav?.albumId || albumName + "|" + artistName}`,
+              kind: "album",
+              title: albumName,
+              artist: artistName,
+              service: nav?.service || albumTracks[0]?.source || "local",
+              catalogId: nav?.albumId,
+              artworkUrl: coverUrl,
+              tracks: albumTracks,
+            }}
+          />
+          <h1 className="max-w-full break-words text-3xl font-black text-white sm:text-5xl">
+            {albumName}
+          </h1>
           <div className="flex flex-wrap items-center justify-center gap-2 text-sm text-slate-400 sm:justify-start">
             {artistName && <ArtistLink name={artistName} className="font-medium text-white" />}
             {nav?.year ? (
@@ -169,7 +205,10 @@ export function AlbumDetailPage() {
                   key={src}
                   className="inline-flex items-center gap-1.5 rounded-full bg-white/8 px-2.5 py-1 text-xs font-medium text-slate-200"
                 >
-                  <span className="h-2 w-2 rounded-full" style={{ background: SOURCES[src]?.dot }} />
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: SOURCES[src]?.dot }}
+                  />
                   {SOURCES[src]?.name ?? src}
                 </span>
               ))}
@@ -236,7 +275,11 @@ export function AlbumDetailPage() {
         ) : (
           <div className="grid place-items-center rounded-2xl border border-white/8 bg-white/5 py-16 text-center text-slate-400">
             <div>
-              <p>{catalogEmpty ? "Источник не вернул трек-лист этого альбома." : "Треки в этом альбоме не найдены."}</p>
+              <p>
+                {catalogEmpty
+                  ? "Источник не вернул трек-лист этого альбома."
+                  : "Треки в этом альбоме не найдены."}
+              </p>
               {nav?.externalUrl && (
                 <button
                   onClick={() => void openExternal(nav.externalUrl as string)}

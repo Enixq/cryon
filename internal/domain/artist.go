@@ -7,12 +7,13 @@ import "context"
 // Треки не входят в карточку намеренно: их подгружают лениво по AlbumID при
 // открытии/воспроизведении, чтобы не делать десятки запросов на одну страницу.
 type Album struct {
-	ID         string    `json:"id"`
-	Service    ServiceID `json:"service"`
-	Title      string    `json:"title"`
-	Artist     string    `json:"artist,omitempty"`
-	Year       int       `json:"year,omitempty"`
-	ArtworkURL string    `json:"artworkUrl,omitempty"`
+	ID          string    `json:"id"`
+	Service     ServiceID `json:"service"`
+	Title       string    `json:"title"`
+	Artist      string    `json:"artist,omitempty"`
+	Year        int       `json:"year,omitempty"`
+	ReleaseDate string    `json:"releaseDate,omitempty"`
+	ArtworkURL  string    `json:"artworkUrl,omitempty"`
 	// Kind — "album" | "single" | "ep". Для вкладок «Альбомы» и «Синглы и EP».
 	Kind       string `json:"kind,omitempty"`
 	TrackCount int    `json:"trackCount,omitempty"`

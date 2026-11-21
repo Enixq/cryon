@@ -656,7 +656,7 @@ func (a *App) Search(service string, query string) ([]domain.Track, error) {
 		logging.L().Warn("поиск завершился ошибкой", "service", service, "err", err)
 		return nil, err
 	}
-	return tracks, nil
+	return songSearchResults(tracks), nil
 }
 
 // SearchAll параллельно опрашивает все источники и объединяет результаты.
@@ -740,7 +740,17 @@ func (a *App) SearchInSources(query string, sourceIDs []string) ([]domain.Track,
 	for _, id := range order {
 		out = append(out, results[id]...)
 	}
-	return out, nil
+	return songSearchResults(out), nil
+}
+
+func songSearchResults(tracks []domain.Track) []domain.Track {
+	out := make([]domain.Track, 0, len(tracks))
+	for _, t := range tracks {
+		if domain.IsSongDuration(t.DurationMs) {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // ResolvePlayableTrack подбирает прямую, наиболее предпочтительную версию
@@ -1296,173 +1306,86 @@ func (a *App) RecoFeedbackState() (map[string]int, error) {
 // пользователь слушает, дизлайкнутые исполнители исключаются. Содержимое при
 // этом не подменяется — радар остаётся фактическим списком новинок.
 func (a *App) ListNewReleases(limit int) ([]domain.Track, error) {
+	if a.reco == nil {
+		return []domain.Track{}, nil
+	}
 	if limit <= 0 {
 		limit = 40
 	}
-
-	// Активные поставщики новинок в стабильном порядке.
-	order := []domain.ServiceID{
-		domain.ServiceSpotify,
-		domain.ServiceYandex,
-		domain.ServiceYouTube,
-		domain.ServiceSoundCloud,
-		domain.ServiceVK,
+	limit = min(limit, 100)
+	parent := a.ctx
+	if parent == nil {
+		parent = context.Background()
 	}
-	var providers []struct {
-		id  domain.ServiceID
-		svc domain.NewReleaser
-	}
-	for _, id := range order {
-		if nr, ok := a.registry[id].(domain.NewReleaser); ok {
-			providers = append(providers, struct {
-				id  domain.ServiceID
-				svc domain.NewReleaser
-			}{id, nr})
-		}
-	}
-	// Источники, умеющие отдавать релизы конкретного артиста — для «засева» радара
-	// по вкусу (свежие релизы знакомых и похожих исполнителей, а не редакционный
-	// мейнстрим). Реализуют domain.ArtistReleaser: Yandex с токеном, Spotify с ключами.
-	var seeders []struct {
-		id  domain.ServiceID
-		svc domain.ArtistReleaser
-	}
-	for _, id := range order {
-		if ar, ok := a.registry[id].(domain.ArtistReleaser); ok {
-			seeders = append(seeders, struct {
-				id  domain.ServiceID
-				svc domain.ArtistReleaser
-			}{id, ar})
-		}
-	}
-	if len(providers) == 0 && len(seeders) == 0 {
-		return []domain.Track{}, nil
-	}
-
-	// Затравки по вкусу: имена знакомых и похожих артистов. Их свежие релизы идут
-	// первыми, поэтому радар наполняется тем, что человек действительно слушает.
-	// Пусто, когда вкусы ещё не набраны — тогда работает обычная редакционная лента.
-	var seeds []string
-	if a.reco != nil && len(seeders) > 0 {
-		seeds = a.reco.RadarSeeds(a.ctx, 12)
-	}
-
-	// Кэш: ключ включает набор активных сервисов, limit и сигнатуру затравок,
-	// чтобы подключение источника или смена вкусов (лайк/дизлайк, новое избранное)
-	// инвалидировали запись естественным образом.
-	var ids []string
-	for _, p := range providers {
-		ids = append(ids, string(p.id))
-	}
-	cacheKey := fmt.Sprintf("newreleases:%s:%s:%d", strings.Join(ids, ","), seedSignature(seeds), limit)
+	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
+	defer cancel()
+	seeds := a.reco.RadarSeeds(ctx, 16)
+	key := fmt.Sprintf("radar:v4:%s:%s:%d", time.Now().Format("2006-01-02"), seedSignature(seeds), limit)
 	if a.store != nil {
-		if raw, ok, _ := a.store.RecoCacheGet(a.ctx, cacheKey); ok {
+		if raw, ok, _ := a.store.RecoCacheGet(ctx, key); ok {
 			var cached []domain.Track
 			if json.Unmarshal([]byte(raw), &cached) == nil {
-				// Кэшируется фактическая выдача источников, а под профиль список
-				// упорядочивается на каждом запросе: оценка или новое
-				// прослушивание должны сказаться сразу, не дожидаясь TTL.
-				return a.reco.PersonalizeReleases(a.ctx, cached), nil
+				return a.reco.PersonalizeReleases(ctx, domain.RecentTracks(cached, time.Now())), nil
 			}
 		}
 	}
-
-	// Опрашиваем редакционные ленты новинок параллельно.
-	results := make(map[domain.ServiceID][]domain.Track, len(providers)+len(seeders))
+	var all []domain.Track
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for _, p := range providers {
-		wg.Add(1)
-		go func(id domain.ServiceID, svc domain.NewReleaser) {
-			defer wg.Done()
-			defer a.recoverGoroutine("NewReleases")
-			tracks, err := svc.NewReleases(a.ctx, limit)
-			if err != nil {
-				logging.L().Warn("новинки источника не удалось получить", "service", id, "err", err)
-				return
-			}
-			mu.Lock()
-			results[id] = tracks
-			mu.Unlock()
-		}(p.id, p.svc)
+	sem := make(chan struct{}, 4)
+	collect := func(tracks []domain.Track) {
+		mu.Lock()
+		all = append(all, domain.RecentTracks(tracks, time.Now())...)
+		mu.Unlock()
 	}
-	wg.Wait()
-
-	// Засев по вкусу: свежие релизы затравочных артистов из каждого источника,
-	// поддерживающего ArtistReleaser. Ставим их ПЕРЕД редакционными в рамках своего
-	// сервиса — так они выходят в начало радара (а PersonalizeReleases ниже ещё и
-	// отсортирует по «знакомости»). Ограничиваем параллелизм: артистов до дюжины,
-	// на каждого — поиск + альбомы, гнать всё разом по внешним API незачем.
-	if len(seeds) > 0 && len(seeders) > 0 {
-		const perArtist = 4
-		const maxConcurrent = 4
-		seeded := make(map[domain.ServiceID][]domain.Track, len(seeders))
-		sem := make(chan struct{}, maxConcurrent)
-		var sg sync.WaitGroup
-		for _, sd := range seeders {
+	for _, service := range a.registry {
+		if len(seeds) > 0 {
+			seeder, ok := service.(domain.ArtistReleaser)
+			if !ok {
+				continue
+			}
 			for _, artist := range seeds {
-				sg.Add(1)
-				sem <- struct{}{}
-				go func(id domain.ServiceID, svc domain.ArtistReleaser, artist string) {
-					defer sg.Done()
+				wg.Add(1)
+				go func(seeder domain.ArtistReleaser, artist string) {
+					defer wg.Done()
+					sem <- struct{}{}
 					defer func() { <-sem }()
-					defer a.recoverGoroutine("ArtistNewReleases")
-					tracks, err := svc.ArtistNewReleases(a.ctx, artist, perArtist)
-					if err != nil {
-						logging.L().Debug("засев радара: релизы артиста не удались", "service", id, "artist", artist, "err", err)
-						return
-					}
-					if len(tracks) == 0 {
-						return
-					}
-					mu.Lock()
-					seeded[id] = append(seeded[id], tracks...)
-					mu.Unlock()
-				}(sd.id, sd.svc, artist)
+					tracks, _ := seeder.ArtistNewReleases(ctx, artist, 6)
+					collect(tracks)
+				}(seeder, artist)
 			}
-		}
-		sg.Wait()
-		for id, tracks := range seeded {
-			results[id] = append(tracks, results[id]...)
+		} else if provider, ok := service.(domain.NewReleaser); ok {
+			wg.Add(1)
+			go func(provider domain.NewReleaser) {
+				defer wg.Done()
+				tracks, _ := provider.NewReleases(ctx, limit)
+				collect(tracks)
+			}(provider)
 		}
 	}
-
-	// Чередуем источники (round-robin), чтобы радар не был завален одним
-	// сервисом, дедуп по артист+название.
-	seen := map[string]bool{}
-	out := make([]domain.Track, 0, limit)
-	for idx := 0; len(out) < limit; idx++ {
-		progressed := false
-		for _, id := range order {
-			list := results[id]
-			if idx >= len(list) {
-				continue
-			}
-			progressed = true
-			t := list[idx]
-			key := strings.ToLower(strings.TrimSpace(firstArtist(t) + "|" + t.Title))
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			out = append(out, t)
-			if len(out) >= limit {
-				break
-			}
+	wg.Add(1)
+	go func() { defer wg.Done(); collect(a.reco.RecentCatalogReleases(ctx, seeds, limit)) }()
+	wg.Wait()
+	sort.SliceStable(all, func(i, j int) bool { return all[i].ReleaseDate > all[j].ReleaseDate })
+	known := map[string]bool{}
+	out := []domain.Track{}
+	for _, t := range all {
+		key := domain.MusicKey(firstArtist(t)) + "|" + domain.MusicKey(t.Title)
+		if known[key] {
+			continue
 		}
-		if !progressed {
-			break
-		}
+		known[key] = true
+		out = append(out, t)
 	}
-
-	if a.store != nil {
-		if data, err := json.Marshal(out); err == nil {
-			_ = a.store.RecoCacheSet(a.ctx, cacheKey, string(data), 6*time.Hour)
-		}
+	out = a.reco.PersonalizeReleases(ctx, out)
+	if len(out) > limit {
+		out = out[:limit]
 	}
-	// В кэш кладём фактическую агрегацию, пользователю отдаём упорядоченную под
-	// его вкусы (знакомые исполнители сверху, дизлайкнутые — исключены).
-	return a.reco.PersonalizeReleases(a.ctx, out), nil
+	if a.store != nil && len(out) > 0 {
+		data, _ := json.Marshal(out)
+		_ = a.store.RecoCacheSet(ctx, key, string(data), time.Hour)
+	}
+	return out, nil
 }
 
 // seedSignature — короткая устойчивая подпись набора затравок для ключа кэша

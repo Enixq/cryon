@@ -80,14 +80,22 @@ export function AppLayout() {
       try {
         const response = await fetch(apiV1BaseUrl() + "/v1/system/update");
         if (!response.ok || cancelled) return;
-        const release = await response.json() as { available?: boolean; latest?: string };
+        const release = (await response.json()) as { available?: boolean; latest?: string };
         if (release.available && release.latest) {
-          notify({ kind: "info", title: "Доступно обновление Cryon", message: `Новая версия ${release.latest} доступна в разделе «Настройки → Общее».` });
+          notify({
+            kind: "info",
+            title: "Доступно обновление Cryon",
+            message: `Новая версия ${release.latest} доступна в разделе «Настройки → Общее».`,
+          });
         }
-      } catch { return; }
+      } catch {
+        return;
+      }
     };
     void check();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useDeviceSync(deviceConnectionRevision);
@@ -191,14 +199,17 @@ export function AppLayout() {
         }}
       />
 
-      <div className="relative z-10 flex min-w-0 flex-1">
+      <div className="relative z-10 flex min-h-0 min-w-0 flex-1">
         {isPhone ? (
           /* ── Мобильный каркас (телефон) ─────────────────────────────────
              Скролл-контент на всю высоту, под ним мини-плеер и нижняя
              навигация; полноэкранный «Сейчас играет» — оверлеем поверх. */
-          <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4 pt-[calc(8px+var(--safe-top))] sm:px-4">
-              <div key={`${location.pathname}${location.search}`} className="route-transition h-full">
+              <div
+                key={`${location.pathname}${location.search}`}
+                className="route-transition h-full"
+              >
                 <RouteErrorBoundary>
                   <Outlet />
                 </RouteErrorBoundary>
@@ -212,11 +223,14 @@ export function AppLayout() {
           <>
             <Sidebar />
 
-            <div className="flex min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <Topbar />
               <div className="relative flex min-h-0 flex-1">
                 <main className="min-w-0 flex-1 overflow-y-auto px-4 pb-6 sm:px-6">
-                  <div key={`${location.pathname}${location.search}`} className="route-transition h-full">
+                  <div
+                    key={`${location.pathname}${location.search}`}
+                    className="route-transition h-full"
+                  >
                     <RouteErrorBoundary>
                       <Outlet />
                     </RouteErrorBoundary>
@@ -234,7 +248,7 @@ export function AppLayout() {
                       className="absolute inset-0 z-20 bg-black/50 backdrop-blur-sm"
                       onClick={() => setNowPlayingOpen(false)}
                     />
-                    <div className="absolute inset-y-0 right-0 z-30 max-w-[90vw] overflow-y-auto shadow-2xl">
+                    <div className="absolute inset-y-0 right-0 z-30 max-w-[90vw] overflow-hidden shadow-2xl">
                       <NowPlayingPanel onClose={() => setNowPlayingOpen(false)} />
                     </div>
                   </>

@@ -1087,7 +1087,7 @@ export async function createPlaylist(
 ): Promise<UserPlaylistDto | null> {
   if (!isWailsRuntime()) {
     const playlist: UserPlaylistDto = {
-      id: `mock-playlist-${++mockPlaylistSequence}`,
+      id: `pl_mock_${++mockPlaylistSequence}`,
       title: title.trim(),
       description,
       trackCount: 0,

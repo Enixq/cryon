@@ -1,29 +1,9 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Исходный вектор иконки приложения Cryon (совпадает с LogoMark в
-  frontend/src/shared/ui/Logo.tsx). Из него генерируются растровые
-  build/appicon.png и build/windows/icon.ico — см. build/README-icons.md.
--->
-<svg width="1024" height="1024" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="cryonBg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#3b1a6e" />
-      <stop offset="1" stop-color="#150c2c" />
-    </linearGradient>
-    <linearGradient id="cryonStroke" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#c084fc" />
-      <stop offset="0.5" stop-color="#a855f7" />
-      <stop offset="1" stop-color="#38bdf8" />
-    </linearGradient>
-  </defs>
-
-  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#cryonBg)" stroke="url(#cryonStroke)" stroke-width="2.5" />
-
-  <path d="M44.3 23.4A15 15 0 1 0 44.3 40.6" stroke="url(#cryonStroke)" stroke-width="5.5" stroke-linecap="round" fill="none" />
-
-  <g fill="#e9d5ff">
-    <rect x="24.5" y="27" width="3.4" height="10" rx="1.7" />
-    <rect x="30.3" y="23" width="3.4" height="18" rx="1.7" />
-    <rect x="36.1" y="25.5" width="3.4" height="13" rx="1.7" />
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512" fill="none">
+<defs><linearGradient id="brand" x1="60" y1="130" x2="440" y2="380" gradientUnits="userSpaceOnUse"><stop stop-color="#df62ff"/><stop offset=".5" stop-color="#6648ff"/><stop offset="1" stop-color="#34d8ff"/></linearGradient><linearGradient id="wave" x1="60" y1="150" x2="260" y2="330" gradientUnits="userSpaceOnUse"><stop stop-color="#ffb2fc"/><stop offset="1" stop-color="#7eeeff"/></linearGradient></defs>
+<rect x="8" y="8" width="496" height="496" rx="112" fill="#0b0b1b"/>
+<g transform="translate(14 14) scale(.94)">
+<path d="M420 139a184 184 0 1 0 0 234" stroke="url(#brand)" stroke-width="52" stroke-linecap="round"/>
+<path d="M52 256h18m14-14v28m24-59v90m25-121v153m26-199v245m27-121v98m27-56v36m18-18h24" stroke="#18142c" stroke-width="23" stroke-linecap="round"/>
+<path d="M52 256h18m14-14v28m24-59v90m25-121v153m26-199v245m27-121v98m27-56v36m18-18h24" stroke="url(#wave)" stroke-width="13" stroke-linecap="round"/>
+<path d="M281 176c0-9 10-14 18-9l125 78c9 6 9 16 0 22l-125 78c-8 5-18 0-18-9z" fill="url(#brand)" stroke="#a5e9ff" stroke-width="4"/>
+</g></svg>

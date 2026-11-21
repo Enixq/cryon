@@ -78,8 +78,32 @@ class BackgroundPlaybackTest {
         }
     }
 
+    @Test fun radioRefillSurvivesSelectingAnotherFavoriteWhileRequestLoads() {
+        Fixture(20).use { fixture ->
+            try {
+                fixture.relatedDelayMs = 3000
+                val queue = JSONArray().put(fixture.track(0)).put(fixture.track(1))
+                start(fixture, queue, true)
+                waitFor { fixture.relatedRequests.get() == 1 }
+                command(CryonPlaybackService.ACTION_QUEUE) {
+                    putExtra(CryonPlaybackService.EXTRA_QUEUE, JSONObject().put("queue", queue).put("currentIndex", 1)
+                        .put("radio", true).put("serverBaseUrl", fixture.base).toString())
+                }
+                command(CryonPlaybackService.ACTION_PLAY) {
+                    putExtra(CryonPlaybackService.EXTRA_TRACK_ID, fixture.track(1).getString("id"))
+                    putExtra(CryonPlaybackService.EXTRA_STREAM_URL, fixture.base + "/stream/second")
+                    putExtra(CryonPlaybackService.EXTRA_AUTO_PLAY, true)
+                }
+                waitFor { (state().optJSONArray("queue")?.length() ?: 0) >= 6 }
+                check(state().optBoolean("radio")) { "Favorite playback disabled radio" }
+                check(state().optBoolean("playing")) { "Refill paused selected favorite" }
+                check(fixture.relatedRequests.get() <= 2) { "Track selection restarted the in-flight refill" }
+            } finally { command(CryonPlaybackService.ACTION_STOP) }
+        }
+    }
+
     @Test fun lanNextAndPauseWorkWithoutWebView() {
-        Fixture().use { fixture ->
+        Fixture(30).use { fixture ->
             try {
                 val queue = JSONArray().put(fixture.track(0)).put(fixture.track(1)).put(fixture.track(2))
                 start(fixture, queue, false)
@@ -88,7 +112,7 @@ class BackgroundPlaybackTest {
                         .put("deviceId", "phone").put("isHost", false).put("playbackOnThisDevice", true).toString())
                 }
                 fixture.remoteChange(queue, 2, true)
-                waitFor { state().optString("trackId") == "youtube:test-2" && state().optBoolean("playing") }
+                waitFor { state().optString("trackId") == fixture.id(2) && state().optBoolean("playing") }
                 fixture.remoteChange(queue, 2, false)
                 waitFor { !state().optBoolean("autoPlay") && !state().optBoolean("playing") }
             } finally { command(CryonPlaybackService.ACTION_STOP) }
@@ -183,7 +207,7 @@ class BackgroundPlaybackTest {
                 val tracks = JSONArray().put(fixture.track(0)).put(fixture.track(1))
                 command(CryonPlaybackService.ACTION_QUEUE) { putExtra(CryonPlaybackService.EXTRA_QUEUE, JSONObject().put("queue", tracks).put("currentIndex", 0).put("serverBaseUrl", fixture.base).toString()) }
                 command(CryonPlaybackService.ACTION_PLAY) {
-                    putExtra(CryonPlaybackService.EXTRA_TRACK_ID, "youtube:test-0")
+                    putExtra(CryonPlaybackService.EXTRA_TRACK_ID, fixture.id(0))
                     putExtra(CryonPlaybackService.EXTRA_STREAM_URL, fixture.base + "/stream/first")
                     putExtra(CryonPlaybackService.EXTRA_AUTO_PLAY, true)
                 }
@@ -196,7 +220,7 @@ class BackgroundPlaybackTest {
                 }
                 waitFor { state().optLong("positionMs") >= 12000 && !state().optBoolean("playing") && fixture.feedbackScores.contains(1) }
                 instrumentation.runOnMainSync { remote.sendCustomCommand(SessionCommand(CryonPlaybackService.ACTION_DISLIKE, Bundle.EMPTY), Bundle.EMPTY) }
-                waitFor { fixture.feedbackScores.contains(-1) && state().optString("trackId") == "youtube:test-1" && state().optBoolean("playing") }
+                waitFor { fixture.feedbackScores.contains(-1) && state().optString("trackId") == fixture.id(1) && state().optBoolean("playing") }
                 instrumentation.runOnMainSync {
                     val manager = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
                     manager.appTasks.forEach { it.finishAndRemoveTask() }
@@ -218,6 +242,7 @@ class BackgroundPlaybackTest {
         val historyRequests = AtomicInteger()
         val feedbackScores = java.util.concurrent.CopyOnWriteArrayList<Int>()
         @Volatile var resolveDelayMs = 0L
+        @Volatile var relatedDelayMs = 0L
         private val nextTrack = AtomicInteger(2)
         private var shared = JSONObject()
         private val wav = ByteBuffer.allocate(durationSeconds * 16_000 + 44).order(ByteOrder.LITTLE_ENDIAN).apply {
@@ -252,6 +277,7 @@ class BackgroundPlaybackTest {
                                 }
                                 path == "/v1/recommendations/related" -> {
                                     relatedRequests.incrementAndGet()
+                                    Thread.sleep(relatedDelayMs)
                                     JSONArray().apply { repeat(4) { val track = track(nextTrack.getAndIncrement()); put(JSONObject().put("id", track.getString("id").substringAfter(':')).put("service", "youtube").put("title", track.getString("title")).put("artists", JSONArray().put("Artist")).put("durationMs", 2000)) } }.toString().toByteArray()
                                 }
                                 path == "/v1/devices/state" -> synchronized(this) {
@@ -270,7 +296,10 @@ class BackgroundPlaybackTest {
                 }
             }
         }
-        fun track(id: Int) = JSONObject().put("id", "youtube:test-$id").put("source", "youtube").put("title", "Track $id").put("artist", "Artist").put("duration", durationSeconds).put("accent", "violet")
+        // Every fixture models a separate library. IDs must not collide with
+        // the player's recent-radio exclusion list from earlier test cases.
+        fun id(index: Int) = "youtube:test-${socket.localPort}-$index"
+        fun track(id: Int) = JSONObject().put("id", id(id)).put("source", "youtube").put("title", "Track $id").put("artist", "Artist").put("duration", durationSeconds).put("accent", "violet")
         fun snapshot(queue: JSONArray, index: Int) = JSONObject().put("queue", queue).put("currentIndex", index).put("playbackDeviceId", "phone").put("isPlaying", true).put("progress", 0).put("volume", 50)
         fun remoteChange(queue: JSONArray, index: Int, playing: Boolean) = synchronized(this) {
             shared = snapshot(queue, index).put("deviceId", "desktop").put("revision", shared.optLong("revision") + 1).put("isPlaying", playing)

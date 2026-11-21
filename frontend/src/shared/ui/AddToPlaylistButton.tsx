@@ -1,29 +1,28 @@
-import { Check, Plus } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Track } from "../types";
-import {
-  addTrackToPlaylist,
-  createPlaylist,
-  listPlaylists,
-} from "../api/client";
+import { addTrackToPlaylist, createPlaylist, listPlaylists } from "../api/client";
 import { cn } from "../lib/cn";
 
 interface Props {
   track: Track;
   opensUp?: boolean;
   alwaysVisible?: boolean;
+  showLabel?: boolean;
 }
 
 /**
  * Кнопка «+» рядом с треком: открывает меню пользовательских плейлистов,
  * позволяет добавить трек в существующий или создать новый плейлист.
  */
-export function AddToPlaylistButton({ track, opensUp = false, alwaysVisible = false }: Props) {
+export function AddToPlaylistButton({ track, alwaysVisible = false, showLabel = false }: Props) {
   const [open, setOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [added, setAdded] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
 
   const { data: playlists = [] } = useQuery({
@@ -59,7 +58,11 @@ export function AddToPlaylistButton({ track, opensUp = false, alwaysVisible = fa
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node) &&
+        !menuRef.current?.contains(e.target as Node)
+      ) {
         setOpen(false);
       }
     };
@@ -77,59 +80,87 @@ export function AddToPlaylistButton({ track, opensUp = false, alwaysVisible = fa
           setOpen((v) => !v);
         }}
         className={cn(
-          "grid h-7 w-7 place-items-center rounded-full text-slate-400 transition-colors hover:bg-white/10 hover:text-white",
-          !open && !alwaysVisible && "opacity-0 group-hover:opacity-100",
+          "text-slate-400 transition-colors hover:bg-white/10 hover:text-white",
+          showLabel
+            ? "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm"
+            : "grid h-7 w-7 place-items-center rounded-full",
+          !open && !alwaysVisible && "opacity-100 sm:opacity-0 sm:group-hover:opacity-100",
         )}
         aria-label="Добавить в плейлист"
       >
         <Plus size={16} />
+        {showLabel && <span>Добавить в плейлист</span>}
       </button>
 
-      {open && (
-        <div
-          className={cn("absolute right-0 z-20 w-60 rounded-xl border border-white/10 bg-[#1a1a24] p-2 shadow-2xl", opensUp ? "bottom-9" : "top-9")}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="px-2 py-1 text-xs uppercase tracking-wider text-slate-500">
-            Добавить в плейлист
-          </div>
-
-          <div className="max-h-52 overflow-y-auto">
-            {playlists.length === 0 ? (
-              <div className="px-2 py-2 text-sm text-slate-500">Плейлистов пока нет</div>
-            ) : (
-              playlists.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => addMutation.mutate(p.id)}
-                  className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/8"
-                >
-                  <span className="truncate">{p.title}</span>
-                  {added === p.id && <Check size={15} className="text-[#a855f7]" />}
-                </button>
-              ))
-            )}
-          </div>
-
-          <div className="mt-1 flex items-center gap-2 border-t border-white/8 pt-2">
-            <input
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && canCreate && createMutation.mutate()}
-              placeholder="Новый плейлист"
-              className="min-w-0 flex-1 rounded-lg border border-white/8 bg-white/5 px-2 py-1.5 text-sm text-white placeholder:text-slate-500 focus:border-[#a855f7] focus:outline-none"
-            />
-            <button
-              onClick={() => createMutation.mutate()}
-              disabled={!canCreate}
-              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#a855f7] text-white transition-colors hover:bg-[#9333ea] disabled:opacity-40"
-              aria-label="Создать и добавить"
+      {open &&
+        createPortal(
+          <div
+            data-track-playlist-dialog
+            className="fixed inset-0 z-[110] grid place-items-center bg-black/70 p-4"
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen(false);
+            }}
+          >
+            <div
+              ref={menuRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Добавить в плейлист"
+              className="flex max-h-[calc(100dvh-2rem)] w-full max-w-sm flex-col rounded-xl border border-white/10 bg-[#1a1a24] p-3 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
             >
-              <Plus size={16} />
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="flex items-center justify-between px-2 py-2 text-sm font-semibold text-white">
+                Добавить в плейлист
+                <button aria-label="Закрыть" onClick={() => setOpen(false)}>
+                  <X size={20} />
+                </button>
+              </div>
+              {(addMutation.error || createMutation.error) && (
+                <p className="p-2 text-sm text-rose-300">
+                  {(addMutation.error || createMutation.error)?.message}
+                </p>
+              )}
+
+              <div className="min-h-0 max-h-52 overflow-y-auto">
+                {playlists.length === 0 ? (
+                  <div className="px-2 py-2 text-sm text-slate-500">Плейлистов пока нет</div>
+                ) : (
+                  playlists.map((p) => (
+                    <button
+                      key={p.id}
+                      disabled={addMutation.isPending}
+                      onClick={() => addMutation.mutate(p.id)}
+                      className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-white/8"
+                    >
+                      <span className="truncate">{p.title}</span>
+                      {added === p.id && <Check size={15} className="text-[#a855f7]" />}
+                    </button>
+                  ))
+                )}
+              </div>
+
+              <div className="mt-1 flex shrink-0 items-center gap-2 border-t border-white/8 pt-2">
+                <input
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && canCreate && createMutation.mutate()}
+                  placeholder="Новый плейлист"
+                  className="min-w-0 flex-1 rounded-lg border border-white/8 bg-white/5 px-2 py-1.5 text-sm text-white placeholder:text-slate-500 focus:border-[#a855f7] focus:outline-none"
+                />
+                <button
+                  onClick={() => createMutation.mutate()}
+                  disabled={!canCreate}
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[#a855f7] text-white transition-colors hover:bg-[#9333ea] disabled:opacity-40"
+                  aria-label="Создать и добавить"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -322,10 +322,14 @@ type yaTrack struct {
 	Artists    []struct {
 		Name string `json:"name"`
 	} `json:"artists"`
-	Albums []struct {
-		ID    json.Number `json:"id"`
-		Title string      `json:"title"`
-	} `json:"albums"`
+	Albums []yaTrackAlbum `json:"albums"`
+}
+
+type yaTrackAlbum struct {
+	ID          json.Number `json:"id"`
+	Title       string      `json:"title"`
+	ReleaseDate string      `json:"releaseDate"`
+	Genre       string      `json:"genre"`
 }
 
 func (t yaTrack) toDomain() domain.Track {
@@ -336,9 +340,9 @@ func (t yaTrack) toDomain() domain.Track {
 		}
 	}
 
-	album := ""
+	album, releaseDate, genre := "", "", ""
 	if len(t.Albums) > 0 {
-		album = t.Albums[0].Title
+		album, releaseDate, genre = t.Albums[0].Title, t.Albums[0].ReleaseDate, t.Albums[0].Genre
 	}
 
 	// ID трека для стрима кодируем как "trackID:albumID" — download-info
@@ -359,6 +363,8 @@ func (t yaTrack) toDomain() domain.Track {
 		Title:        t.Title,
 		Artists:      artists,
 		Album:        album,
+		ReleaseDate:  releaseDate,
+		Genre:        genre,
 		DurationMs:   t.DurationMs,
 		ArtworkURL:   normalizeCover(t.CoverURI),
 		ExternalURL:  externalURL(t.ID.String(), t.Albums),
@@ -375,10 +381,7 @@ func normalizeCover(coverURI string) string {
 	return "https://" + strings.Replace(coverURI, "%%", "400x400", 1)
 }
 
-func externalURL(trackID string, albums []struct {
-	ID    json.Number `json:"id"`
-	Title string      `json:"title"`
-}) string {
+func externalURL(trackID string, albums []yaTrackAlbum) string {
 	if len(albums) > 0 {
 		return fmt.Sprintf("https://music.yandex.ru/album/%s/track/%s", albums[0].ID.String(), trackID)
 	}
@@ -524,8 +527,8 @@ func (s *Service) GetArtist(ctx context.Context, name string) (domain.ArtistInfo
 	var br struct {
 		Result struct {
 			Artist struct {
-				Name    string `json:"name"`
-				Cover   struct {
+				Name  string `json:"name"`
+				Cover struct {
 					URI string `json:"uri"`
 				} `json:"cover"`
 				OgImage string `json:"ogImage"`
@@ -684,14 +687,16 @@ func albumHasArtist(al yaAlbum, want string) bool {
 
 // yaAlbum — релиз из ответа Yandex Music API (нужные поля).
 type yaAlbum struct {
-	ID         json.Number `json:"id"`
-	Title      string      `json:"title"`
-	Year       int         `json:"year"`
-	CoverURI   string      `json:"coverUri"`
-	Type       string      `json:"type"`
-	MetaType   string      `json:"metaType"`
-	TrackCount int         `json:"trackCount"`
-	Artists    []struct {
+	ReleaseDate string      `json:"releaseDate"`
+	Genre       string      `json:"genre"`
+	ID          json.Number `json:"id"`
+	Title       string      `json:"title"`
+	Year        int         `json:"year"`
+	CoverURI    string      `json:"coverUri"`
+	Type        string      `json:"type"`
+	MetaType    string      `json:"metaType"`
+	TrackCount  int         `json:"trackCount"`
+	Artists     []struct {
 		Name string `json:"name"`
 	} `json:"artists"`
 }
@@ -716,6 +721,7 @@ func (a yaAlbum) toDomain() domain.Album {
 		Title:       a.Title,
 		Artist:      artist,
 		Year:        a.Year,
+		ReleaseDate: a.ReleaseDate,
 		ArtworkURL:  normalizeCover(a.CoverURI),
 		Kind:        kind,
 		TrackCount:  a.TrackCount,
@@ -866,7 +872,9 @@ func (s *Service) albumTracks(ctx context.Context, albumID string) ([]domain.Tra
 	}
 	var ar struct {
 		Result struct {
-			Volumes [][]yaTrack `json:"volumes"`
+			Volumes     [][]yaTrack `json:"volumes"`
+			ReleaseDate string      `json:"releaseDate"`
+			Genre       string      `json:"genre"`
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(body, &ar); err != nil {
@@ -875,7 +883,14 @@ func (s *Service) albumTracks(ctx context.Context, albumID string) ([]domain.Tra
 	out := make([]domain.Track, 0)
 	for _, vol := range ar.Result.Volumes {
 		for _, t := range vol {
-			out = append(out, t.toDomain())
+			track := t.toDomain()
+			if track.ReleaseDate == "" {
+				track.ReleaseDate = ar.Result.ReleaseDate
+			}
+			if track.Genre == "" {
+				track.Genre = ar.Result.Genre
+			}
+			out = append(out, track)
 		}
 	}
 	return out, nil
@@ -887,7 +902,9 @@ func (s *Service) apiGet(ctx context.Context, rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "OAuth "+s.currentToken())
+	if token := s.currentToken(); token != "" {
+		req.Header.Set("Authorization", "OAuth "+token)
+	}
 	req.Header.Set("User-Agent", "Yandex-Music-API")
 	req.Header.Set("X-Yandex-Music-Client", "WindowsPhone/3.20")
 

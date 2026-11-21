@@ -1,0 +1,1 @@
+{"private":true,"type":"module","scripts":{"icons":"node generate-icons.mjs"},"devDependencies":{"sharp":"^0.34.5"}}

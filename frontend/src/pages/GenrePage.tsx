@@ -2,58 +2,12 @@ import { ArrowLeft, Play, Music2 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTrackListPlayer } from "../store/playerStore";
-import { searchAll } from "../shared/api/client";
-import { genreBySlug, type Genre } from "../shared/data/genres";
-import type { Track } from "../shared/types";
+import { catalogCollection } from "../shared/api/collections";
+import { genreBySlug } from "../shared/data/genres";
 import { TrackRow } from "../shared/ui/TrackRow";
 import { Cover } from "../shared/ui/Cover";
 import { accentStyle } from "../shared/ui/accents";
 import { pluralWithCount } from "../shared/lib/format";
-
-// Сколько исполнителей-семян реально опрашиваем и сколько треков берём.
-// Ограничения держат нагрузку на встроенный (мобильный) backend разумной:
-// каждый seed — это полный мультиисточниковый поиск.
-const MAX_SEEDS = 6;
-const MAX_PER_SEED = 8;
-const MAX_TOTAL = 60;
-
-// Ключ дедупа: одна и та же песня из YouTube и SoundCloud имеет разные id,
-// поэтому схлопываем по «исполнитель|название», а не по id.
-function dedupeKey(t: Track): string {
-  return `${t.artist}|${t.title}`.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-/**
- * Собирает подборку жанра по РЕАЛЬНЫМ исполнителям (genre.seeds), а не по
- * названию жанра. Раньше поиск шёл по строке вида «русский рок» и находил
- * треки, буквально так названные, а не сам жанр. Теперь опрашиваем несколько
- * артистов жанра и чередуем их треки по кругу — подборка перемешана и
- * представляет жанр, а не одного исполнителя.
- */
-async function collectGenreTracks(genre: Genre): Promise<Track[]> {
-  const seeds = genre.seeds && genre.seeds.length > 0 ? genre.seeds : [genre.query];
-  const picked = seeds.slice(0, MAX_SEEDS);
-
-  // allSettled: неудача по одному исполнителю (таймаут, VPN) не должна ронять
-  // всю подборку — просто берём то, что нашлось у остальных.
-  const settled = await Promise.allSettled(picked.map((s) => searchAll(s)));
-  const buckets = settled.map((r) => (r.status === "fulfilled" ? r.value : []));
-
-  const seen = new Set<string>();
-  const out: Track[] = [];
-  for (let round = 0; round < MAX_PER_SEED && out.length < MAX_TOTAL; round++) {
-    for (const bucket of buckets) {
-      const track = bucket[round];
-      if (!track) continue;
-      const key = dedupeKey(track);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(track);
-      if (out.length >= MAX_TOTAL) break;
-    }
-  }
-  return out;
-}
 
 /**
  * Страница жанра: реальная подборка треков по жанру, оформленная как рабочий
@@ -67,9 +21,13 @@ export function GenrePage() {
   const { playTrack, isPlaying, activeTrackId } = useTrackListPlayer();
   const genre = genreBySlug(slug);
 
-  const { data: tracks, isFetching, isError } = useQuery({
+  const {
+    data: tracks,
+    isFetching,
+    isError,
+  } = useQuery({
     queryKey: ["genre", genre?.slug],
-    queryFn: () => collectGenreTracks(genre!),
+    queryFn: () => catalogCollection(genre!.slug),
     enabled: Boolean(genre),
     staleTime: 5 * 60 * 1000,
   });
@@ -107,7 +65,9 @@ export function GenrePage() {
         />
         <div className="flex min-w-0 flex-col items-center sm:items-start">
           <p className="text-sm font-medium uppercase tracking-wide text-slate-400">Жанр</p>
-          <h1 className="mt-1 max-w-full truncate text-3xl font-black text-white sm:text-5xl">{genre.title}</h1>
+          <h1 className="mt-1 max-w-full truncate text-3xl font-black text-white sm:text-5xl">
+            {genre.title}
+          </h1>
           <p className="mt-2 text-sm text-slate-400">
             {isFetching
               ? "Собираем подборку…"

@@ -1,10 +1,22 @@
 package ru.cryon.app
 
 import android.content.Context
+import android.content.Intent
 import android.webkit.JavascriptInterface
 
 /** Shared by the real activity and foreground WebView instrumentation. */
 open class NativePlaybackBridge(private val context: Context) {
+    @JavascriptInterface
+    fun nativeDownload(url: String): String {
+        val ticket = java.util.UUID.randomUUID().toString()
+        AudioExportActivity.results[ticket] = "{\"state\":\"loading\"}"
+        context.startActivity(Intent(context, AudioExportActivity::class.java).putExtra("url", url).putExtra("ticket", ticket).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        return ticket
+    }
+
+    @JavascriptInterface
+    fun nativeDownloadStatus(ticket: String): String = AudioExportActivity.results[ticket] ?: "{\"state\":\"error\",\"error\":\"Скачивание не найдено\"}"
+
     @JavascriptInterface
     fun nativePlay(streamUrl: String, trackId: String, title: String, artist: String, artworkUrl: String, durationMs: Long, autoPlay: Boolean, startPositionMs: Long, mimeType: String, commandId: Long) {
         CryonPlaybackService.command(context, CryonPlaybackService.ACTION_PLAY) {

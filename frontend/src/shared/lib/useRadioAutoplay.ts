@@ -58,7 +58,7 @@ export function startRadioAutoplay(): () => void {
         if (
           !latest.radio ||
           !latest.playbackOnThisDevice ||
-          !latest.queue.includes(originalCurrent)
+          !latest.queue.some((track) => track.id === originalCurrent.id)
         )
           return;
         const known = new Set(latest.queue.map((track) => track.id));

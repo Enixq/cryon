@@ -31,6 +31,7 @@ import { sourceName } from "../shared/sources";
 import { cn } from "../shared/lib/cn";
 import { ArtistLink } from "../shared/ui/ArtistLink";
 import { useUiStore } from "../store/uiStore";
+import { LyricsSources } from "../shared/ui/LyricsSources";
 import { useLyrics } from "../shared/lib/useLyrics";
 import { activeLineIndex, type LyricLine } from "../shared/lib/lyrics";
 
@@ -88,26 +89,33 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
 
   return (
     <aside
+      data-view={bottomTab}
       className={cn(
-        "flex shrink-0 flex-col gap-4 border-l border-white/5 bg-[#0c0e1a]/60 p-5",
+        "now-playing-panel flex shrink-0 flex-col gap-4 border-l border-white/5 bg-[#0c0e1a]/60 p-5",
         // В выдвижном режиме (узкий экран) панель занимает всю высоту контента
         // и фиксированную ширину; иначе — обычная встроенная ширина.
-        onClose ? "h-full w-[360px]" : isExpanded ? "w-[410px]" : "w-[340px]",
+        onClose
+          ? "h-full w-[min(360px,90vw)]"
+          : isExpanded
+            ? "w-[min(410px,30vw)]"
+            : "w-[clamp(280px,24vw,340px)]",
       )}
     >
       {/* Заголовок */}
       <div className="flex items-center justify-between">
         <span className="text-sm font-semibold text-white">Сейчас играет</span>
         <div className="flex items-center gap-1 text-slate-400">
-          {onClose ? (
+          {
             <button
-              onClick={onClose}
+              onClick={() =>
+                onClose ? onClose() : useUiStore.getState().setNowPlayingCollapsed(true)
+              }
               className="grid h-8 w-8 place-items-center rounded-lg hover:bg-white/5 hover:text-white"
-              aria-label="Закрыть панель"
+              aria-label="Свернуть панель"
             >
               <X size={18} />
             </button>
-          ) : null}
+          }
           <button
             onClick={() => setShowQuickActions((v) => !v)}
             className="grid h-8 w-8 place-items-center rounded-lg hover:bg-white/5 hover:text-white"
@@ -126,7 +134,10 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
       </div>
       {showQuickActions && track ? (
         <div className="rounded-xl border border-white/10 bg-white/5 p-2 text-sm text-slate-300">
-          <button onClick={copyTrackInfo} className="flex w-full items-center rounded-lg px-2 py-2 text-left hover:bg-white/10">
+          <button
+            onClick={copyTrackInfo}
+            className="flex w-full items-center rounded-lg px-2 py-2 text-left hover:bg-white/10"
+          >
             Копировать название трека
           </button>
           <button
@@ -148,7 +159,7 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
               занимала бы ~340px и «съедала» список. */}
           <div
             className={cn(
-              "relative mx-auto aspect-square w-full overflow-hidden rounded-2xl",
+              "panel-cover relative mx-auto aspect-square w-full overflow-hidden rounded-2xl",
               isExpanded ? "max-w-[280px]" : "max-w-[200px]",
             )}
             style={accentStyle(track.accent)}
@@ -168,19 +179,34 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           </div>
 
           {/* Мета */}
-          <div className="flex items-start justify-between gap-3">
+          <div className="panel-details flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="break-words text-xl font-bold leading-tight text-white" title={track.title}>{track.title}</h3>
+              <h3
+                className="break-words text-xl font-bold leading-tight text-white"
+                title={track.title}
+              >
+                {track.title}
+              </h3>
               <div className="flex min-w-0 items-center gap-2 text-slate-400">
                 <p className="min-w-0 truncate">
-                  <ArtistLink name={track.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
+                  <ArtistLink
+                    name={track.artist}
+                    onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)}
+                  />
                 </p>
-                {track.quality ? <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">{track.quality}</span> : null}
+                {track.quality ? (
+                  <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+                    {track.quality}
+                  </span>
+                ) : null}
               </div>
             </div>
             <button
               onClick={() => toggleLikeWithTrack({ ...track, liked: isFavorite })}
-              className={cn("mt-1 transition-colors", isFavorite ? "text-[#a855f7]" : "text-slate-400 hover:text-white")}
+              className={cn(
+                "mt-1 transition-colors",
+                isFavorite ? "text-[#a855f7]" : "text-slate-400 hover:text-white",
+              )}
               aria-label="В избранное"
             >
               <Heart size={22} fill={isFavorite ? "currentColor" : "none"} />
@@ -188,7 +214,7 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           </div>
 
           {/* Форма волны + время */}
-          <div className="flex flex-col gap-2">
+          <div className="panel-waveform flex flex-col gap-2">
             <Waveform
               seed={track.id}
               progress={progress}
@@ -203,15 +229,22 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           </div>
 
           {/* Управление */}
-          <div className="flex items-center justify-between px-1">
+          <div className="panel-controls flex items-center justify-between px-1">
             <button
               onClick={toggleShuffle}
-              className={cn("transition-colors", shuffle ? "text-[#a855f7]" : "text-slate-400 hover:text-white")}
+              className={cn(
+                "transition-colors",
+                shuffle ? "text-[#a855f7]" : "text-slate-400 hover:text-white",
+              )}
               aria-label="Перемешать"
             >
               <Shuffle size={20} />
             </button>
-            <button onClick={previous} className="text-white transition-transform hover:scale-110" aria-label="Предыдущий">
+            <button
+              onClick={previous}
+              className="text-white transition-transform hover:scale-110"
+              aria-label="Предыдущий"
+            >
               <SkipBack size={24} fill="currentColor" />
             </button>
             <button
@@ -220,14 +253,25 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
               style={{ backgroundColor: accent, boxShadow: `0 10px 25px -5px ${accent}66` }}
               aria-label={isPlaying ? "Пауза" : "Воспроизвести"}
             >
-              {isPlaying ? <Pause size={26} fill="currentColor" /> : <Play size={26} fill="currentColor" className="ml-1" />}
+              {isPlaying ? (
+                <Pause size={26} fill="currentColor" />
+              ) : (
+                <Play size={26} fill="currentColor" className="ml-1" />
+              )}
             </button>
-            <button onClick={next} className="text-white transition-transform hover:scale-110" aria-label="Следующий">
+            <button
+              onClick={next}
+              className="text-white transition-transform hover:scale-110"
+              aria-label="Следующий"
+            >
               <SkipForward size={24} fill="currentColor" />
             </button>
             <button
               onClick={cycleRepeat}
-              className={cn("transition-colors", repeat !== "off" ? "text-[#a855f7]" : "text-slate-400 hover:text-white")}
+              className={cn(
+                "transition-colors",
+                repeat !== "off" ? "text-[#a855f7]" : "text-slate-400 hover:text-white",
+              )}
               aria-label="Повтор"
             >
               {repeat === "one" ? <Repeat1 size={20} /> : <Repeat size={20} />}
@@ -235,9 +279,19 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           </div>
 
           {/* Громкость */}
-          <div className="flex items-center gap-3">
-            <button onClick={toggleMute} className="text-slate-400 transition-colors hover:text-white" aria-label="Без звука">
-              {muted || volume === 0 ? <VolumeX size={20} /> : volume < 50 ? <Volume1 size={20} /> : <Volume2 size={20} />}
+          <div className="panel-volume flex items-center gap-3">
+            <button
+              onClick={toggleMute}
+              className="text-slate-400 transition-colors hover:text-white"
+              aria-label="Без звука"
+            >
+              {muted || volume === 0 ? (
+                <VolumeX size={20} />
+              ) : volume < 50 ? (
+                <Volume1 size={20} />
+              ) : (
+                <Volume2 size={20} />
+              )}
             </button>
             <Slider
               value={effectiveVolume}
@@ -247,7 +301,9 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
               ariaLabel="Громкость"
               className="flex-1"
             />
-            <span className="w-9 text-right text-xs tabular-nums text-slate-400">{effectiveVolume}%</span>
+            <span className="w-9 text-right text-xs tabular-nums text-slate-400">
+              {effectiveVolume}%
+            </span>
           </div>
         </>
       ) : (
@@ -281,7 +337,10 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
             Текст
           </button>
           {bottomTab === "queue" ? (
-            <button onClick={clearQueue} className="ml-auto text-xs text-slate-400 transition-colors hover:text-white">
+            <button
+              onClick={clearQueue}
+              className="ml-auto text-xs text-slate-400 transition-colors hover:text-white"
+            >
               Очистить
             </button>
           ) : null}
@@ -330,56 +389,51 @@ function LyricsView({
   accent: string;
   onSeek: (position: number) => void;
 }) {
-  const { loading, found, instrumental, lines, plain } = useLyrics(track);
-  const active = activeLineIndex(lines, progress);
+  const lyrics = useLyrics(track);
+  const active = activeLineIndex(lyrics.lines, progress);
   const activeRef = useRef<HTMLButtonElement>(null);
-
-  // Держим активную строку в поле зрения при её смене.
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    activeRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   }, [active]);
-
-  if (!track) {
-    return <LyricsHint text="Нет трека" />;
-  }
-  if (loading) {
-    return <LyricsHint text="Загружаем текст…" />;
-  }
-  if (instrumental) {
-    return <LyricsHint text="Инструментальная композиция" />;
-  }
-  if (!found || (lines.length === 0 && !plain.trim())) {
-    return <LyricsHint text="Текст не найден" />;
-  }
-
-  // Синхронизированный текст: строки-кнопки с подсветкой активной.
-  if (lines.length > 0) {
-    return (
-      <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-2">
-        {lines.map((line: LyricLine, i: number) => (
-          <button
-            key={`${line.time}-${i}`}
-            ref={i === active ? activeRef : undefined}
-            onClick={() => onSeek(line.time)}
-            className={cn(
-              "rounded-md px-2 py-1 text-left text-sm leading-snug transition-colors",
-              i === active
-                ? "font-semibold text-white"
-                : "text-slate-500 hover:text-slate-300",
-            )}
-            style={i === active ? { color: accent } : undefined}
-          >
-            {line.text || "♪"}
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  // Фолбэк: обычный текст без синхронизации.
   return (
-    <div className="-mr-2 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap pr-2 text-sm leading-relaxed text-slate-300">
-      {plain}
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <LyricsSources lyrics={lyrics} hasSource={track?.source === "yandex"} />
+      {lyrics.loading ? (
+        <LyricsHint text="Загружаем текст…" />
+      ) : lyrics.instrumental ? (
+        <LyricsHint text="Инструментальная композиция" />
+      ) : lyrics.lines.length > 0 ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {lyrics.lines.map((line: LyricLine, index: number) => (
+            <button
+              key={`${line.time}-${index}`}
+              ref={index === active ? activeRef : undefined}
+              onClick={() => onSeek(line.time)}
+              className={cn(
+                "block w-full rounded-md px-2 py-1 text-left text-sm leading-relaxed",
+                index === active
+                  ? "font-semibold text-white"
+                  : "text-slate-500 hover:text-slate-300",
+              )}
+              style={index === active ? { color: accent } : undefined}
+            >
+              {line.text || "♪"}
+            </button>
+          ))}
+        </div>
+      ) : lyrics.found && lyrics.plain ? (
+        <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-slate-300">
+          {lyrics.plain}
+        </div>
+      ) : (
+        <LyricsHint
+          text={
+            lyrics.error
+              ? "Источник текста недоступен. Попробуйте другой."
+              : "Текст не найден — попробуйте другой источник"
+          }
+        />
+      )}
     </div>
   );
 }
@@ -417,14 +471,26 @@ function QueueRow({
       )}
     >
       <button onClick={onPlay} aria-label="Воспроизвести">
-        <Cover accent={item.accent} src={coverUrl} alt={item.title} className="h-9 w-9" rounded="rounded-md" iconSize={14} />
+        <Cover
+          accent={item.accent}
+          src={coverUrl}
+          alt={item.title}
+          className="h-9 w-9"
+          rounded="rounded-md"
+          iconSize={14}
+        />
       </button>
       <div className="min-w-0 flex-1">
-        <div className={cn("truncate text-sm font-medium", active ? "text-[#c084fc]" : "text-white")}>
+        <div
+          className={cn("truncate text-sm font-medium", active ? "text-[#c084fc]" : "text-white")}
+        >
           {item.title}
         </div>
         <div className="truncate text-xs text-slate-400">
-          <ArtistLink name={item.artist} onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)} />
+          <ArtistLink
+            name={item.artist}
+            onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)}
+          />
         </div>
       </div>
       {active && playing ? (
@@ -432,7 +498,9 @@ function QueueRow({
           <EqIcon />
         </span>
       ) : (
-        <span className="hidden text-xs text-slate-500 group-hover:inline">{sourceName(item.source)}</span>
+        <span className="hidden text-xs text-slate-500 group-hover:inline">
+          {sourceName(item.source)}
+        </span>
       )}
       <div className="flex items-center gap-1">
         <TrackQuickActions track={item} />
@@ -452,9 +520,18 @@ function QueueRow({
 function EqIcon() {
   return (
     <span className="flex h-4 items-end gap-0.5">
-      <span className="w-0.5 animate-[eq_0.8s_ease-in-out_infinite] bg-current" style={{ height: "60%" }} />
-      <span className="w-0.5 animate-[eq_0.8s_ease-in-out_infinite_0.2s] bg-current" style={{ height: "100%" }} />
-      <span className="w-0.5 animate-[eq_0.8s_ease-in-out_infinite_0.4s] bg-current" style={{ height: "40%" }} />
+      <span
+        className="w-0.5 animate-[eq_0.8s_ease-in-out_infinite] bg-current"
+        style={{ height: "60%" }}
+      />
+      <span
+        className="w-0.5 animate-[eq_0.8s_ease-in-out_infinite_0.2s] bg-current"
+        style={{ height: "100%" }}
+      />
+      <span
+        className="w-0.5 animate-[eq_0.8s_ease-in-out_infinite_0.4s] bg-current"
+        style={{ height: "40%" }}
+      />
     </span>
   );
 }

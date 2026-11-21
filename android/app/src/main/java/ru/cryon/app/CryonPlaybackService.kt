@@ -54,6 +54,7 @@ class CryonPlaybackService : MediaSessionService() {
     private var generation = 0L
     private var repeat = "off"
     private var shuffle = false
+    private var radioEpoch = 0L
     private var radioLoading = false
     private var retryRadioAt = 0L
     private var radioAnchorOffset = 0
@@ -241,7 +242,6 @@ class CryonPlaybackService : MediaSessionService() {
             ACTION_PLAY -> {
                 generation++
                 preloadingNext = false
-                radioLoading = false
                 recovering = false
                 historyRecordedId = ""
                 waitingAfterError = false
@@ -284,6 +284,7 @@ class CryonPlaybackService : MediaSessionService() {
             ACTION_NEXT -> skipNext()
             ACTION_PREVIOUS -> { if (playbackPlayer.currentPosition > 3000) playbackPlayer.seekTo(0) else playQueueIndex((queueIndex - 1).coerceAtLeast(0)) }
             ACTION_STOP -> {
+                radioEpoch++
                 generation++
                 preloadingNext = false
                 radioLoading = false
@@ -375,6 +376,7 @@ class CryonPlaybackService : MediaSessionService() {
         val incoming = snapshot.optJSONArray("queue") ?: return
         val nextQueue = (0 until incoming.length()).map { incoming.getJSONObject(it) }
         if (nextQueue.map { it.optString("id") } != queue.map { it.optString("id") }) {
+            radioEpoch++
             generation++
             preloadingNext = false
             radioLoading = false
@@ -495,7 +497,6 @@ class CryonPlaybackService : MediaSessionService() {
             rejectedTracks.add(feedbackKey(track))
             generation++
             preloadingNext = false
-            radioLoading = false
             val p = player ?: return
             if (p.mediaItemCount > p.currentMediaItemIndex + 1) p.removeMediaItems(p.currentMediaItemIndex + 1, p.mediaItemCount)
             for (index in queue.lastIndex downTo queueIndex + 1) {
@@ -656,7 +657,6 @@ class CryonPlaybackService : MediaSessionService() {
         val spec = queue.getOrNull(index) ?: return
         generation++
         preloadingNext = false
-        radioLoading = false
         keepPlaying = autoPlay
         val token = generation
         worker.execute {
@@ -673,12 +673,12 @@ class CryonPlaybackService : MediaSessionService() {
     private fun maybeRefillRadio() {
         if (!radioEnabled || radioLoading || serverBaseUrl.isBlank() || queue.isEmpty() || queue.size - queueIndex - 1 > 6 || System.currentTimeMillis() < retryRadioAt) return
         val anchor = queue[(queue.lastIndex - radioAnchorOffset % minOf(queue.size, 6)).coerceAtLeast(0)]
-        val token = generation
+        val token = radioEpoch
         radioLoading = true
         radioWorker.execute {
             val result = runCatching { request("/v1/recommendations/related", JSONObject().put("track", backendTrack(anchor)).put("limit", 24)) }
             progressHandler.post {
-                if (token != generation) return@post
+                if (token != radioEpoch) return@post
                 radioLoading = false
                 if (!radioEnabled) return@post
                 val candidates = result.getOrNull()?.optJSONArray("tracks") ?: JSONArray()
