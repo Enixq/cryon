@@ -14,6 +14,7 @@ import { pluralWithCount } from "../shared/lib/format";
 import { listLocalTracks, listFavorites, listPlaylists } from "../shared/api/client";
 import { listSavedCollections } from "../shared/api/collections";
 import { CollectionCard } from "../shared/ui/CollectionCard";
+import { ReceiveTrackButton } from "../shared/ui/ReceiveTrackButton";
 import type { Track } from "../shared/types";
 
 type Tab = "tracks" | "albums" | "artists" | "playlists";
@@ -170,6 +171,7 @@ export function LibraryPage() {
       />
 
       {/* Вкладки — подчёркнутая полоса со счётчиками (как на макете). */}
+      <ReceiveTrackButton />
       <TabBar tabs={tabs} active={tab} onChange={setTab} />
 
       {/* Треки */}

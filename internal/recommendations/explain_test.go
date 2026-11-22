@@ -21,3 +21,16 @@ func TestAdventureChangesRankingAndMetricsUseLibraryArtists(t *testing.T) {
 		t.Fatal("comparison mutated original candidates")
 	}
 }
+
+func TestShortCachedReasons(t *testing.T) {
+	for before, after := range map[string]string{
+		"Похож по графу исполнителей на Ai Mori":    "Похож на Ai Mori",
+		"Исполнитель из вашей библиотеки и истории": "Знакомый исполнитель",
+		"Новый для вашей библиотеки исполнитель":    "Новый исполнитель",
+		"Из чарта России":                           "Из чарта России",
+	} {
+		if got := shortReason(before); got != after {
+			t.Errorf("got %q want %q", got, after)
+		}
+	}
+}

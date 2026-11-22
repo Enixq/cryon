@@ -2,6 +2,7 @@ package vkmauth
 
 import (
 	"context"
+	"errors"
 
 	"github.com/oklog/ulid/v2"
 )
@@ -31,6 +32,9 @@ func getAnonymousToken(ctx context.Context) (*anonymousToken, error) {
 
 	if resp.IsError() {
 		return nil, newUnknownError(resp.StatusCode, "getAnonymousToken-resp.IsError()", respErr)
+	}
+	if result.Token == "" {
+		return nil, errors.New("VK returned an empty anonymous token")
 	}
 
 	result.DeviceId = deviceId

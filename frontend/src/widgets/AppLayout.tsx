@@ -7,7 +7,7 @@ import { NowPlayingPanel } from "./NowPlayingPanel";
 import { PlayerBar } from "./PlayerBar";
 import { BottomNav } from "./BottomNav";
 import { MobileMiniPlayer } from "./MobileMiniPlayer";
-import { MobileNowPlaying } from "./MobileNowPlaying";
+import { MobileNowPlayingSheet } from "./MobileNowPlaying";
 import { useAudioEngine } from "../store/audioEngine";
 import { useRadioAutoplay } from "../shared/lib/useRadioAutoplay";
 import { usePlaybackPreload } from "../shared/lib/usePlaybackPreload";
@@ -263,7 +263,7 @@ export function AppLayout() {
       </div>
 
       {/* Полноэкранный мобильный плеер поверх каркаса (z-40 < модалок z-50). */}
-      {isPhone && nowPlayingOpen && currentTrack ? <MobileNowPlaying /> : null}
+      {isPhone && currentTrack ? <MobileNowPlayingSheet open={nowPlayingOpen} /> : null}
 
       <OnboardingModal />
       <EqualizerModal />

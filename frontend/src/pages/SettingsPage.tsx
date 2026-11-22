@@ -22,6 +22,7 @@ import type { SourceId, Track } from "../shared/types";
 import { ServiceIcon } from "../shared/ui/ServiceIcon";
 import { PageHeader } from "../shared/ui/PageHeader";
 import { VKConnection } from "../shared/ui/VKConnection";
+import { ReceiveTrackButton } from "../shared/ui/ReceiveTrackButton";
 import { RecommendationSettings } from "../shared/ui/RecommendationSettings";
 import { LibrarySyncSettings } from "../shared/ui/LibrarySyncSettings";
 import { TabBar, type TabItem } from "../shared/ui/TabBar";
@@ -281,6 +282,7 @@ export function SettingsPage() {
   return (
     <div className="flex max-w-5xl flex-col gap-6 py-2">
       <PageHeader title="Настройки" icon={Settings2} />
+      <ReceiveTrackButton />
 
       {/* Вкладки: раньше всё было одним длинным свитком («большая каша»).
           Теперь разложено по смыслу — обычному пользователю достаточно вкладки

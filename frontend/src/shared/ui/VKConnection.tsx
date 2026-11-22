@@ -5,10 +5,11 @@ import { ServiceIcon } from "./ServiceIcon";
 
 type Login = {
   id: string;
-  state: "loading" | "code" | "connected" | "error" | "cancelled";
+  state: "loading" | "code" | "captcha" | "connected" | "error" | "cancelled";
   method?: string;
   canResend: boolean;
   error?: string;
+  captchaImage?: string;
 };
 const path = "/v1/accounts/vk/login";
 const field =
@@ -34,7 +35,9 @@ export function VKConnection() {
       ),
     enabled: hasApiV1Runtime(),
     refetchInterval: (query) =>
-      ["loading", "code"].includes(query.state.data?.session?.state || "") ? 1000 : false,
+      ["loading", "code", "captcha"].includes(query.state.data?.session?.state || "")
+        ? 1000
+        : false,
     retry: false,
   });
   useEffect(() => {
@@ -65,7 +68,8 @@ export function VKConnection() {
     }
   };
   const session = data?.session;
-  const waiting = session?.state === "code";
+  const captcha = session?.state === "captcha";
+  const waiting = session?.state === "code" || captcha;
   const loading = session?.state === "loading";
   return (
     <section className="mb-5 break-inside-avoid rounded-2xl border border-white/5 bg-white/[0.025] p-5">
@@ -135,19 +139,31 @@ export function VKConnection() {
                 void send({ id: sessionId, code });
               }}
             >
-              <p className="text-sm text-slate-300">
-                Введите код{" "}
-                {session?.method === "email"
-                  ? "из письма ВК"
-                  : session?.method === "sms"
-                    ? "из SMS"
-                    : "из уведомления ВК"}
-                .
-              </p>
+              {captcha ? (
+                <>
+                  <p className="text-sm text-slate-300">Введите символы с картинки ВК.</p>
+                  <img
+                    src={session.captchaImage}
+                    alt="Проверка безопасности ВК"
+                    className="max-h-28 max-w-full self-start rounded-lg bg-white"
+                    referrerPolicy="no-referrer"
+                  />
+                </>
+              ) : (
+                <p className="text-sm text-slate-300">
+                  Введите код{" "}
+                  {session?.method === "email"
+                    ? "из письма ВК"
+                    : session?.method === "sms" || session?.method === "sms_inbox"
+                      ? "из SMS"
+                      : "из уведомления ВК"}
+                  .
+                </p>
+              )}
               <input
-                aria-label="Код подтверждения ВК"
-                autoComplete="one-time-code"
-                inputMode="numeric"
+                aria-label={captcha ? "Символы с картинки ВК" : "Код подтверждения ВК"}
+                autoComplete={captcha ? "off" : "one-time-code"}
+                inputMode={captcha ? "text" : "numeric"}
                 value={code}
                 onChange={(event) => setCode(event.target.value)}
                 className={field}
@@ -187,7 +203,21 @@ export function VKConnection() {
               {manual ? "Войти по телефону" : "У меня есть токен ВК Музыки"}
             </button>
           )}
-          {manual && <p className="mt-3 text-xs leading-relaxed text-slate-400">Токен ВК Музыки получается автоматически после входа по телефону в Cryon. Это отдельный токен музыкального API; обычный токен VK API не подходит. Ручное поле предназначено для уже полученного вами токена. <a className="underline" href="https://github.com/oklookat/vkmauth" target="_blank" rel="noreferrer">Описание используемого способа входа</a></p>}
+          {manual && (
+            <p className="mt-3 text-xs leading-relaxed text-slate-400">
+              Токен ВК Музыки получается автоматически после входа по телефону в Cryon. Это
+              отдельный токен музыкального API; обычный токен VK API не подходит. Ручное поле
+              предназначено для уже полученного вами токена.{" "}
+              <a
+                className="underline"
+                href="https://github.com/oklookat/vkmauth"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Описание используемого способа входа
+              </a>
+            </p>
+          )}
           {manual && !waiting && !loading && (
             <form
               className="mt-3 flex flex-col gap-3"

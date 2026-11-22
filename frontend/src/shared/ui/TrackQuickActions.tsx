@@ -22,9 +22,10 @@ import { useRecoFeedback } from "../lib/useRecoFeedback";
 
 interface Props {
   track: Track;
+  playerControl?: boolean;
 }
 
-export function TrackQuickActions({ track }: Props) {
+export function TrackQuickActions({ track, playerControl = false }: Props) {
   const [open, setOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [position, setPosition] = useState({ top: 0, left: 0 });
@@ -102,18 +103,20 @@ export function TrackQuickActions({ track }: Props) {
   }, []);
 
   return (
-    <div className="relative flex items-center gap-0.5">
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          addToQueue(track);
-        }}
-        className="hidden h-9 w-9 place-items-center rounded-full text-lg text-slate-400 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_18%,transparent)] hover:text-white active:scale-95 sm:grid"
-        aria-label="Добавить в очередь"
-      >
-        +
-      </button>
+    <div className="relative flex items-center justify-center gap-0.5">
+      {!playerControl && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            addToQueue(track);
+          }}
+          className="hidden h-9 w-9 place-items-center rounded-full text-lg text-slate-400 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_18%,transparent)] hover:text-white active:scale-95 sm:grid"
+          aria-label="Добавить в очередь"
+        >
+          +
+        </button>
+      )}
       <button
         ref={triggerRef}
         type="button"
@@ -121,11 +124,15 @@ export function TrackQuickActions({ track }: Props) {
           event.stopPropagation();
           setOpen((value) => !value);
         }}
-        className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-slate-400 transition-colors hover:bg-white/10 hover:text-white active:scale-95"
+        className={cn(
+          "shrink-0 rounded-full text-slate-400 transition-colors hover:bg-white/10 hover:text-white active:scale-95",
+          playerControl ? "grid h-11 w-11 place-items-center" : "grid h-9 w-9 place-items-center",
+        )}
         aria-label="Другие действия"
         aria-expanded={open}
+        data-track-actions-trigger
       >
-        <MoreHorizontal size={17} />
+        <MoreHorizontal size={playerControl ? 20 : 17} />
       </button>
       {open &&
         createPortal(
@@ -146,8 +153,14 @@ export function TrackQuickActions({ track }: Props) {
             >
               <Radio size={15} /> Радио по этому треку
             </button>
-            <button type="button" onClick={() => { openSourcePicker(track); setOpen(false); }}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8">
+            <button
+              type="button"
+              onClick={() => {
+                openSourcePicker(track);
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"
+            >
               <ListStart size={15} /> Сменить источник трека
             </button>
             <button

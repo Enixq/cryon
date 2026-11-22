@@ -2,10 +2,28 @@ package vkmauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 )
 
-func validatePhone(ctx context.Context, phone, sid string, by *anonymousToken) (*validatePhoneResponse, error) {
+var ErrMissingCodeSession = errors.New("VK did not create a code session")
+
+type Captcha struct{ SID, Image string }
+type captchaAnswer struct{ SID, Key string }
+
+// Only display VK's HTTPS challenge images in the account form.
+func validCaptchaImage(image string) bool {
+	u, err := url.Parse(image)
+	if err != nil || u.Scheme != "https" || u.User != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "vk.com" || strings.HasSuffix(host, ".vk.com") || host == "vk.ru" || strings.HasSuffix(host, ".vk.ru")
+}
+
+func validatePhone(ctx context.Context, phone, sid string, by *anonymousToken, captcha ...*captchaAnswer) (*validatePhoneResponse, error) {
 
 	form := map[string]string{
 		"access_token":   by.Token,
@@ -19,13 +37,17 @@ func validatePhone(ctx context.Context, phone, sid string, by *anonymousToken) (
 	if len(sid) > 0 {
 		form["sid"] = sid
 	}
+	if len(captcha) > 0 && captcha[0] != nil {
+		form["captcha_sid"], form["captcha_key"] = captcha[0].SID, captcha[0].Key
+	}
 
 	result := &validatePhoneResponse{}
 
 	cl := getClient()
 	resp, err := cl.R().
 		SetFormUrlMap(form).
-		SetResult(&result).
+		SetResult(result).
+		SetError(result).
 		Post(ctx, _vkApiUrl+"/method/auth.validatePhone")
 
 	if err != nil {
@@ -41,7 +63,7 @@ func validatePhone(ctx context.Context, phone, sid string, by *anonymousToken) (
 	}
 
 	if result.Response.Sid == "" {
-		return nil, newError("VK did not create a code session", "validatePhone")
+		return nil, ErrMissingCodeSession
 	}
 	return result, err
 }

@@ -24,10 +24,10 @@ func TestSMSFlowAndNumericTwoFactorFlags(t *testing.T) {
 		case "/oauth/get_anonym_token":
 			body = `{"token":"anonymous"}`
 		case "/method/auth.validatePhone":
-			if !strings.Contains(r.Form.Get("supported_ways"), "sms") {
+			if r.Form.Get("supported_ways") != "push,email,sms_inbox" {
 				t.Fatal("SMS not supported")
 			}
-			body = `{"response":{"sid":"phone-sid","validation_type":"sms","libverify_support":1}}`
+			body = `{"response":{"sid":"phone-sid","validation_type":"sms_inbox","libverify_support":1}}`
 		case "/method/auth.validatePhoneConfirm":
 			if r.Form.Get("sid") != "phone-sid" || r.Form.Get("code") != "123456" {
 				t.Fatal("code/session mismatch")
@@ -64,5 +64,71 @@ func TestStageErrorDoesNotExposeCredentials(t *testing.T) {
 	err := &StageError{Stage: "password", Cause: errors.New("sensitive payload")}
 	if strings.Contains(err.Error(), "sensitive") {
 		t.Fatal("credentials exposed")
+	}
+}
+
+func TestCaptchaKeepsPhoneSession(t *testing.T) {
+	previous := http.DefaultTransport
+	defer func() { http.DefaultTransport = previous }()
+	phoneCalls := 0
+	http.DefaultTransport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		_ = r.ParseForm()
+		body := `{"token":"anonymous"}`
+		if r.URL.Path == "/method/auth.validatePhone" {
+			phoneCalls++
+			if phoneCalls == 1 {
+				body = `{"error":{"error_code":14,"error_msg":"Captcha needed","captcha_sid":"captcha-session","captcha_img":"https://api.vk.com/captcha.php?sid=fixture"}}`
+			} else {
+				if r.Form.Get("captcha_sid") != "captcha-session" || r.Form.Get("captcha_key") != "answer" || r.Form.Get("access_token") != "anonymous" {
+					t.Fatal("captcha or anonymous session lost")
+				}
+				body = `{"response":{"sid":"sms-session","validation_type":"sms_inbox"}}`
+			}
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	stop := errors.New("stop after code prompt")
+	_, err := New(context.Background(), "+70000000000", "fixture", func(by CodeSended) (GotCode, error) {
+		if by.Current != AuthSupportedWaySms {
+			t.Fatal("SMS stage not reached")
+		}
+		return GotCode{}, stop
+	}, func(c Captcha) (string, error) {
+		if c.SID != "captcha-session" {
+			t.Fatal("wrong captcha")
+		}
+		return "answer", nil
+	})
+	if !errors.Is(err, stop) || phoneCalls != 2 {
+		t.Fatalf("flow=%v phone calls=%d", err, phoneCalls)
+	}
+}
+
+func TestEmptyAnonymousTokenStopsBeforePhoneRequest(t *testing.T) {
+	previous := http.DefaultTransport
+	defer func() { http.DefaultTransport = previous }()
+	http.DefaultTransport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/oauth/get_anonym_token" {
+			t.Fatal("requested SMS without an anonymous token")
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})
+	_, err := New(context.Background(), "+70000000000", "fixture", nil)
+	var stage *StageError
+	if !errors.As(err, &stage) || stage.Stage != "anonymous" {
+		t.Fatal("empty token did not fail at anonymous stage")
+	}
+}
+
+func TestVKErrorOnHTTPFailurePreservesCode(t *testing.T) {
+	previous := http.DefaultTransport
+	defer func() { http.DefaultTransport = previous }()
+	http.DefaultTransport = transportFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 400, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"error_code":100,"error_msg":"Invalid parameter"}}`))}, nil
+	})
+	_, err := validatePhone(context.Background(), "", "", &anonymousToken{Token: "fixture"})
+	var coded interface{ APIErrorCode() int }
+	if !errors.As(err, &coded) || coded.APIErrorCode() != 100 {
+		t.Fatalf("lost VK error code: %v", err)
 	}
 }

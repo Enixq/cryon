@@ -1234,7 +1234,7 @@ func (e *Engine) onlineRecommendations(ctx context.Context, t taste, seeds []art
 				}
 				// Чем выше близость артиста и позиция трека — тем больше вес.
 				score := seed.weight * (sim.Match + 0.1) * (1.0 / float64(i+1)) * tagBoost
-				cands = append(cands, scoredCand{artist: tr.Artist, title: tr.Name, score: score, reason: "Похож по графу исполнителей на " + seed.name})
+				cands = append(cands, scoredCand{artist: tr.Artist, title: tr.Name, score: score, reason: "Похож на " + seed.name})
 			}
 		}
 	}

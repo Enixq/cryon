@@ -3,6 +3,7 @@
 // трек себе. Без сервера и регистрации (см. shared/lib/trackShare.ts).
 
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, ExternalLink, Play, Heart, Share2, X } from "lucide-react";
 import { useUiStore } from "../store/uiStore";
 import { usePlayerStore } from "../store/playerStore";
@@ -16,6 +17,7 @@ import type { Track } from "../shared/types";
 import { cn } from "../shared/lib/cn";
 
 export function ShareTrackModal() {
+  const queryClient = useQueryClient();
   const open = useUiStore((s) => s.shareOpen);
   const shareTrack = useUiStore((s) => s.shareTrack);
   const close = useUiStore((s) => s.closeShare);
@@ -23,6 +25,7 @@ export function ShareTrackModal() {
   const playTrack = usePlayerStore((s) => s.playTrack);
 
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [received, setReceived] = useState("");
   const [decoded, setDecoded] = useState<Track | null>(null);
   const [decodeError, setDecodeError] = useState(false);
@@ -56,7 +59,11 @@ export function ShareTrackModal() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      notify({ kind: "warning", title: "Не удалось скопировать", message: "Скопируйте ссылку вручную из поля." });
+      notify({
+        kind: "warning",
+        title: "Не удалось скопировать",
+        message: "Скопируйте ссылку вручную из поля.",
+      });
     }
   };
 
@@ -70,14 +77,30 @@ export function ShareTrackModal() {
   const playReceived = () => {
     if (!decoded) return;
     playTrack(decoded, [decoded]);
-    notify({ kind: "success", title: "Трек добавлен", message: `${decoded.artist} — ${decoded.title}` });
+    notify({
+      kind: "success",
+      title: "Трек добавлен",
+      message: `${decoded.artist} — ${decoded.title}`,
+    });
     close();
   };
 
   const favoriteReceived = async () => {
-    if (!decoded) return;
-    await addFavorite(decoded).catch(() => {});
-    notify({ kind: "success", title: "В избранном", message: `${decoded.artist} — ${decoded.title}` });
+    if (!decoded || saving) return;
+    setSaving(true);
+    try {
+      await addFavorite(decoded);
+      await queryClient.invalidateQueries({ queryKey: ["favorites"] });
+      notify({
+        kind: "success",
+        title: "В избранном",
+        message: `${decoded.artist} — ${decoded.title}`,
+      });
+    } catch {
+      notify({ kind: "error", title: "Не удалось добавить трек", message: "Повторите попытку." });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -89,7 +112,7 @@ export function ShareTrackModal() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="share-title"
-        className="w-full max-w-md rounded-3xl border border-white/15 bg-[#10121e] p-6 shadow-2xl"
+        className="max-h-[calc(100dvh-32px)] w-full max-w-md overflow-y-auto rounded-3xl border border-white/15 bg-[#10121e] p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
@@ -99,7 +122,7 @@ export function ShareTrackModal() {
             </div>
             <div>
               <h2 id="share-title" className="text-lg font-bold text-white">
-                Поделиться треком
+                {shareTrack ? "Поделиться треком" : "Получить трек"}
               </h2>
               <p className="text-xs text-slate-400">Ссылкой — без регистрации</p>
             </div>
@@ -117,11 +140,18 @@ export function ShareTrackModal() {
         {shareTrack && (
           <div className="mt-5">
             <div className="flex items-center gap-3 rounded-2xl bg-white/[0.04] p-3">
-              <Cover accent={shareTrack.accent} src={shareTrack.coverUrl} alt={shareTrack.title} className="h-12 w-12 shrink-0" iconSize={18} />
+              <Cover
+                accent={shareTrack.accent}
+                src={shareTrack.coverUrl}
+                alt={shareTrack.title}
+                className="h-12 w-12 shrink-0"
+                iconSize={18}
+              />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold text-white">{shareTrack.title}</div>
                 <div className="truncate text-xs text-slate-400">
-                  <ArtistLink name={shareTrack.artist} onNavigate={close} /> · {sourceName(shareTrack.source)}
+                  <ArtistLink name={shareTrack.artist} onNavigate={close} /> ·{" "}
+                  {sourceName(shareTrack.source)}
                 </div>
               </div>
             </div>
@@ -138,7 +168,9 @@ export function ShareTrackModal() {
                 onClick={copyLink}
                 className={cn(
                   "flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
-                  copied ? "bg-emerald-500 text-white" : "bg-[var(--app-accent)] text-slate-950 hover:opacity-90",
+                  copied
+                    ? "bg-emerald-500 text-white"
+                    : "bg-[var(--app-accent)] text-slate-950 hover:opacity-90",
                 )}
               >
                 {copied ? <Check size={16} /> : <Copy size={16} />}
@@ -163,8 +195,11 @@ export function ShareTrackModal() {
 
         {/* Получить: вставить ссылку от друга */}
         <div className={cn(shareTrack && "mt-5 border-t border-white/8 pt-5")}>
-          <label className="text-sm font-medium text-white">Получить трек по ссылке</label>
+          <label htmlFor="received-track-link" className="text-sm font-medium text-white">
+            Получить трек по ссылке
+          </label>
           <textarea
+            id="received-track-link"
             value={received}
             onChange={(e) => handleReceivedChange(e.target.value)}
             placeholder="Вставьте ссылку cryon://track/… от друга"
@@ -173,16 +208,25 @@ export function ShareTrackModal() {
             spellCheck={false}
           />
           {decodeError && (
-            <p className="mt-1 text-xs text-rose-300">Не похоже на ссылку Cryon. Проверьте, что скопировали её целиком.</p>
+            <p className="mt-1 text-xs text-rose-300">
+              Не похоже на ссылку Cryon. Проверьте, что скопировали её целиком.
+            </p>
           )}
           {decoded && (
             <div className="mt-3 rounded-2xl bg-white/[0.04] p-3">
               <div className="flex items-center gap-3">
-                <Cover accent={decoded.accent} src={decoded.coverUrl} alt={decoded.title} className="h-12 w-12 shrink-0" iconSize={18} />
+                <Cover
+                  accent={decoded.accent}
+                  src={decoded.coverUrl}
+                  alt={decoded.title}
+                  className="h-12 w-12 shrink-0"
+                  iconSize={18}
+                />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-white">{decoded.title}</div>
                   <div className="truncate text-xs text-slate-400">
-                    <ArtistLink name={decoded.artist} onNavigate={close} /> · {sourceName(decoded.source)}
+                    <ArtistLink name={decoded.artist} onNavigate={close} /> ·{" "}
+                    {sourceName(decoded.source)}
                   </div>
                 </div>
               </div>
@@ -195,6 +239,7 @@ export function ShareTrackModal() {
                 </button>
                 <button
                   onClick={favoriteReceived}
+                  disabled={saving}
                   className="flex items-center justify-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-white/15"
                 >
                   <Heart size={15} /> В избранное

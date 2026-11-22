@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -17,13 +18,14 @@ import (
 )
 
 type vkLoginSession struct {
-	ID        string `json:"id"`
-	State     string `json:"state"`
-	Method    string `json:"method,omitempty"`
-	CanResend bool   `json:"canResend"`
-	Error     string `json:"error,omitempty"`
-	cancel    context.CancelFunc
-	code      chan vkmauth.GotCode
+	ID           string `json:"id"`
+	State        string `json:"state"`
+	Method       string `json:"method,omitempty"`
+	CanResend    bool   `json:"canResend"`
+	Error        string `json:"error,omitempty"`
+	CaptchaImage string `json:"captchaImage,omitempty"`
+	cancel       context.CancelFunc
+	code         chan vkmauth.GotCode
 }
 type vkLoginState struct {
 	sync.Mutex
@@ -111,7 +113,7 @@ func (a *App) handleAPIVKLogin(w http.ResponseWriter, r *http.Request) {
 		a.vkLogin.Lock()
 		defer a.vkLogin.Unlock()
 		session := a.vkLogin.session
-		if session == nil || session.ID != input.ID || session.State != "code" {
+		if session == nil || session.ID != input.ID || (session.State != "code" && session.State != "captcha") {
 			writeAPIError(w, 409, "сеанс входа не ожидает код")
 			return
 		}
@@ -119,7 +121,7 @@ func (a *App) handleAPIVKLogin(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, 400, "повторная отправка недоступна")
 			return
 		}
-		if !input.Resend && (strings.TrimSpace(input.Code) == "" || len(input.Code) > 20) {
+		if !input.Resend && (strings.TrimSpace(input.Code) == "" || len(input.Code) > 100) {
 			writeAPIError(w, 400, "введите код подтверждения")
 			return
 		}
@@ -164,6 +166,19 @@ func (a *App) handleAPIVKLogin(w http.ResponseWriter, r *http.Request) {
 			case <-ctx.Done():
 				return vkmauth.GotCode{}, ctx.Err()
 			}
+		}, func(challenge vkmauth.Captcha) (string, error) {
+			a.vkLogin.Lock()
+			session.State, session.CaptchaImage, session.CanResend = "captcha", challenge.Image, false
+			a.vkLogin.Unlock()
+			select {
+			case answer := <-session.code:
+				a.vkLogin.Lock()
+				session.CaptchaImage = ""
+				a.vkLogin.Unlock()
+				return answer.Code, nil
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
 		})
 		input.Password, input.Phone = "", ""
 		a.vkLogin.Lock()
@@ -186,11 +201,25 @@ func vkLoginMessage(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return "Время входа истекло. Начните вход заново и введите свежий код ВК."
 	}
+	var networkError *url.Error
+	if errors.As(err, &networkError) {
+		return "Не удалось связаться с ВК. Проверьте подключение и повторите вход."
+	}
+	var apiError interface{ APIErrorCode() int }
+	if errors.As(err, &apiError) && apiError.APIErrorCode() != 0 {
+		if apiError.APIErrorCode() == 14 {
+			return "ВК требует дополнительную проверку безопасности, которую пока не удалось открыть. Повторите вход позже."
+		}
+		return fmt.Sprintf("ВК отклонил запрос входа (код %d). Попробуйте снова через несколько минут.", apiError.APIErrorCode())
+	}
 	var step *vkmauth.StageError
 	if errors.As(err, &step) {
 		switch step.Stage {
 		case "phone":
-			return "ВК не создал сеанс подтверждения номера. Проверьте номер с кодом страны. Если SMS уже пришла, начните вход заново; код от прежнего сеанса не подойдёт."
+			if errors.Is(err, vkmauth.ErrMissingCodeSession) {
+				return "ВК не выдал сеанс подтверждения. Начните вход заново; код от предыдущей попытки не подойдёт."
+			}
+			return "Не удалось запросить код ВК. Проверьте номер с кодом страны и повторите попытку."
 		case "code":
 			return "ВК отклонил код подтверждения. Начните вход заново и введите самый последний код."
 		case "password":

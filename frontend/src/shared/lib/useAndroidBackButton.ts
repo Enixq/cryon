@@ -19,6 +19,10 @@ function getCapacitor(): CapacitorBridge | undefined {
 }
 
 function closeTopOverlay(): boolean {
+  if (document.querySelector("[data-track-actions-trigger][aria-expanded=true]")) {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    return true;
+  }
   const ui = useUiStore.getState();
   if (ui.sourcePickerTrack) { ui.openSourcePicker(null); return true; }
   if (ui.radioPreviewTrack) { ui.openRadioPreview(null); return true; }

@@ -365,3 +365,7 @@ input {
 
 .app-sidebar .sidebar-scroll > * { flex-shrink: 0; }
 .app-sidebar nav a { flex-shrink: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-player-sheet], [data-player-page] { transition: none !important; }
+}

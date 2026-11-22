@@ -2,6 +2,7 @@ package vkmauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -61,6 +62,7 @@ func New(
 	ctx context.Context,
 	phone, password string,
 	onCodeWaiting func(by CodeSended) (GotCode, error),
+	onCaptcha ...func(Captcha) (string, error),
 ) (*oauth2.Token, error) {
 
 	anTokens, err := getAnonymousToken(ctx)
@@ -77,6 +79,21 @@ func New(
 
 	for resend {
 		valResp, err = validatePhone(ctx, phone, sid, anTokens)
+		for attempts := 0; err != nil && attempts < 3; attempts++ {
+			var response *validatePhoneResponse
+			if !errors.As(err, &response) || response.Errord == nil || response.Errord.ErrorCode != 14 || len(onCaptcha) == 0 {
+				break
+			}
+			challenge := Captcha{SID: response.Errord.CaptchaSID, Image: response.Errord.CaptchaImage}
+			if challenge.SID == "" || !validCaptchaImage(challenge.Image) {
+				break
+			}
+			answer, captchaErr := onCaptcha[0](challenge)
+			if captchaErr != nil {
+				return nil, captchaErr
+			}
+			valResp, err = validatePhone(ctx, phone, sid, anTokens, &captchaAnswer{SID: challenge.SID, Key: strings.TrimSpace(answer)})
+		}
 		if err != nil {
 			return nil, &StageError{Stage: "phone", Cause: err}
 		}
@@ -164,7 +181,7 @@ func (e AuthSupportedWay) String() string {
 const (
 	AuthSupportedWayPush  AuthSupportedWay = "push"
 	AuthSupportedWayEmail AuthSupportedWay = "email"
-	AuthSupportedWaySms   AuthSupportedWay = "sms"
+	AuthSupportedWaySms   AuthSupportedWay = "sms_inbox"
 )
 
 type authSupportedWaySlice []AuthSupportedWay
@@ -183,8 +200,10 @@ func (e authSupportedWaySlice) Join(sep string) string {
 
 type ResponseWithError struct {
 	Errord *struct {
-		ErrorCode int    `json:"error_code"`
-		ErrorMsg  string `json:"error_msg"`
+		ErrorCode    int    `json:"error_code"`
+		ErrorMsg     string `json:"error_msg"`
+		CaptchaSID   string `json:"captcha_sid"`
+		CaptchaImage string `json:"captcha_img"`
 	} `json:"error"`
 }
 
@@ -197,6 +216,13 @@ func (e ResponseWithError) Error() string {
 		return _errPrefix + ": no error actually (nil Errord)"
 	}
 	return fmt.Sprintf("%s: %s", _errPrefix, e.Errord.ErrorMsg)
+}
+
+func (e ResponseWithError) APIErrorCode() int {
+	if e.Errord != nil {
+		return e.Errord.ErrorCode
+	}
+	return 0
 }
 
 type (

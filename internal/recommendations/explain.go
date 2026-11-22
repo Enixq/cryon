@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 const AdventureKey = "recommendations.adventure"
@@ -62,15 +63,30 @@ func (e *Engine) Explain(ctx context.Context, tracks []domain.Track) []domain.Tr
 	known := familiar(t)
 	out := append([]domain.Track(nil), tracks...)
 	for i := range out {
+		out[i].RecommendationReason = shortReason(out[i].RecommendationReason)
 		if out[i].RecommendationReason == "" {
 			if known[artistKey(out[i])] {
-				out[i].RecommendationReason = "Исполнитель из вашей библиотеки и истории"
+				out[i].RecommendationReason = "Знакомый исполнитель"
 			} else {
-				out[i].RecommendationReason = "Новый для вашей библиотеки исполнитель"
+				out[i].RecommendationReason = "Новый исполнитель"
 			}
 		}
 	}
 	return out
+}
+
+// Cached recommendations also receive the shorter labels after an update.
+func shortReason(reason string) string {
+	if name, ok := strings.CutPrefix(reason, "Похож по графу исполнителей на "); ok {
+		return "Похож на " + name
+	}
+	switch reason {
+	case "Исполнитель из вашей библиотеки и истории":
+		return "Знакомый исполнитель"
+	case "Новый для вашей библиотеки исполнитель":
+		return "Новый исполнитель"
+	}
+	return reason
 }
 func (e *Engine) staleTracks(ctx context.Context, key string) []domain.Track {
 	raw, ok := store.PeekCache(context.WithoutCancel(ctx), e.store, key)

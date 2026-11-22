@@ -31,6 +31,7 @@ func validatePhoneConfirm(
 	resp, err := cl.R().
 		SetFormUrlMap(form).
 		SetResult(result).
+		SetError(result).
 		Post(ctx, _vkApiUrl+"/method/auth.validatePhoneConfirm")
 
 	if err != nil {
@@ -43,6 +44,9 @@ func validatePhoneConfirm(
 
 	if resp.IsError() {
 		return nil, newError(fmt.Sprintf("%d", resp.StatusCode), "validatePhoneConfirm resp.IsError()")
+	}
+	if result.Response.Sid == "" {
+		return nil, ErrMissingCodeSession
 	}
 
 	return result, err
