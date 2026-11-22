@@ -53,7 +53,12 @@ func exportName(name, ext string) string {
 	return name + ext
 }
 
-func (a *App) exportFile(r *http.Request) (*os.File, string, string, error) {
+type audioExportFile struct {
+	*os.File
+	temporary bool
+}
+
+func (a *App) exportFile(r *http.Request) (*audioExportFile, string, string, error) {
 	service, id := r.URL.Query().Get("service"), r.URL.Query().Get("id")
 	if id == "" {
 		return nil, "", "", fmt.Errorf("нужен трек")
@@ -64,6 +69,7 @@ func (a *App) exportFile(r *http.Request) (*os.File, string, string, error) {
 	var f *os.File
 	var ct string
 	var err error
+	temporary := false
 	if service == "local" {
 		path, ok := a.local.FilePath(id)
 		if !ok {
@@ -108,6 +114,7 @@ func (a *App) exportFile(r *http.Request) (*os.File, string, string, error) {
 		if err != nil {
 			return nil, "", "", err
 		}
+		temporary = true
 		ct, err = audioFileType(f)
 		if err != nil {
 			f.Close()
@@ -119,9 +126,10 @@ func (a *App) exportFile(r *http.Request) (*os.File, string, string, error) {
 		audio, extractErr := extractMP4Audio(r.Context(), f)
 		if audio != f {
 			f.Close()
-			if strings.HasPrefix(filepath.Base(f.Name()), "cryon-export-") {
+			if temporary {
 				_ = os.Remove(f.Name())
 			}
+			temporary = audio != nil
 		}
 		if extractErr != nil {
 			return nil, "", "", extractErr
@@ -131,12 +139,12 @@ func (a *App) exportFile(r *http.Request) (*os.File, string, string, error) {
 	ext := exportExtension(ct)
 	if ext == "" {
 		f.Close()
-		if strings.HasPrefix(filepath.Base(f.Name()), "cryon-export-") {
+		if temporary {
 			_ = os.Remove(f.Name())
 		}
 		return nil, "", "", fmt.Errorf("источник не отдал отдельный аудиофайл в поддерживаемом формате")
 	}
-	return f, ct, exportName(r.URL.Query().Get("name"), ext), nil
+	return &audioExportFile{f, temporary}, ct, exportName(r.URL.Query().Get("name"), ext), nil
 }
 
 // Exports the complete audio file with its actual container/extension.
@@ -152,7 +160,7 @@ func (a *App) handleAPIAudioExport(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		f.Close()
-		if strings.HasPrefix(filepath.Base(f.Name()), "cryon-export-") {
+		if f.temporary {
 			_ = os.Remove(f.Name())
 		}
 	}()

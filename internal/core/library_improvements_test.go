@@ -2,6 +2,7 @@ package core
 
 import (
 	"Cryon2/internal/domain"
+	"Cryon2/internal/services/local"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +14,41 @@ import (
 	"testing"
 	"time"
 )
+
+func TestExportNeverDeletesLocalSourceWithTemporaryLookingName(t *testing.T) {
+	mp4, err := os.ReadFile("testdata/muxed-audio-video.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name    string
+		payload []byte
+		success bool
+	}{
+		{"cryon-export-user.mp3", []byte("ID3\x04\x00\x00\x00\x00\x00\x00audio"), true},
+		{"cryon-export-user.m4a", mp4, true},
+		{"cryon-export-invalid.mp3", []byte("<html>invalid audio</html>"), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), test.name)
+			if err := os.WriteFile(path, test.payload, 0600); err != nil {
+				t.Fatal(err)
+			}
+			service := local.New()
+			service.Replace([]local.LocalTrack{{Track: domain.Track{ID: "local-song", Service: domain.ServiceLocal}, FilePath: path}})
+			app := &App{local: service, registry: map[domain.ServiceID]domain.MusicService{domain.ServiceLocal: service}}
+			response := httptest.NewRecorder()
+			app.handleAPIAudioExport(response, httptest.NewRequest(http.MethodGet, "/v1/library/export?service=local&id=local-song", nil))
+			if (response.Code == 200) != test.success {
+				t.Fatalf("unexpected export status: %d", response.Code)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(after, test.payload) {
+				t.Fatal("export modified or deleted the source audio")
+			}
+		})
+	}
+}
 
 func TestSavedCollectionsPersistAcrossAppInstancesWithoutDuplicates(t *testing.T) {
 	settings := &apiSettingsStore{}
