@@ -538,7 +538,7 @@ func (s *Store) RecoCacheGet(ctx context.Context, key string) (string, bool, err
 		return "", false, err
 	}
 	if time.Now().UnixMilli() >= expiresAt {
-		_, _ = s.db.ExecContext(ctx, `DELETE FROM reco_cache WHERE cache_key = ?;`, key)
+		// Keep expired values for offline use; normal reads still honour the TTL.
 		return "", false, nil
 	}
 	return value, true, nil
@@ -565,6 +565,18 @@ func (s *Store) RecoCacheSet(ctx context.Context, key string, value string, ttl 
 		expiresAt,
 	)
 	return err
+}
+
+func (s *Store) RecoCachePeek(ctx context.Context, key string) (string, bool, error) {
+	if s.db == nil {
+		return "", false, errors.New("sqlite store не инициализирован")
+	}
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM reco_cache WHERE cache_key = ?`, key).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return value, err == nil, err
 }
 
 func (s *Store) LocalFolderAdd(ctx context.Context, path string) error {

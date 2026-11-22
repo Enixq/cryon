@@ -509,3 +509,15 @@ func TestResolvePlayableTrackRejectsDifferentDuration(t *testing.T) {
 		t.Fatalf("selected recording with incompatible duration: %+v", resolved)
 	}
 }
+
+func TestForcedSourceIsNeverAutomaticallyReplaced(t *testing.T) {
+	app := &App{ctx: context.Background()}
+	track := domain.Track{ID: "chosen", Service: domain.ServiceSoundCloud, ForcedSource: true, PlayableKind: domain.PlayableExternal}
+	resolved, err := app.ResolvePlayableTrack(track)
+	if err != nil || resolved.Service != track.Service || !resolved.ForcedSource {
+		t.Fatal("source choice lost")
+	}
+	if _, ok := app.ResolvePlaybackFallback(track, string(track.Service)); ok {
+		t.Fatal("forced source replaced after error")
+	}
+}

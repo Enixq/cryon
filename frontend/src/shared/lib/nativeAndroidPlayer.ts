@@ -18,6 +18,7 @@ export type NativePlaybackState = {
 
 type NativeAndroidBridge = {
   nativeDownload?: (url: string) => string;
+  nativeDeleteDownload?: (key: string) => boolean;
   nativeDownloadStatus?: (ticket: string) => string;
   savePlaybackReport?: (report: string) => void;
   installUpdate?: () => void;

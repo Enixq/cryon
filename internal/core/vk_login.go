@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,7 +13,7 @@ import (
 
 	"Cryon2/internal/domain"
 	"Cryon2/internal/services/vk"
-	"github.com/oklookat/vkmauth"
+	vkmauth "Cryon2/internal/services/vkauth"
 )
 
 type vkLoginSession struct {
@@ -174,9 +175,31 @@ func (a *App) handleAPIVKLogin(w http.ResponseWriter, r *http.Request) {
 			err = a.saveVKToken(ctx, token.AccessToken)
 		}
 		if err != nil || token == nil || token.AccessToken == "" || ctx.Err() != nil {
-			session.State, session.Error = "error", "ВК не завершил вход. Проверьте данные и подтверждение в ВК. Если способ входа изменился, можно подключить токен ВК Музыки вручную."
+			session.State, session.Error = "error", vkLoginMessage(err)
 			return
 		}
 		session.State = "connected"
 	}()
+}
+
+func vkLoginMessage(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "Время входа истекло. Начните вход заново и введите свежий код ВК."
+	}
+	var step *vkmauth.StageError
+	if errors.As(err, &step) {
+		switch step.Stage {
+		case "phone":
+			return "ВК не создал сеанс подтверждения номера. Проверьте номер с кодом страны. Если SMS уже пришла, начните вход заново; код от прежнего сеанса не подойдёт."
+		case "code":
+			return "ВК отклонил код подтверждения. Начните вход заново и введите самый последний код."
+		case "password":
+			return "ВК подтвердил номер, но не выдал разрешение после проверки пароля. Проверьте пароль и уведомления безопасности в ВК."
+		case "exchange", "music-token":
+			return "ВК подтвердил вход, но не выдал токен Музыки. Этот способ входа сейчас недоступен у ВК."
+		default:
+			return "ВК не ответил при начале входа. Проверьте сеть и повторите попытку."
+		}
+	}
+	return "Не удалось проверить подключение к ВК Музыке. Проверьте сеть и повторите вход."
 }

@@ -40,7 +40,7 @@ interface PlayerState {
    */
   radio: boolean;
   radioSeed: Track | null;
-  startTrackRadio: (track: Track) => void;
+  startTrackRadio: (track: Track, tracks?: Track[], initial?: Track) => void;
 
   /** Цель перемотки в секундах и счётчик запросов (для движка звука). */
   seekTarget: number;
@@ -269,11 +269,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set((s) => ({ radio: !s.radio, radioSeed: null, radioWaiting: false }));
   },
 
-  startTrackRadio: (track) => {
+  startTrackRadio: (track, tracks, initial) => {
     resetRadioSession();
     set({
-      queue: [track],
-      currentIndex: 0,
+      queue: tracks?.length ? tracks : [track],
+      currentIndex: initial && tracks ? Math.max(0, tracks.findIndex((t) => t.id === initial.id)) : 0,
       progress: 0,
       engineDuration: 0,
       isPlaying: true,

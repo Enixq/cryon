@@ -16,12 +16,13 @@ const jobsChangedEvent = "jobs:changed"
 var errUnknownJobKind = errors.New("неизвестный тип задания")
 
 const (
+	JobKindAudioDownload          = "audio.download"
 	JobKindLibraryRescan          = "library.rescan"
 	JobKindRecommendationsRefresh = "recommendations.refresh"
 )
 
 func validJobKind(kind string) bool {
-	return kind == JobKindLibraryRescan || kind == JobKindRecommendationsRefresh
+	return kind == JobKindLibraryRescan || kind == JobKindRecommendationsRefresh || kind == JobKindAudioDownload
 }
 
 // EnqueueJob persists background work before returning to the caller. The
@@ -132,6 +133,8 @@ func (a *App) executeJob(ctx context.Context, job store.Job) error {
 		return err
 	}
 	switch job.Kind {
+	case JobKindAudioDownload:
+		return a.downloadAudio(ctx, job)
 	case JobKindLibraryRescan:
 		if err := a.store.JobProgress(ctx, job.ID, 0.2, "Сканируем локальную библиотеку"); err != nil {
 			return err

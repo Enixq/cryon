@@ -92,6 +92,12 @@ func exportHLS(ctx context.Context, target string) (*os.File, error) {
 		byteRange := ""
 		var rangeEnd int64
 		segments := 0
+		totalSegments := 0
+		for _, entry := range lines {
+			if strings.HasPrefix(strings.TrimSpace(entry), "#EXTINF:") {
+				totalSegments++
+			}
+		}
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			switch {
@@ -143,6 +149,9 @@ func exportHLS(ctx context.Context, target string) (*os.File, error) {
 				total = info.Size()
 				byteRange = ""
 				segments++
+				if report, ok := ctx.Value(transferProgressKey{}).(func(int64, int64)); ok {
+					report(total, 0)
+				}
 			}
 		}
 		if segments == 0 {

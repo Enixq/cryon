@@ -20,9 +20,15 @@ function getCapacitor(): CapacitorBridge | undefined {
 
 function closeTopOverlay(): boolean {
   const ui = useUiStore.getState();
+  if (ui.sourcePickerTrack) { ui.openSourcePicker(null); return true; }
+  if (ui.radioPreviewTrack) { ui.openRadioPreview(null); return true; }
   if (ui.shareOpen) { ui.closeShare(); return true; }
   if (ui.equalizerOpen) { ui.setEqualizerOpen(false); return true; }
-  if (ui.nowPlayingOpen) { ui.setNowPlayingOpen(false); return true; }
+  if (ui.nowPlayingOpen) {
+    if (ui.nowPlayingView !== "cover") ui.setNowPlayingView("cover");
+    else ui.setNowPlayingOpen(false);
+    return true;
+  }
   return false;
 }
 

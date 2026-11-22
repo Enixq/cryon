@@ -339,21 +339,29 @@ input {
     font-size: 14px;
   }
   .app-sidebar .sidebar-services .service-list {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
+    flex-direction: column;
     gap: 4px;
   }
   .app-sidebar .service-list button {
-    justify-content: center;
+    justify-content: flex-start;
     gap: 6px;
     padding: 6px 4px;
     height: 36px;
     width: 100%;
   }
   .app-sidebar .service-name {
-    display: none;
+    display: block;
   }
   .app-sidebar.w-\[68px\] .service-list {
     grid-template-columns: 1fr;
   }
 }
+
+.now-playing-panel .panel-cover { width: min(150px, 22vh); transition: width 240ms ease; }
+.now-playing-panel[data-expanded="true"] .panel-cover { width: min(100%, 32vh); }
+.app-sidebar .service-list button { flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) { .now-playing-panel .panel-cover { transition: none; } }
+
+.app-sidebar .sidebar-scroll > * { flex-shrink: 0; }
+.app-sidebar nav a { flex-shrink: 0; }

@@ -28,6 +28,8 @@ import { useUiStore } from "../store/uiStore";
 import { useMediaQuery, LAYOUT_BREAKPOINTS } from "../shared/lib/useMediaQuery";
 import { OnboardingModal } from "./OnboardingModal";
 import { EqualizerModal } from "./EqualizerModal";
+import { DownloadProgress } from "./DownloadProgress";
+import { TrackDiscovery } from "./TrackDiscovery";
 import { ShareTrackModal } from "./ShareTrackModal";
 import { RouteErrorBoundary } from "./ErrorBoundary";
 import { notify } from "../store/notificationStore";
@@ -266,6 +268,8 @@ export function AppLayout() {
       <OnboardingModal />
       <EqualizerModal />
       <ShareTrackModal />
+      <TrackDiscovery />
+      <DownloadProgress />
     </div>
   );
 }

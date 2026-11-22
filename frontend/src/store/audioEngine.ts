@@ -163,6 +163,11 @@ export function useAudioEngine() {
     errorMessage?: string,
   ) => {
     const session = fallbackSessionRef.current;
+    if (failedTrack.forcedSource) {
+      usePlayerStore.getState().pause();
+      notify({ kind: "warning", title: "Выбранный источник недоступен", message: errorMessage || "Выберите другую версию через меню источников." });
+      return;
+    }
     if (pendingSeekRef.current?.trackId === failedTrack.id) positionSeconds = pendingSeekRef.current.position;
     if (!session.fail(failedTrack, positionSeconds)) {
       if (fallbackPendingRef.current.get(failedTrack.id) !== playbackGenerationRef.current) {

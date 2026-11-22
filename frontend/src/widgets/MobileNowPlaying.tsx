@@ -74,8 +74,11 @@ export function MobileNowPlaying() {
   const isFavorite = track ? favoriteIds.has(track.id) : false;
   const [seekPreview, setSeekPreview] = useState<{ id: string; value: number } | null>(null);
   const displayProgress = seekPreview?.id === track?.id ? seekPreview!.value : progress;
-  const [showQueue, setShowQueue] = useState(false);
-  const [showLyrics, setShowLyrics] = useState(false);
+  const view = useUiStore((s) => s.nowPlayingView);
+  const showQueue = view === "queue";
+  const showLyrics = view === "lyrics";
+  const setShowQueue = (value: boolean | ((current: boolean) => boolean)) => useUiStore.getState().setNowPlayingView((typeof value === "function" ? value(showQueue) : value) ? "queue" : "cover");
+  const setShowLyrics = (value: boolean | ((current: boolean) => boolean)) => useUiStore.getState().setNowPlayingView((typeof value === "function" ? value(showLyrics) : value) ? "lyrics" : "cover");
   const lyrics = useLyrics(track);
   const activeLyric = activeLineIndex(lyrics.lines, progress);
 
@@ -93,7 +96,7 @@ export function MobileNowPlaying() {
   const [coverAnimating, setCoverAnimating] = useState(false);
 
   function onTouchStart(e: TouchEvent<HTMLDivElement>) {
-    if (showQueue) return;
+    if (showQueue || showLyrics) return;
     if ((e.target as HTMLElement).closest?.("[data-noswipe]")) return;
     const t = e.touches[0];
     drag.current = { startX: t.clientX, startY: t.clientY, active: false, y: 0 };
@@ -109,7 +112,7 @@ export function MobileNowPlaying() {
       // Пока направление не определено — ждём заметного смещения и решаем: это
       // свайп вниз (тянем лист) или что-то другое (тогда отпускаем жест).
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      if (dy > 0 && dy > Math.abs(dx)) {
+      if (Math.abs(dy) > Math.abs(dx) * 1.2) {
         st.active = true;
         setDragging(true);
       } else {
@@ -117,8 +120,8 @@ export function MobileNowPlaying() {
         return;
       }
     }
-    st.y = Math.max(0, dy);
-    setDragY(st.y);
+    st.y = dy;
+    setDragY(Math.max(0, dy));
   }
 
   function endDrag() {
@@ -126,6 +129,11 @@ export function MobileNowPlaying() {
     drag.current = null;
     setDragging(false);
     // Протянули больше порога — закрываем; иначе плавно возвращаем на место.
+    if (st?.active && st.y < -80) {
+      setShowQueue(true);
+      setDragY(0);
+      return;
+    }
     if (st?.active && st.y > 100) {
       setNowPlayingOpen(false);
       return;
@@ -203,15 +211,15 @@ export function MobileNowPlaying() {
         <div className="flex items-center justify-between px-3">
           <button
             type="button"
-            onClick={() => setNowPlayingOpen(false)}
+            onClick={() => view === "cover" ? setNowPlayingOpen(false) : useUiStore.getState().setNowPlayingView("cover")}
             className="grid h-11 w-11 place-items-center rounded-full text-slate-200 transition-colors active:bg-white/10"
             aria-label="Свернуть плеер"
           >
             <ChevronDown size={26} />
           </button>
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+          <button type="button" onClick={() => track && useUiStore.getState().openSourcePicker(track)} aria-label="Сменить источник трека" className="text-xs font-semibold uppercase tracking-wider text-slate-400">
             {track ? sourceName(track.source) : "Сейчас играет"}
-          </span>
+          </button>
           <button
             type="button"
             onClick={() => setShowQueue((v) => !v)}
@@ -263,7 +271,7 @@ export function MobileNowPlaying() {
               )}
             </div>
           ) : showQueue ? (
-            <div className="flex min-h-0 flex-1 flex-col">
+            <div className="animate-sheet-up flex min-h-0 flex-1 flex-col" key="queue">
               <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain pr-2">
                 {queue.map((item, index) => (
                   <QueueRow

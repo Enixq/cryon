@@ -12,6 +12,7 @@ import {
   rescanLocalLibrary,
 } from "../shared/api/client";
 import { hasApiV1Runtime, listJobsV1 } from "../shared/api/v1";
+import { SavedDownloads } from "../shared/ui/SavedDownloads";
 import { TrackRow } from "../shared/ui/TrackRow";
 import { formatDuration, pluralWithCount } from "../shared/lib/format";
 
@@ -100,6 +101,7 @@ export function LocalMusicPage() {
         </div>
       </div>
 
+      <SavedDownloads />
       {/* Действия */}
       <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
         <button

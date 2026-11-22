@@ -90,12 +90,12 @@ func extractMP4Audio(ctx context.Context, input *os.File) (output *os.File, err 
 	if movie.Moov.IsEncrypted(audio.Tkhd.TrackID) {
 		return nil, fmt.Errorf("аудиодорожка защищена источником")
 	}
+	if movie.IsFragmented() {
+		return flattenAudioFragments(ctx, input, movie, audio)
+	}
 	if len(movie.Moov.Traks) == 1 {
 		_, err = input.Seek(0, io.SeekStart)
 		return input, err
-	}
-	if movie.IsFragmented() {
-		return nil, fmt.Errorf("сохранение смешанного фрагментированного MP4 пока недоступно")
 	}
 	table := audio.Mdia.Minf.Stbl
 	if table == nil || table.Stsz == nil || table.Stsc == nil || table.Stsd == nil || len(table.Stsd.Children) != 1 {

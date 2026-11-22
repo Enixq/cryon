@@ -9,13 +9,16 @@ open class NativePlaybackBridge(private val context: Context) {
     @JavascriptInterface
     fun nativeDownload(url: String): String {
         val ticket = java.util.UUID.randomUUID().toString()
-        AudioExportActivity.results[ticket] = "{\"state\":\"loading\"}"
-        context.startActivity(Intent(context, AudioExportActivity::class.java).putExtra("url", url).putExtra("ticket", ticket).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        AudioDownloads.results[ticket] = "{\"state\":\"loading\"}"
+        AudioDownloads.start(context, url, ticket)
         return ticket
     }
 
     @JavascriptInterface
-    fun nativeDownloadStatus(ticket: String): String = AudioExportActivity.results[ticket] ?: "{\"state\":\"error\",\"error\":\"Скачивание не найдено\"}"
+    fun nativeDownloadStatus(ticket: String): String = AudioDownloads.results[ticket] ?: "{\"state\":\"error\",\"error\":\"Скачивание не найдено\"}"
+
+    @JavascriptInterface
+    fun nativeDeleteDownload(key: String): Boolean = AudioDownloads.delete(context, key)
 
     @JavascriptInterface
     fun nativePlay(streamUrl: String, trackId: String, title: String, artist: String, artworkUrl: String, durationMs: Long, autoPlay: Boolean, startPositionMs: Long, mimeType: String, commandId: Long) {

@@ -44,9 +44,24 @@ func (a *App) APIHandler() http.Handler {
 	mux.HandleFunc("/v1/library/favorites", a.handleAPIFavorites)
 	mux.HandleFunc("/v1/library/collections", a.handleAPISavedCollections)
 	mux.HandleFunc("/v1/library/export", a.handleAPIAudioExport)
+	mux.HandleFunc("/v1/library/downloads", a.handleAPIDownloads)
+	mux.HandleFunc("/v1/library/downloads/file", a.handleAPIDownloadFile)
+	mux.HandleFunc("/v1/library/downloads/artwork", a.handleAPIDownloadFile)
 	mux.HandleFunc("/v1/library/feedback", a.handleAPILibraryFeedback)
 	mux.HandleFunc("/v1/library/history", a.handleAPIHistory)
 	mux.HandleFunc("/v1/library/local/tracks", a.handleAPILocalTracks)
+	mux.HandleFunc("/v1/library/local/cover", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeAPIError(w, 405, "требуется GET")
+			return
+		}
+		cover, err := a.GetLocalCover(r.URL.Query().Get("id"))
+		if err != nil {
+			writeAPIAppError(w, err)
+			return
+		}
+		writeAPIJSON(w, 200, map[string]string{"cover": cover})
+	})
 	mux.HandleFunc("/v1/library/local/folders", a.handleAPILocalFolders)
 	mux.HandleFunc("/v1/playlists", a.handleAPIPlaylists)
 	mux.HandleFunc("/v1/playlists/", a.handleAPIPlaylistByID)
@@ -374,7 +389,7 @@ func (a *App) handleAPIRecommendations(w http.ResponseWriter, r *http.Request) {
 		writeAPIAppError(w, err)
 		return
 	}
-	writeAPITracks(w, tracks)
+	writeAPITracks(w, a.cachedRecommendationResult(r.Context(), "personal", tracks, apiLimit(r, 20)))
 }
 
 func (a *App) handleAPIRecommendationByKind(w http.ResponseWriter, r *http.Request) {
@@ -389,6 +404,24 @@ func (a *App) handleAPIRecommendationByKind(w http.ResponseWriter, r *http.Reque
 		err    error
 	)
 	switch kind {
+	case "compare":
+		if r.Method != http.MethodGet {
+			writeAPIError(w, 405, "требуется GET")
+			return
+		}
+		if a.reco == nil {
+			writeAPIError(w, 503, "рекомендации недоступны")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		pool, err := a.reco.Recommendations(ctx, 40)
+		if err != nil {
+			writeAPIAppError(w, err)
+			return
+		}
+		writeAPIJSON(w, 200, a.reco.Compare(ctx, pool))
+		return
 	case "daily-mix":
 		if r.Method != http.MethodGet {
 			writeAPIError(w, http.StatusMethodNotAllowed, "требуется GET")
@@ -437,7 +470,11 @@ func (a *App) handleAPIRecommendationByKind(w http.ResponseWriter, r *http.Reque
 		writeAPIAppError(w, err)
 		return
 	}
-	writeAPITracks(w, tracks)
+	if kind == "related" {
+		writeAPITracks(w, a.reco.Allowed(r.Context(), tracks))
+		return
+	}
+	writeAPITracks(w, a.cachedRecommendationResult(r.Context(), kind, tracks, limit))
 }
 
 // Native notification actions use the same durable feedback and library as UI.
@@ -799,6 +836,11 @@ func (a *App) handleAPIPlaybackResolve(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateAPITrack(req.Track); err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if item, _, ok := a.offlineDownload(req.Track.Service, req.Track.ID); ok {
+		item.Track.ArtworkURL = "/v1/library/downloads/artwork?key=" + item.Key
+		writeAPIJSON(w, 200, apiPlaybackResolveResponse{Track: item.Track, StreamURL: "/v1/library/downloads/file?key=" + item.Key, MimeType: item.Mime})
 		return
 	}
 	track, err := a.ResolvePlayableTrack(req.Track)

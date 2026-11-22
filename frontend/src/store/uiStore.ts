@@ -2,6 +2,12 @@ import { create } from "zustand";
 import type { Track } from "../shared/types";
 
 interface UiState {
+  radioPreviewTrack: Track | null;
+  sourcePickerTrack: Track | null;
+  openRadioPreview: (track: Track | null) => void;
+  openSourcePicker: (track: Track | null) => void;
+  nowPlayingView: "cover" | "queue" | "lyrics";
+  setNowPlayingView: (view: "cover" | "queue" | "lyrics") => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   /**
@@ -46,6 +52,12 @@ interface UiState {
 }
 
 export const useUiStore = create<UiState>((set) => ({
+  radioPreviewTrack: null,
+  sourcePickerTrack: null,
+  openRadioPreview: (track) => set({ radioPreviewTrack: track }),
+  openSourcePicker: (track) => set({ sourcePickerTrack: track }),
+  nowPlayingView: "cover",
+  setNowPlayingView: (view) => set({ nowPlayingView: view }),
   searchQuery: "",
   setSearchQuery: (q) => set({ searchQuery: q }),
   sidebarCollapsed: false,
@@ -53,7 +65,7 @@ export const useUiStore = create<UiState>((set) => ({
   setSidebarCollapsed: (v) => set({ sidebarCollapsed: v }),
   nowPlayingOpen: false,
   toggleNowPlaying: () => set((s) => ({ nowPlayingOpen: !s.nowPlayingOpen })),
-  setNowPlayingOpen: (v) => set({ nowPlayingOpen: v }),
+  setNowPlayingOpen: (v) => set({ nowPlayingOpen: v, nowPlayingView: "cover" }),
   nowPlayingCollapsed: false,
   toggleNowPlayingCollapsed: () => set((s) => ({ nowPlayingCollapsed: !s.nowPlayingCollapsed })),
   setNowPlayingCollapsed: (v) => set({ nowPlayingCollapsed: v }),

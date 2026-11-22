@@ -18,6 +18,8 @@ type fakeSettings struct {
 	values map[string]string
 }
 
+func (f *fakeSettings) RecoCacheSet(context.Context, string, string, time.Duration) error { return nil }
+
 func newFakeSettings() *fakeSettings {
 	return &fakeSettings{values: map[string]string{}}
 }

@@ -1,29 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import {
-  Heart,
-  ListMusic,
-  Maximize2,
-  MoreHorizontal,
-  Pause,
-  Play,
-  Repeat,
-  Repeat1,
-  Shuffle,
-  SkipBack,
-  SkipForward,
-  Volume1,
-  Volume2,
-  VolumeX,
-  X,
-} from "lucide-react";
+import { Heart, ListMusic, Maximize2, Minimize2, Play, X } from "lucide-react";
 import { usePlayerStore } from "../store/playerStore";
+import { useUiStore } from "../store/uiStore";
 import type { Track } from "../shared/types";
-import { Slider } from "../shared/ui/Slider";
-import { Waveform } from "../shared/ui/Waveform";
 import { Cover } from "../shared/ui/Cover";
 import { TrackQuickActions } from "../shared/ui/TrackQuickActions";
-import { accentStyle } from "../shared/ui/accents";
 import { formatDuration, pluralWithCount } from "../shared/lib/format";
 import { useFavoriteIds } from "../shared/lib/useFavorites";
 import { useTrackCover } from "../shared/lib/useTrackCover";
@@ -31,345 +12,129 @@ import { useCoverPalette } from "../shared/lib/useCoverPalette";
 import { sourceName } from "../shared/sources";
 import { cn } from "../shared/lib/cn";
 import { ArtistLink } from "../shared/ui/ArtistLink";
-import { useUiStore } from "../store/uiStore";
 import { LyricsSources } from "../shared/ui/LyricsSources";
 import { useLyrics } from "../shared/lib/useLyrics";
 import { activeLineIndex, type LyricLine } from "../shared/lib/lyrics";
 
-interface NowPlayingPanelProps {
-  /** Если задан — панель показана как выдвижная (узкий экран): рисуем кнопку закрытия. */
-  onClose?: () => void;
-}
-
-export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
+export function NowPlayingPanel({ onClose }: { onClose?: () => void } = {}) {
   const {
     queue,
     currentIndex,
     isPlaying,
     progress,
-    volume,
-    muted,
-    shuffle,
-    repeat,
-    togglePlay,
-    next,
-    previous,
-    seek,
-    setVolume,
-    toggleMute,
-    toggleShuffle,
-    cycleRepeat,
     playAt,
     removeFromQueue,
     clearQueue,
     toggleLikeWithTrack,
-    engineDuration,
+    seek,
   } = usePlayerStore();
-
   const track = queue[currentIndex];
   const favoriteIds = useFavoriteIds();
   const isFavorite = track ? favoriteIds.has(track.id) : false;
-  const effectiveVolume = muted ? 0 : volume;
   const coverUrl = useTrackCover(track);
-  // Акцент подстраивается под обложку текущего трека (кнопка play, волна).
   const accent = useCoverPalette(coverUrl);
-  const [showQuickActions, setShowQuickActions] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
-  const zoomTrigger = useRef<HTMLButtonElement>(null);
-  const zoomClose = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!isExpanded) return;
-    zoomClose.current?.focus();
-    const dismiss = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setIsExpanded(false);
-      if (event.key === "Tab") {
-        event.preventDefault();
-        zoomClose.current?.focus();
-      }
-    };
-    document.addEventListener("keydown", dismiss);
-    return () => {
-      document.removeEventListener("keydown", dismiss);
-      zoomTrigger.current?.focus();
-    };
-  }, [isExpanded]);
-  // Нижняя область панели переключается между очередью и текстом песни.
   const [bottomTab, setBottomTab] = useState<"queue" | "lyrics">("queue");
-
-  const copyTrackInfo = async () => {
-    if (!track) return;
-    try {
-      await navigator.clipboard.writeText(`${track.title} — ${track.artist}`);
-      setShowQuickActions(false);
-    } catch {
-      setShowQuickActions(false);
-    }
-  };
-
   return (
     <aside
       data-view={bottomTab}
+      data-expanded={isExpanded}
       className={cn(
-        "now-playing-panel flex shrink-0 flex-col gap-4 border-l border-white/5 bg-[#0c0e1a]/60 p-5",
-        // В выдвижном режиме (узкий экран) панель занимает всю высоту контента
-        // и фиксированную ширину; иначе — обычная встроенная ширина.
+        "now-playing-panel flex shrink-0 flex-col gap-4 border-l border-white/5 bg-[#0c0e1a]/60 p-4",
         onClose ? "h-full w-[min(360px,90vw)]" : "w-[clamp(280px,24vw,340px)]",
       )}
     >
-      {/* Заголовок */}
-      <div className="flex items-center justify-between">
+      <div className="flex shrink-0 items-center justify-between">
         <span className="text-sm font-semibold text-white">Сейчас играет</span>
         <div className="flex items-center gap-1 text-slate-400">
-          {
-            <button
-              onClick={() =>
-                onClose ? onClose() : useUiStore.getState().setNowPlayingCollapsed(true)
-              }
-              className="grid h-8 w-8 place-items-center rounded-lg hover:bg-white/5 hover:text-white"
-              aria-label="Свернуть панель"
-            >
-              <X size={18} />
-            </button>
-          }
+          {track && <TrackQuickActions track={track} />}
           <button
-            onClick={() => setShowQuickActions((v) => !v)}
-            className="grid h-8 w-8 place-items-center rounded-lg hover:bg-white/5 hover:text-white"
-            aria-label="Ещё"
-          >
-            <MoreHorizontal size={18} />
-          </button>
-          <button
-            ref={zoomTrigger}
             disabled={!track}
             onClick={() => setIsExpanded((v) => !v)}
-            className="grid h-8 w-8 place-items-center rounded-lg hover:bg-white/5 hover:text-white"
-            aria-label="Увеличить обложку"
+            aria-pressed={isExpanded}
+            aria-label={isExpanded ? "Уменьшить обложку" : "Увеличить обложку"}
+            className="p-2 hover:text-white"
           >
-            <Maximize2 size={16} />
+            {isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
+          <button
+            onClick={() =>
+              onClose ? onClose() : useUiStore.getState().setNowPlayingCollapsed(true)
+            }
+            aria-label="Свернуть панель"
+            className="p-2 hover:text-white"
+          >
+            <X size={18} />
           </button>
         </div>
       </div>
-      {showQuickActions && track ? (
-        <div className="rounded-xl border border-white/10 bg-white/5 p-2 text-sm text-slate-300">
-          <button
-            onClick={copyTrackInfo}
-            className="flex w-full items-center rounded-lg px-2 py-2 text-left hover:bg-white/10"
-          >
-            Копировать название трека
-          </button>
-          <button
-            onClick={() => {
-              setShowQuickActions(false);
-              setIsExpanded(true);
-            }}
-            className="flex w-full items-center rounded-lg px-2 py-2 text-left hover:bg-white/10"
-          >
-            Увеличить обложку
-          </button>
-        </div>
-      ) : null}
-
-      {track ? (
+      {track && (
         <>
-          {/* Обложка. Высота ограничена, чтобы очередь ниже показывала сразу
-              несколько треков, а не один: на всю ширину панели обложка
-              занимала бы ~340px и «съедала» список. */}
-          <div
-            className={cn(
-              "panel-cover relative mx-auto aspect-square w-full overflow-hidden rounded-2xl",
-              "max-w-[200px] cursor-zoom-in",
-            )}
-            onClick={() => setIsExpanded(true)}
-            style={accentStyle(track.accent)}
+          <button
+            className="panel-cover mx-auto aspect-square overflow-hidden rounded-2xl"
+            onClick={() => setIsExpanded((v) => !v)}
+            aria-label={isExpanded ? "Уменьшить обложку" : "Рассмотреть обложку"}
           >
-            {coverUrl ? (
-              <img
-                src={coverUrl}
-                alt={track.title}
-                onError={(e) => (e.currentTarget.style.display = "none")}
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-black/10">
-                <span className="text-6xl font-black text-white/20">{track.title.charAt(0)}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Мета */}
+            <Cover
+              src={coverUrl}
+              accent={track.accent}
+              alt={track.title}
+              className="h-full w-full"
+            />
+          </button>
           <div className="panel-details flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3
-                className="break-words text-xl font-bold leading-tight text-white"
-                title={track.title}
-              >
+              <h3 className="break-words text-lg font-bold leading-tight text-white">
                 {track.title}
               </h3>
-              <div className="flex min-w-0 items-center gap-2 text-slate-400">
-                <p className="min-w-0 truncate">
-                  <ArtistLink
-                    name={track.artist}
-                    onNavigate={() => useUiStore.getState().setNowPlayingOpen(false)}
-                  />
-                </p>
-                {track.quality ? (
-                  <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300">
-                    {track.quality}
-                  </span>
-                ) : null}
-              </div>
+              <ArtistLink name={track.artist} />
+              <button
+                className="mt-1 block text-xs text-slate-500 hover:text-white"
+                onClick={() => useUiStore.getState().openSourcePicker(track)}
+              >
+                {sourceName(track.source)} · Сменить
+              </button>
             </div>
             <button
               onClick={() => toggleLikeWithTrack({ ...track, liked: isFavorite })}
-              className={cn(
-                "mt-1 transition-colors",
-                isFavorite ? "text-[#a855f7]" : "text-slate-400 hover:text-white",
-              )}
               aria-label="В избранное"
+              className={isFavorite ? "text-[var(--app-accent)]" : "text-slate-400"}
             >
               <Heart size={22} fill={isFavorite ? "currentColor" : "none"} />
             </button>
           </div>
-
-          {/* Форма волны + время */}
-          <div className="panel-waveform flex flex-col gap-2">
-            <Waveform
-              seed={track.id}
-              progress={progress}
-              duration={engineDuration || track.duration}
-              onSeek={seek}
-              fillColor={accent}
-            />
-            <div className="flex justify-between text-xs tabular-nums text-slate-400">
-              <span>{formatDuration(progress)}</span>
-              <span>{formatDuration(engineDuration || track.duration)}</span>
-            </div>
-          </div>
-
-          {/* Управление */}
-          <div className="panel-controls flex items-center justify-between px-1">
-            <button
-              onClick={toggleShuffle}
-              className={cn(
-                "transition-colors",
-                shuffle ? "text-[#a855f7]" : "text-slate-400 hover:text-white",
-              )}
-              aria-label="Перемешать"
-            >
-              <Shuffle size={20} />
-            </button>
-            <button
-              onClick={previous}
-              className="text-white transition-transform hover:scale-110"
-              aria-label="Предыдущий"
-            >
-              <SkipBack size={24} fill="currentColor" />
-            </button>
-            <button
-              onClick={togglePlay}
-              className="grid h-14 w-14 place-items-center rounded-full text-white shadow-lg transition-transform hover:scale-105"
-              style={{ backgroundColor: accent, boxShadow: `0 10px 25px -5px ${accent}66` }}
-              aria-label={isPlaying ? "Пауза" : "Воспроизвести"}
-            >
-              {isPlaying ? (
-                <Pause size={26} fill="currentColor" />
-              ) : (
-                <Play size={26} fill="currentColor" className="ml-1" />
-              )}
-            </button>
-            <button
-              onClick={next}
-              className="text-white transition-transform hover:scale-110"
-              aria-label="Следующий"
-            >
-              <SkipForward size={24} fill="currentColor" />
-            </button>
-            <button
-              onClick={cycleRepeat}
-              className={cn(
-                "transition-colors",
-                repeat !== "off" ? "text-[#a855f7]" : "text-slate-400 hover:text-white",
-              )}
-              aria-label="Повтор"
-            >
-              {repeat === "one" ? <Repeat1 size={20} /> : <Repeat size={20} />}
-            </button>
-          </div>
-
-          {/* Громкость */}
-          <div className="panel-volume flex items-center gap-3">
-            <button
-              onClick={toggleMute}
-              className="text-slate-400 transition-colors hover:text-white"
-              aria-label="Без звука"
-            >
-              {muted || volume === 0 ? (
-                <VolumeX size={20} />
-              ) : volume < 50 ? (
-                <Volume1 size={20} />
-              ) : (
-                <Volume2 size={20} />
-              )}
-            </button>
-            <Slider
-              value={effectiveVolume}
-              max={100}
-              onChange={setVolume}
-              wheelStep={4}
-              ariaLabel="Громкость"
-              className="flex-1"
-            />
-            <span className="w-9 text-right text-xs tabular-nums text-slate-400">
-              {effectiveVolume}%
-            </span>
-          </div>
         </>
-      ) : (
-        <div className="grid flex-1 place-items-center text-center text-slate-500">
-          <div>
-            <ListMusic size={40} className="mx-auto mb-3 opacity-40" />
-            <p>Очередь пуста</p>
-          </div>
-        </div>
       )}
-
-      {/* Очередь / Текст песни */}
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="mb-2 flex items-center gap-3">
+        <div className="mb-2 flex shrink-0 items-center gap-3">
           <button
             onClick={() => setBottomTab("queue")}
-            className={cn(
-              "text-sm font-semibold transition-colors",
-              bottomTab === "queue" ? "text-white" : "text-slate-500 hover:text-slate-300",
-            )}
+            className={
+              bottomTab === "queue" ? "text-sm font-semibold text-white" : "text-sm text-slate-500"
+            }
           >
             Очередь
           </button>
           <button
             onClick={() => setBottomTab("lyrics")}
-            className={cn(
-              "text-sm font-semibold transition-colors",
-              bottomTab === "lyrics" ? "text-white" : "text-slate-500 hover:text-slate-300",
-            )}
+            className={
+              bottomTab === "lyrics" ? "text-sm font-semibold text-white" : "text-sm text-slate-500"
+            }
           >
             Текст
           </button>
-          {bottomTab === "queue" ? (
-            <button
-              onClick={clearQueue}
-              className="ml-auto text-xs text-slate-400 transition-colors hover:text-white"
-            >
+          {bottomTab === "queue" && (
+            <button onClick={clearQueue} className="ml-auto text-xs text-slate-400">
               Очистить
             </button>
-          ) : null}
+          )}
         </div>
-
         {bottomTab === "queue" ? (
-          <div id="now-playing-queue" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-2">
+          <div id="now-playing-queue" className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {queue.map((item, index) => (
                 <QueueRow
-                  key={item.id}
+                  key={`${item.id}:${index}`}
                   item={item}
                   active={index === currentIndex}
                   playing={isPlaying}
@@ -386,49 +151,6 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           <LyricsView track={track} progress={progress} accent={accent} onSeek={seek} />
         )}
       </div>
-      {isExpanded &&
-        track &&
-        createPortal(
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Обложка: ${track.title}`}
-            className="fixed inset-0 z-[150] flex items-center justify-center bg-black/90 p-5 backdrop-blur-lg"
-            onClick={() => setIsExpanded(false)}
-          >
-            <button
-              ref={zoomClose}
-              type="button"
-              onClick={() => setIsExpanded(false)}
-              aria-label="Закрыть обложку"
-              className="absolute right-5 top-5 grid h-12 w-12 place-items-center rounded-full bg-white/10 text-white"
-            >
-              <X />
-            </button>
-            <div
-              className="flex max-w-full flex-col items-center gap-4"
-              onClick={(event) => event.stopPropagation()}
-            >
-              {coverUrl ? (
-                <img
-                  src={coverUrl}
-                  alt={track.title}
-                  className="h-[min(78vh,90vw)] w-[min(78vh,90vw)] rounded-xl object-contain shadow-2xl"
-                />
-              ) : (
-                <Cover
-                  accent={track.accent}
-                  alt={track.title}
-                  className="h-[min(70vh,80vw)] w-[min(70vh,80vw)]"
-                />
-              )}
-              <p className="text-center text-sm text-white">
-                {track.artist} — {track.title}
-              </p>
-            </div>
-          </div>,
-          document.body,
-        )}
     </aside>
   );
 }

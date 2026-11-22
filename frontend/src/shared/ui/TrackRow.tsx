@@ -105,6 +105,7 @@ export function TrackRow({
             <ArtistLink name={track.artist} />
             {showAlbum && track.album ? ` · ${track.album}` : ""}
           </div>
+          {(track.recommendationReason || track.fromCache) && <p className="mt-0.5 truncate text-xs text-slate-500" title={track.recommendationReason}>{track.fromCache ? "Из кэша · " : ""}{track.recommendationReason || "Для прослушивания без сети скачайте трек"}</p>}
         </div>
       </div>
 

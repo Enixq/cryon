@@ -1,6 +1,7 @@
 package core
 
 import (
+	"Cryon2/internal/domain"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -390,6 +391,10 @@ func (h *localAssetHandler) serveRemoteStream(w http.ResponseWriter, r *http.Req
 // при необходимости скачивая поток в кэш (с дедупликацией одновременных
 // запросов). Файл остаётся открытым для чтения вызывающим кодом.
 func (h *localAssetHandler) ensureStreamFile(ctx context.Context, service, trackID string) (*os.File, string, error) {
+	if item, path, ok := h.app.offlineDownload(domain.ServiceID(service), trackID); ok {
+		f, err := os.Open(path)
+		return f, item.Mime, err
+	}
 	key := service + "\x00" + trackID
 
 	// Быстрый путь: файл уже в кэше.
@@ -545,7 +550,13 @@ func (h *localAssetHandler) downloadStreamToFile(ctx context.Context, service, t
 			resp.Body.Close()
 			return "", 0, err
 		}
-		written, err := h.copyWithLimit(f, resp.Body, streamFileMaxBytes)
+		expectedProgress := expectedStreamLength(resp, have, shouldTruncate)
+		baseProgress := have
+		if shouldTruncate {
+			baseProgress = 0
+		}
+		progressOutput := &transferWriter{ctx: ctx, dst: f, done: baseProgress, total: expectedProgress}
+		written, err := h.copyWithLimit(progressOutput, resp.Body, streamFileMaxBytes)
 		closeErr := f.Close()
 		resp.Body.Close()
 		if err == nil {

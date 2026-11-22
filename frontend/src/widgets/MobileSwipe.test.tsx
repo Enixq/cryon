@@ -1,10 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MobileMiniPlayer } from "./MobileMiniPlayer";
 import { MobileNowPlaying } from "./MobileNowPlaying";
 import { usePlayerStore } from "../store/playerStore";
 import type { Track } from "../shared/types";
 import { MemoryRouter } from "react-router-dom";
+import { useUiStore } from "../store/uiStore";
+import { useAndroidBackButton } from "../shared/lib/useAndroidBackButton";
 
 vi.mock("../shared/lib/useRecoFeedback", () => ({ useRecoFeedback: () => ({ scoreFor: () => 0, rate: vi.fn(), saving: false }) }));
 vi.mock("../shared/lib/useFavorites", () => ({ useFavoriteIds: () => new Set() }));
@@ -16,7 +18,28 @@ const track = (id: string): Track => ({ id, source: "youtube", title: id, artist
 const queue = [track("first"), track("second"), track("third")];
 
 describe("mobile player swipes", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); useUiStore.setState({ nowPlayingOpen: false, nowPlayingView: "cover" }); });
+
+  it("opens the queue on an upward swipe and Android back returns to the player first", () => {
+    window.CryonAndroid = {};
+    const BackHandler = () => { useAndroidBackButton(); return null; };
+    usePlayerStore.setState({ queue, currentIndex: 1, isPlaying: false });
+    useUiStore.setState({ nowPlayingOpen: true, nowPlayingView: "cover" });
+    const mounted = render(<MemoryRouter initialEntries={["/library"]}><BackHandler /><MobileNowPlaying /></MemoryRouter>);
+    const cover = screen.getByRole("group", { name: "Обложка: свайп для смены трека" });
+    fireEvent.touchStart(cover, { touches: [{ clientX: 180, clientY: 420 }] });
+    fireEvent.touchMove(cover, { touches: [{ clientX: 183, clientY: 270 }] });
+    fireEvent.touchEnd(cover, { changedTouches: [{ clientX: 183, clientY: 270 }] });
+    expect(useUiStore.getState()).toMatchObject({ nowPlayingOpen: true, nowPlayingView: "queue" });
+    expect(usePlayerStore.getState().currentIndex).toBe(1);
+    const back = () => (window as Window & { __cryonAndroidBack?: () => boolean }).__cryonAndroidBack?.();
+    act(() => { expect(back()).toBe(true); });
+    expect(useUiStore.getState()).toMatchObject({ nowPlayingOpen: true, nowPlayingView: "cover" });
+    act(() => { expect(back()).toBe(true); });
+    expect(useUiStore.getState().nowPlayingOpen).toBe(false);
+    mounted.unmount();
+    delete window.CryonAndroid;
+  });
 
   it("changes tracks when swiping the large cover", () => {
     usePlayerStore.setState({ queue, currentIndex: 1, isPlaying: true, progress: 40, repeat: "off", shuffle: false });

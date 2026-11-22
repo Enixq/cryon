@@ -9,13 +9,14 @@ require (
 	github.com/go-ole/go-ole v1.3.0
 	github.com/kkdai/youtube/v2 v2.10.8
 	github.com/mattn/go-sqlite3 v1.14.32
+	github.com/oklog/ulid/v2 v2.1.0
 	github.com/oklookat/govkm v0.0.6
 	github.com/oklookat/vantuz v1.0.5
-	github.com/oklookat/vkmauth v0.0.2
 	github.com/wailsapp/wails/v2 v2.13.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.62.0
+	golang.org/x/oauth2 v0.10.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.50.0
 )
@@ -43,7 +44,6 @@ require (
 	github.com/mattn/go-colorable v0.1.16 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/oklog/ulid/v2 v2.1.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -54,7 +54,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	golang.org/x/oauth2 v0.10.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect

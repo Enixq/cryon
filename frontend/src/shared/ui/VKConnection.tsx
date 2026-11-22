@@ -187,6 +187,7 @@ export function VKConnection() {
               {manual ? "Войти по телефону" : "У меня есть токен ВК Музыки"}
             </button>
           )}
+          {manual && <p className="mt-3 text-xs leading-relaxed text-slate-400">Токен ВК Музыки получается автоматически после входа по телефону в Cryon. Это отдельный токен музыкального API; обычный токен VK API не подходит. Ручное поле предназначено для уже полученного вами токена. <a className="underline" href="https://github.com/oklookat/vkmauth" target="_blank" rel="noreferrer">Описание используемого способа входа</a></p>}
           {manual && !waiting && !loading && (
             <form
               className="mt-3 flex flex-col gap-3"

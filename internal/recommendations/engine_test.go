@@ -53,6 +53,10 @@ type cachedGraph struct {
 	values map[string]string
 }
 
+func (s *cachedGraph) SettingGet(context.Context, string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (s *cachedGraph) RecoCacheGet(_ context.Context, key string) (string, bool, error) {
 	value, ok := s.values[key]
 	return value, ok, nil

@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TrackQuickActions } from "./TrackQuickActions";
 import type { Track } from "../types";
+import { useUiStore } from "../../store/uiStore";
 import { usePlayerStore } from "../../store/playerStore";
 
 const rate = vi.hoisted(() => vi.fn());
@@ -21,14 +22,16 @@ const track: Track = {
 };
 
 describe("track actions menu", () => {
-  it("starts a separate track radio queue from the menu", () => {
+  it("opens radio preview while preserving current playback", () => {
+    usePlayerStore.setState({queue:[track],currentIndex:0,isPlaying:false,radio:false,radioSeed:null});
     render(<TrackQuickActions track={track} />);
     fireEvent.click(screen.getByRole("button", { name: "Другие действия" }));
     fireEvent.click(screen.getByRole("button", { name: "Радио по этому треку" }));
     const state = usePlayerStore.getState();
-    expect(state.radioSeed).toEqual(track);
+    expect(useUiStore.getState().radioPreviewTrack).toEqual(track);
+    expect(state.radioSeed).toBeNull();
     expect(state.queue).toEqual([track]);
-    expect(state.radio && state.isPlaying).toBe(true);
+    expect(state.radio || state.isPlaying).toBe(false);
   });
   it("blocks a track from its actions menu", () => {
     render(<TrackQuickActions track={track} />);

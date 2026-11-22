@@ -22,6 +22,7 @@ import type { SourceId, Track } from "../shared/types";
 import { ServiceIcon } from "../shared/ui/ServiceIcon";
 import { PageHeader } from "../shared/ui/PageHeader";
 import { VKConnection } from "../shared/ui/VKConnection";
+import { RecommendationSettings } from "../shared/ui/RecommendationSettings";
 import { LibrarySyncSettings } from "../shared/ui/LibrarySyncSettings";
 import { TabBar, type TabItem } from "../shared/ui/TabBar";
 import { useUiStore } from "../store/uiStore";
@@ -290,6 +291,7 @@ export function SettingsPage() {
       {/* ── Музыка ─────────────────────────────────────────────────────── */}
       {tab === "music" && (
         <div className="columns-1 gap-5 lg:columns-2">
+          <RecommendationSettings />
           {/* Локальная библиотека — самый простой путь «работает из коробки». */}
           <Section title="Локальная библиотека" description="Укажите папку с музыкой — Cryon найдёт файлы, метаданные и обложки. Этого достаточно, чтобы начать слушать." anchorRef={localConfigRef}>
             <div className="flex flex-col gap-2">

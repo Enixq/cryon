@@ -27,6 +27,7 @@ import {
   playlistTracksV1,
   recommendationsV1,
   relatedTracksV1,
+  request,
   removePlaylistTrackV1,
   reorderPlaylistTracksV1,
   searchV1,
@@ -566,8 +567,9 @@ export async function enqueueLocalLibraryRescan(): Promise<BackgroundJob | null>
 
 /** Обложка локального трека как data-URL (пусто, если нет). */
 export async function getLocalCover(compositeId: string): Promise<string> {
-  if (!isWailsRuntime()) return "";
   const { rawId } = splitTrackId(compositeId);
+  if (hasApiV1Runtime()) return (await request<{ cover: string }>(`/v1/library/local/cover?id=${encodeURIComponent(rawId)}`)).cover;
+  if (!isWailsRuntime()) return "";
   try {
     return await App.GetLocalCover(rawId);
   } catch {

@@ -54,6 +54,9 @@ export function mapTrack(src: domain.Track): Track {
 
   return {
     id: `${source}:${src.id}`,
+    forcedSource: (src as domain.Track & Track).forcedSource,
+    recommendationReason: (src as domain.Track & Track).recommendationReason,
+    fromCache: (src as domain.Track & Track).fromCache,
     title: src.title || "Без названия",
     artist: cleanTrackArtist(artist, source),
     primaryArtist:
@@ -129,6 +132,9 @@ export function toBackendTrack(t: Track): domain.Track {
   const { source, rawId } = splitTrackId(t.id);
   return {
     id: rawId,
+    forcedSource: t.forcedSource,
+    recommendationReason: t.recommendationReason,
+    fromCache: t.fromCache,
     service: source,
     title: t.title,
     artists: t.artists?.length ? t.artists : t.artist ? [t.artist] : [],

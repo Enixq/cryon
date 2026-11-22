@@ -35,7 +35,8 @@ export function TrackQuickActions({ track }: Props) {
   const addToQueue = usePlayerStore((state) => state.addToQueue);
   const playNext = usePlayerStore((state) => state.playNext);
   const playTrack = usePlayerStore((state) => state.playTrack);
-  const startTrackRadio = usePlayerStore((state) => state.startTrackRadio);
+  const openRadioPreview = useUiStore((state) => state.openRadioPreview);
+  const openSourcePicker = useUiStore((state) => state.openSourcePicker);
   const toggleLikeWithTrack = usePlayerStore((state) => state.toggleLikeWithTrack);
   const openShare = useUiStore((state) => state.openShare);
   const feedback = useRecoFeedback();
@@ -138,12 +139,16 @@ export function TrackQuickActions({ track }: Props) {
             <button
               type="button"
               onClick={() => {
-                startTrackRadio(track);
+                openRadioPreview(track);
                 setOpen(false);
               }}
               className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"
             >
               <Radio size={15} /> Радио по этому треку
+            </button>
+            <button type="button" onClick={() => { openSourcePicker(track); setOpen(false); }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8">
+              <ListStart size={15} /> Сменить источник трека
             </button>
             <button
               type="button"
@@ -232,7 +237,7 @@ export function TrackQuickActions({ track }: Props) {
                       notify({
                         kind: "success",
                         title: "Трек сохранён",
-                        message: "Аудиофайл доступен другим плеерам.",
+                        message: "Трек доступен без сети в разделе «Локальная музыка → Скачано».",
                       });
                   })
                   .catch((error) =>

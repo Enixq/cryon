@@ -30,19 +30,22 @@ const (
 // Track — единый доменный трек. JSON-теги совпадают с фронтендом,
 // чтобы Wails-биндинги отдавали данные без дополнительного маппинга.
 type Track struct {
-	ID           string       `json:"id"`
-	Service      ServiceID    `json:"service"`
-	Title        string       `json:"title"`
-	Artists      []string     `json:"artists"`
-	Album        string       `json:"album,omitempty"`
-	ReleaseDate  string       `json:"releaseDate,omitempty"`
-	Genre        string       `json:"genre,omitempty"`
-	DurationMs   int          `json:"durationMs,omitempty"`
-	PlayCount    int          `json:"playCount,omitempty"`
-	Quality      string       `json:"quality,omitempty"`
-	ArtworkURL   string       `json:"artworkUrl,omitempty"`
-	ExternalURL  string       `json:"externalUrl,omitempty"`
-	PlayableKind PlayableKind `json:"playableKind"`
+	ForcedSource         bool         `json:"forcedSource,omitempty"`
+	RecommendationReason string       `json:"recommendationReason,omitempty"`
+	FromCache            bool         `json:"fromCache,omitempty"`
+	ID                   string       `json:"id"`
+	Service              ServiceID    `json:"service"`
+	Title                string       `json:"title"`
+	Artists              []string     `json:"artists"`
+	Album                string       `json:"album,omitempty"`
+	ReleaseDate          string       `json:"releaseDate,omitempty"`
+	Genre                string       `json:"genre,omitempty"`
+	DurationMs           int          `json:"durationMs,omitempty"`
+	PlayCount            int          `json:"playCount,omitempty"`
+	Quality              string       `json:"quality,omitempty"`
+	ArtworkURL           string       `json:"artworkUrl,omitempty"`
+	ExternalURL          string       `json:"externalUrl,omitempty"`
+	PlayableKind         PlayableKind `json:"playableKind"`
 }
 
 // MusicService — единый контракт адаптера источника.

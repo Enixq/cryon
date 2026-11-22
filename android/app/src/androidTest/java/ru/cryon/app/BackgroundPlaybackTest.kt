@@ -21,7 +21,7 @@ import java.nio.ByteOrder
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Real Media3 transitions with the activity absent and screen switched off. */
+/** Real Media3 transitions with the UI backgrounded and screen switched off. */
 @RunWith(AndroidJUnit4::class)
 class BackgroundPlaybackTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -39,9 +39,9 @@ class BackgroundPlaybackTest {
 
     private fun state(): JSONObject = JSONObject(CryonPlaybackService.latestState.ifBlank { "{}" })
 
-    private fun start(fixture: Fixture, tracks: JSONArray, radio: Boolean, seed: JSONObject? = null) {
+    private fun start(fixture: Fixture, tracks: JSONArray, radio: Boolean, seed: JSONObject? = null): android.app.Activity {
         // Android 15 requires an activity or established foreground service to
-        // request initial audio focus. Subsequent transitions run without it.
+        // request initial audio focus. Subsequent transitions run in the background.
         val launch = Intent(context, PlaybackTestActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val activity = instrumentation.startActivitySync(launch)
         Thread.sleep(500)
@@ -56,8 +56,12 @@ class BackgroundPlaybackTest {
             putExtra(CryonPlaybackService.EXTRA_AUTO_PLAY, true)
         }
         waitFor { state().optBoolean("playing") }
-        instrumentation.runOnMainSync { activity.finish() }
+        // Keep the task present, as with pressing Home. Finishing its root can
+        // trigger onTaskRemoved, which deliberately stops playback.
+        instrumentation.runOnMainSync { activity.moveTaskToBack(true) }
+        return activity
     }
+
 
     @Test fun radioKeepsAdvancingWithNoActivityAndScreenOff() {
         Fixture().use { fixture ->

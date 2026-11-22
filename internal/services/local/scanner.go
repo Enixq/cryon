@@ -95,8 +95,15 @@ func readTrack(path string) (LocalTrack, error) {
 	id := trackID(path)
 	title := localFilenameTitle(path)
 	durationMs := mobileFilenameDuration(path)
+	if durationMs == 0 {
+		durationMs = AudioDurationMs(path)
+	}
 	var artists []string
 	var album string
+	if parts := strings.SplitN(title, " — ", 2); len(parts) == 2 {
+		artists = []string{parts[0]}
+		title = parts[1]
+	}
 
 	// Метаданные читаем best-effort: если тегов нет, используем имя файла.
 	if meta, merr := tag.ReadFrom(f); merr == nil {

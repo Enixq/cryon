@@ -41,19 +41,7 @@ export function HomePage() {
               title={title}
               subtitle={subtitle}
               accent={accent}
-              covers={(id === "recent"
-                ? history.map((row) => row.track)
-                : [...favorites, ...history.map((row) => row.track)]
-              )
-                .map((track) => track.coverUrl || "")
-                .filter(Boolean)}
-              cover={
-                id === "recent"
-                  ? history[0]?.track.coverUrl
-                  : id === "m3"
-                    ? favorites[0]?.coverUrl
-                    : undefined
-              }
+              catalogKind={`personal-${id}`}
               onOpen={() => navigate(`/collection/${id}`)}
             />
           ))}
@@ -64,9 +52,8 @@ export function HomePage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <CollectionCard
             title="Чарт России"
-            subtitle="Популярное сейчас · Яндекс Музыка"
+            subtitle="Популярное сейчас · доступные источники"
             accent="amber"
-            source="yandex"
             catalogKind="russia-chart"
             onOpen={() => navigate("/collection/russia-chart")}
           />

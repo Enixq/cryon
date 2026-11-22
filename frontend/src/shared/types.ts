@@ -7,6 +7,9 @@ export type AccentColor =
   "violet" | "cyan" | "pink" | "orange" | "rose" | "amber" | "slate" | "emerald";
 
 export interface Track {
+  forcedSource?: boolean;
+  recommendationReason?: string;
+  fromCache?: boolean;
   id: string;
   title: string;
   artist: string;

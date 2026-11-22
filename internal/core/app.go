@@ -617,6 +617,7 @@ func (a *App) loadLocalLibraryCache(ctx context.Context) {
 				Title:        r.Title,
 				Artists:      r.Artists,
 				Album:        r.Album,
+				DurationMs:   local.AudioDurationMs(r.FilePath),
 				PlayableKind: domain.PlayableStream,
 			},
 			FilePath: r.FilePath,
@@ -671,7 +672,7 @@ func (a *App) Search(service string, query string) ([]domain.Track, error) {
 	}
 	ctx, cancel := context.WithTimeout(a.ctx, searchSourceTimeout)
 	defer cancel()
-	tracks, err := svc.Search(ctx, query)
+	tracks, err := a.cachedSourceSearch(ctx, svc, query)
 	a.recordSourceResult(domain.ServiceID(service), err)
 	if err != nil {
 		logging.L().Warn("поиск завершился ошибкой", "service", service, "err", err)
@@ -721,6 +722,9 @@ func (a *App) searchInSourcesContext(parent context.Context, query string, sourc
 		}
 	}
 
+	if len(sourceIDs) > 0 && len(selected) == 0 {
+		return []domain.Track{}, nil
+	}
 	var wg sync.WaitGroup
 	results := make(map[domain.ServiceID][]domain.Track, len(a.registry))
 	var mu sync.Mutex
@@ -740,7 +744,7 @@ func (a *App) searchInSourcesContext(parent context.Context, query string, sourc
 			defer a.recoverGoroutine("SearchInSources")
 			ctx, cancel := context.WithTimeout(parent, searchSourceTimeout)
 			defer cancel()
-			tracks, err := svc.Search(ctx, query)
+			tracks, err := a.cachedSourceSearch(ctx, svc, query)
 			a.recordSourceResult(id, err)
 			if err != nil {
 				logging.L().Warn("поиск источника завершился ошибкой", "service", id, "err", err)
@@ -799,6 +803,9 @@ func songSearchResults(tracks []domain.Track) []domain.Track {
 // раскладываются по индексам, и берётся совпадение из самого приоритетного
 // источника, а не то, что ответило первым.
 func (a *App) ResolvePlayableTrack(track domain.Track) (domain.Track, error) {
+	if track.ForcedSource {
+		return track, nil
+	}
 	// У трека уже есть прямой поток — подменять нечего. Это подавляющее
 	// большинство запусков (YouTube/SoundCloud/Yandex/локальные файлы), поэтому
 	// без этой проверки каждый старт трека стоил бы до четырёх сетевых поисков.
@@ -875,6 +882,9 @@ func (a *App) ResolvePlaybackFallback(track domain.Track, failedService string) 
 }
 
 func (a *App) resolvePlaybackFallback(track domain.Track, failedService string, excludedCandidates []string) (domain.PlaybackCandidate, bool) {
+	if track.ForcedSource {
+		return domain.PlaybackCandidate{}, false
+	}
 	query := strings.TrimSpace(strings.Join(append(append([]string{}, track.Artists...), track.Title), " "))
 	if query == "" {
 		return domain.PlaybackCandidate{}, false
@@ -998,6 +1008,9 @@ func normalizeTrackText(value string) string {
 
 // GetAudioStream возвращает прямой аудиопоток трека, если источник его поддерживает.
 func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.AudioStream, error) {
+	if item, path, ok := a.offlineDownload(domain.ServiceID(service), trackID); ok {
+		return &audiofetcher.AudioStream{URL: path, Format: item.Mime, Duration: int64(item.Track.DurationMs / 1000)}, nil
+	}
 	switch domain.ServiceID(service) {
 	case domain.ServiceVK:
 		service, ok := a.registry[domain.ServiceVK].(*vk.Service)

@@ -29,7 +29,7 @@ const (
 	apiSearch = "https://lrclib.net/api/search"
 	// userAgent — lrclib просит указывать клиента (их гайдлайны). Ссылка на
 	// проект помогает им связаться при проблемах и не блокировать трафик.
-	userAgent = "Cryon2 (https://github.com/cryon/cryon2)"
+	userAgent = "Cryon (https://github.com/Enixq/cryon)"
 )
 
 // Result — текст песни для фронтенда. Synced — строки LRC с таймкодами
@@ -79,18 +79,28 @@ func (c *Client) Get(ctx context.Context, artist, title, album string, durationS
 	// 1) Точное совпадение по метаданным.
 	fallbackCtx, fallbackCancel := context.WithTimeout(ctx, 12*time.Second)
 	defer fallbackCancel()
-	fallback := make(chan Result, 1)
+	type reply struct {
+		result Result
+		err    error
+	}
+	fallback := make(chan reply, 1)
 	go func() {
-		text, _ := c.getLyricsOVH(fallbackCtx, primaryArtist(artist), title)
-		fallback <- Result{Plain: text, Found: text != "", Provider: "lyrics.ovh"}
+		result, err := c.GetProvider(fallbackCtx, artist, title, album, durationS, "ovh")
+		fallback <- reply{result, err}
 	}()
-	result, _ := c.GetProvider(ctx, artist, title, album, durationS, "lrclib")
+	result, mainErr := c.GetProvider(ctx, artist, title, album, durationS, "lrclib")
 	if result.Found {
 		return result, nil
 	}
 	select {
-	case result = <-fallback:
-		return result, nil
+	case other := <-fallback:
+		if other.result.Found {
+			return other.result, nil
+		}
+		if mainErr != nil && other.err != nil {
+			return Result{}, fmt.Errorf("источники текстов не ответили: %w", mainErr)
+		}
+		return Result{}, nil
 	case <-ctx.Done():
 		return Result{}, ctx.Err()
 	}
@@ -105,8 +115,11 @@ func (c *Client) getLyricsOVH(ctx context.Context, artist, title string) (string
 	if err != nil {
 		return "", err
 	}
-	if status != http.StatusOK {
+	if status == http.StatusNotFound {
 		return "", nil
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("lyrics.ovh: HTTP %d", status)
 	}
 	return strings.TrimSpace(payload.Lyrics), nil
 }
@@ -218,8 +231,30 @@ func cleanTitle(title string) string {
 func (c *Client) GetProvider(ctx context.Context, artist, title, album string, durationS int, provider string) (Result, error) {
 	title = stripArtistPrefix(artist, cleanTitle(title))
 	if provider == "ovh" {
-		text, err := c.getLyricsOVH(ctx, artist, title)
-		return Result{Plain: text, Found: text != "", Provider: "lyrics.ovh"}, err
+		ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		variants := []string{strings.TrimSpace(artist), primaryArtist(artist)}
+		if first, _, ok := strings.Cut(primaryArtist(artist), ", "); ok {
+			variants = append(variants, first)
+		}
+		seen := map[string]bool{}
+		var lastErr error
+		for _, name := range variants {
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			attempt, stop := context.WithTimeout(ctx, 4*time.Second)
+			text, err := c.getLyricsOVH(attempt, name, title)
+			stop()
+			if text != "" {
+				return Result{Plain: text, Found: true, Provider: "lyrics.ovh"}, nil
+			}
+			if err != nil {
+				lastErr = err
+			}
+		}
+		return Result{Provider: "lyrics.ovh"}, lastErr
 	}
 	if provider == "lrclib" {
 		ctx, cancel := context.WithTimeout(ctx, 14*time.Second)

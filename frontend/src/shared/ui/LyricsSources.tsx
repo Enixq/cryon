@@ -27,6 +27,7 @@ export function LyricsSources({
           </button>
         ))}
       </div>
+      {lyrics.error && <p role="alert" className="mt-2 text-xs text-slate-400">{lyrics.error}</p>}
       {lyrics.sourceName && (
         <p className="mt-2 text-xs text-slate-500">Текст: {lyrics.sourceName}</p>
       )}

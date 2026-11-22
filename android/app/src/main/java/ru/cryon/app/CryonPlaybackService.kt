@@ -499,6 +499,7 @@ class CryonPlaybackService : MediaSessionService() {
             .put("title", track.optString("title")).put("artists", track.optJSONArray("artists") ?: JSONArray().put(track.optString("primaryArtist").ifBlank { track.optString("artist") }))
             .put("album", track.optString("album")).put("durationMs", track.optLong("duration") * 1000)
             .put("artworkUrl", track.optString("coverUrl")).put("playableKind", track.optString("playableKind", "stream"))
+            .put("forcedSource", track.optBoolean("forcedSource"))
             .put("externalUrl", track.optString("externalUrl"))
     }
 
@@ -573,6 +574,7 @@ class CryonPlaybackService : MediaSessionService() {
             request("/v1/playback/resolve", JSONObject().put("track", input).put("native", true))
         }
         catch (error: Exception) {
+            if (track.optBoolean("forcedSource")) throw error
             request("/v1/playback/fallback", JSONObject().put("track", input).put("failedService", input.optString("service")).put("excludedCandidates", JSONArray()))
         }
         val stream = resolved.getString("streamUrl")

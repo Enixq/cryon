@@ -47,7 +47,8 @@ func (e *Engine) ResolveCatalog(ctx context.Context, metadata []deezer.CatalogTr
 				if best.ArtworkURL == "" {
 					best.ArtworkURL = meta.Album.Cover
 				}
-				results[i] = best
+				best.RecommendationReason = "Из каталога подборки"
+                results[i] = best
 			}(i, meta)
 		}
 		wg.Wait()

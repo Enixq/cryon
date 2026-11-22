@@ -1,6 +1,12 @@
 import { useId } from "react";
 
 const palettes: Record<string, [string, string, string]> = {
+  "personal-m1": ["#211238", "#9770ed", "#e4d6ff"],
+  "personal-m2": ["#06372d", "#28c89c", "#c7ffdf"],
+  "personal-for-you": ["#052935", "#32c0d8", "#cffaff"],
+  "personal-m4": ["#35112c", "#ef50b1", "#fbd3ff"],
+  "personal-recent": ["#32210a", "#e6a32c", "#fff0ce"],
+  "personal-m3": ["#38101e", "#ed4565", "#ffc4a1"],
   rock: ["#38101e", "#ed4565", "#ffc4a1"],
   pop: ["#321336", "#df59c8", "#ffd8eb"],
   "hip-hop": ["#301907", "#f27d25", "#ffe5a8"],
@@ -35,6 +41,18 @@ export function CollectionArtwork({ kind, title }: { kind: string; title: string
   );
   let drawing;
   switch (kind) {
+    case "personal-m1":
+      drawing = <g fill="none" {...ink}><rect x="82" y="112" width="236" height="168" rx="24" fill={dark} /><circle cx="151" cy="194" r="42" /><circle cx="151" cy="194" r="10" fill={accent} /><path d="M218 144V244M244 166V222M270 130V260" stroke={accent} strokeWidth="12" /></g>; break;
+    case "personal-m2":
+      drawing = <g fill="none" {...ink}><circle cx="200" cy="195" r="96" /><circle cx="200" cy="195" r="62" opacity=".5" /><circle cx="200" cy="195" r="28" opacity=".3" /><path d="M200 195L274 113L294 168Z" fill={accent} fillOpacity=".4" /><circle cx="249" cy="247" r="10" fill={light} /></g>; break;
+    case "personal-for-you":
+      drawing = <g {...ink} fill="none"><path d="M74 210C121 63 272 336 326 165M76 162C127 310 270 44 326 211" stroke={accent} strokeWidth="14" /><circle cx="200" cy="193" r="45" fill={dark} /><path d="M181 176L222 193L181 211Z" fill={light} /></g>; break;
+    case "personal-m4":
+      drawing = <g {...ink} fill="none"><circle cx="200" cy="193" r="94" /><path d="M200 65V99M200 287V321M72 193H106M294 193H328M168 225L185 176L232 160L215 209Z" fill={accent} /><circle cx="200" cy="193" r="8" fill={light} /></g>; break;
+    case "personal-recent":
+      drawing = <g {...ink} fill="none"><path d="M113 128A97 97 0 1 1 100 224M82 83V139H138" stroke={accent} strokeWidth="10" /><path d="M200 130V195L250 226" /><circle cx="200" cy="195" r="9" fill={light} /></g>; break;
+    case "personal-m3":
+      drawing = <g {...ink}><path d="M200 279L109 190C42 119 128 64 200 133C272 64 358 119 291 190Z" fill={accent} fillOpacity=".35" /><path d="M99 204H142L160 170L185 226L205 195H298" fill="none" strokeWidth="8" /></g>; break;
     case "russia-chart":
       drawing = (
         <>

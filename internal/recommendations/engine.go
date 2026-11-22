@@ -773,7 +773,7 @@ func (e *Engine) recoCacheKey(t taste, seeds []artistWeight, limit int) string {
 	if e.lastfm.Available() {
 		mode = "online"
 	}
-	return "reco:v4:" + mode + ":fb" + strconv.Itoa(t.feedbackRev) +
+	return "reco:v5:ad" + strconv.Itoa(int(e.Adventure(context.Background())*100)) + ":" + mode + ":fb" + strconv.Itoa(t.feedbackRev) +
 		":n" + strconv.Itoa(limit) + ":" + profileSignature(seeds)
 }
 
@@ -826,7 +826,10 @@ func (e *Engine) Recommendations(ctx context.Context, limit int) ([]domain.Track
 		tracks = append(tracks, e.offlineRecommendations(ctx, profile, seeds, limit)...)
 	}
 
-	tracks = diversifyTracks(filterRecommended(tracks, profile), profile.recentArtists, limit, artistCap)
+	if len(tracks) == 0 {
+		tracks = e.staleTracks(ctx, cacheKey)
+	}
+	tracks = diversifyTracks(adventureOrder(filterRecommended(tracks, profile), profile, e.Adventure(ctx)), profile.recentArtists, limit, artistCap)
 	if len(tracks) > 0 && e.store != nil {
 		if data, err := json.Marshal(tracks); err == nil {
 			_ = e.store.RecoCacheSet(ctx, cacheKey, string(data), recoTTL)
@@ -887,7 +890,32 @@ func (e *Engine) chartFallbackRecommendations(ctx context.Context, t taste, limi
 // основа «радио»/умной очереди. Похожесть берётся из Last.fm similar tracks
 // (по паре артист+название seed'а), а найденные названия ищутся в источниках.
 // Без ключа Last.fm — фолбэк: ещё треки того же артиста.
-func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int, exclude ...domain.Track) ([]domain.Track, error) {
+func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int, exclude ...domain.Track) (result []domain.Track, resultErr error) {
+	key := "radio:v1:" + string(seed.Service) + ":" + seed.ID + ":ad" + strconv.Itoa(int(e.Adventure(ctx)*100))
+	defer func() {
+		if len(result) == 0 {
+			result = e.staleTracks(ctx, key)
+		}
+		blocked := e.buildTaste(context.WithoutCancel(ctx))
+		seen := map[string]bool{trackKey(seed): true}
+		for _, t := range exclude {
+			seen[trackKey(t)] = true
+		}
+		filtered := []domain.Track{}
+		for _, t := range result {
+			if !seen[trackKey(t)] && !blocked.blockedTracks[trackKey(t)] {
+				seen[trackKey(t)] = true
+				filtered = append(filtered, t)
+			}
+		}
+		result = diversifyTracks(adventureOrder(filtered, blocked, e.Adventure(ctx)), blocked.recentArtists, limit, artistCap)
+		result = e.Explain(context.WithoutCancel(ctx), result)
+		if len(result) > 0 && e.store != nil && !result[0].FromCache {
+			raw, _ := json.Marshal(result)
+			_ = e.store.RecoCacheSet(context.WithoutCancel(ctx), key, string(raw), recoTTL)
+		}
+	}()
+
 	if limit <= 0 {
 		limit = 15
 	}
@@ -1206,7 +1234,7 @@ func (e *Engine) onlineRecommendations(ctx context.Context, t taste, seeds []art
 				}
 				// Чем выше близость артиста и позиция трека — тем больше вес.
 				score := seed.weight * (sim.Match + 0.1) * (1.0 / float64(i+1)) * tagBoost
-				cands = append(cands, scoredCand{artist: tr.Artist, title: tr.Name, score: score})
+				cands = append(cands, scoredCand{artist: tr.Artist, title: tr.Name, score: score, reason: "Похож по графу исполнителей на " + seed.name})
 			}
 		}
 	}
@@ -1221,6 +1249,7 @@ type scoredCand struct {
 	artist string
 	title  string
 	score  float64
+	reason string
 }
 
 // Multiple seed artists may independently point to the same candidate.
@@ -1252,6 +1281,16 @@ func (e *Engine) resolveCandidates(ctx context.Context, cands []scoredCand, t ta
 	}
 	seen := t.seen
 
+	known := familiar(t)
+	adventure := e.Adventure(ctx)
+	cands = append([]scoredCand(nil), cands...)
+	for i := range cands {
+		if !known[feedbackArtistKey(cands[i].artist)] {
+			cands[i].score *= .2 + 1.6*adventure
+		} else {
+			cands[i].score *= 1.8 - 1.6*adventure
+		}
+	}
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
 
 	// Собираем кандидатов-треки, затем прогоняем через кап по артистам, чтобы
@@ -1297,14 +1336,20 @@ func (e *Engine) resolveCandidates(ctx context.Context, cands []scoredCand, t ta
 		}
 		wg.Wait()
 
-		for _, res := range results {
+		for ri, res := range results {
 			if len(found) >= target {
 				break
 			}
 			if len(res) == 0 {
 				continue
 			}
-			best, ok := e.pickCandidateFor(res, t.sources)
+			matching := []domain.Track{}
+			for _, candidate := range res {
+				if domain.SameRecording(candidate, batch[ri].artist, batch[ri].title) {
+					matching = append(matching, candidate)
+				}
+			}
+			best, ok := e.pickCandidateFor(matching, t.sources)
 			if !ok {
 				continue
 			}
@@ -1323,6 +1368,7 @@ func (e *Engine) resolveCandidates(ctx context.Context, cands []scoredCand, t ta
 			}
 			foundByArtist[artist]++
 			usedKeys[key] = true
+			best.RecommendationReason = batch[ri].reason
 			found = append(found, best)
 		}
 	}
@@ -1494,6 +1540,15 @@ func (e *Engine) similarArtistsCached(ctx context.Context, artist string, limit 
 			_ = e.store.RecoCacheSet(ctx, key, string(data), 24*time.Hour)
 		}
 	}
+	if len(res) == 0 && errored {
+		if raw, ok := store.PeekCache(context.WithoutCancel(ctx), e.store, key); ok {
+			var cached []lastfm.Artist
+			if json.Unmarshal([]byte(raw), &cached) == nil {
+				return cached
+			}
+		}
+	}
+
 	return res
 }
 
@@ -1536,6 +1591,15 @@ func (e *Engine) topTracksCached(ctx context.Context, artist string, limit int) 
 			_ = e.store.RecoCacheSet(ctx, key, string(data), 24*time.Hour)
 		}
 	}
+	if len(res) == 0 && errored {
+		if raw, ok := store.PeekCache(context.WithoutCancel(ctx), e.store, key); ok {
+			var cached []lastfm.Track
+			if json.Unmarshal([]byte(raw), &cached) == nil {
+				return cached
+			}
+		}
+	}
+
 	return res
 }
 
