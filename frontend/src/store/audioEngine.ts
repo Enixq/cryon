@@ -99,6 +99,7 @@ export function useAudioEngine() {
   const playbackOnThisDevice = usePlayerStore((s) => s.playbackOnThisDevice);
   const isPlaying = usePlayerStore((s) => s.isPlaying && s.playbackOnThisDevice);
   const radio = usePlayerStore((s) => s.radio);
+  const radioSeed = usePlayerStore((s) => s.radioSeed);
   const repeat = usePlayerStore((s) => s.repeat);
   const shuffle = usePlayerStore((s) => s.shuffle);
   const volume = usePlayerStore((s) => s.volume);
@@ -127,8 +128,8 @@ export function useAudioEngine() {
 
   useEffect(() => {
     if (!hasNativeAndroidQueue() || !playbackOnThisDevice) return;
-    updateNativeAndroidQueue({ queue, currentIndex, radio, repeat, shuffle, serverBaseUrl: apiV1BaseUrl() });
-  }, [queue, currentIndex, radio, repeat, shuffle, playbackOnThisDevice]);
+    updateNativeAndroidQueue({ queue, currentIndex, radio, radioSeed, repeat, shuffle, serverBaseUrl: apiV1BaseUrl() });
+  }, [queue, currentIndex, radio, radioSeed, repeat, shuffle, playbackOnThisDevice]);
 
   const acceptEnginePosition = (trackId: string, position: number) => {
     const pending = pendingSeekRef.current;
@@ -230,7 +231,10 @@ export function useAudioEngine() {
       observingNativeRef.current = true;
       try {
       let store = usePlayerStore.getState();
-      if (state.playbackOnThisDevice === false) { usePlayerStore.setState({ playbackOnThisDevice: false }); return; }
+      // LAN ownership is authoritative. An old native handoff frame must not
+      // overwrite a newly acknowledged claim from the controller.
+      if (state.playbackOnThisDevice === false) return;
+      if (state.state === "idle") return;
       if (!store.playbackOnThisDevice) return;
       if (pendingNativeTrackRef.current && pendingNativeTrackRef.current !== state.trackId) return;
       if (pendingNativeTrackRef.current === state.trackId) {
@@ -243,7 +247,7 @@ export function useAudioEngine() {
         if (switched && store.radio && store.currentTrack()) recordRadioSignal(store.currentTrack()!, "completed");
         loadedTrackIdRef.current = state.trackId;
         const queueChanged = JSON.stringify(store.queue) !== JSON.stringify(state.queue);
-        usePlayerStore.setState({ ...(queueChanged ? { queue: state.queue } : {}), currentIndex: state.currentIndex, isPlaying: state.state === "error" ? store.isPlaying : state.autoPlay ?? state.playing, radio: state.radio ?? store.radio, ...(switched ? { engineDuration: 0 } : {}) });
+        usePlayerStore.setState({ ...(queueChanged ? { queue: state.queue } : {}), currentIndex: state.currentIndex, isPlaying: state.state === "error" ? store.isPlaying : state.autoPlay ?? state.playing, radio: state.radio ?? store.radio, radioSeed: state.radioSeed === undefined ? store.radioSeed : state.radioSeed, ...(switched ? { engineDuration: 0 } : {}) });
         store = usePlayerStore.getState();
       }
       const current = store.currentTrack();

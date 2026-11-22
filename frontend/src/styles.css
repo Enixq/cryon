@@ -324,3 +324,36 @@ input {
 .now-playing-panel[data-view="lyrics"] .panel-cover {
   display: none;
 }
+@media (max-height: 760px) and (min-width: 768px) {
+  .app-sidebar {
+    gap: 12px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .app-sidebar .sidebar-scroll {
+    gap: 16px;
+  }
+  .app-sidebar nav a {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    font-size: 14px;
+  }
+  .app-sidebar .sidebar-services .service-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .app-sidebar .service-list button {
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 4px;
+    height: 36px;
+    width: 100%;
+  }
+  .app-sidebar .service-name {
+    display: none;
+  }
+  .app-sidebar.w-\[68px\] .service-list {
+    grid-template-columns: 1fr;
+  }
+}

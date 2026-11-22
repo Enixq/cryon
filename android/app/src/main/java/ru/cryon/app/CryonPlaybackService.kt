@@ -60,6 +60,7 @@ class CryonPlaybackService : MediaSessionService() {
     private var radioAnchorOffset = 0
     private val recentIds = LinkedHashSet<String>()
     private var radioEnabled = false
+    private var radioSeed: JSONObject? = null
     private var serverBaseUrl = ""
     private var keepPlaying = false
     private var preloadingNext = false
@@ -69,6 +70,7 @@ class CryonPlaybackService : MediaSessionService() {
     private var syncConfig: JSONObject? = null
     private var syncRevision = 0L
     private var syncInflight = false
+    private var syncEpoch = 0L
     private var syncingLocally = false
     private var syncSeekNonce = 0L
     private var recovering = false
@@ -271,7 +273,13 @@ class CryonPlaybackService : MediaSessionService() {
             ACTION_QUEUE -> updateQueue(JSONObject(intent.getStringExtra(EXTRA_QUEUE).orEmpty()))
             ACTION_SYNC -> {
                 val config = JSONObject(intent.getStringExtra(EXTRA_QUEUE).orEmpty())
-                if (syncConfig?.optString("baseUrl") != config.optString("baseUrl")) syncRevision = 0
+                if (!config.optBoolean("enabled", true)) {
+                    syncEpoch++
+                    syncConfig = null
+                    syncingLocally = false
+                    return START_NOT_STICKY
+                }
+                if (syncConfig?.optString("baseUrl") != config.optString("baseUrl")) { syncEpoch++; syncRevision = 0 }
                 syncRevision = maxOf(syncRevision, config.optLong("revision"))
                 syncConfig = config
                 syncingLocally = config.optBoolean("playbackOnThisDevice")
@@ -284,6 +292,7 @@ class CryonPlaybackService : MediaSessionService() {
             ACTION_NEXT -> skipNext()
             ACTION_PREVIOUS -> { if (playbackPlayer.currentPosition > 3000) playbackPlayer.seekTo(0) else playQueueIndex((queueIndex - 1).coerceAtLeast(0)) }
             ACTION_STOP -> {
+                syncEpoch++
                 radioEpoch++
                 generation++
                 preloadingNext = false
@@ -349,7 +358,7 @@ class CryonPlaybackService : MediaSessionService() {
             .put("playing", playbackPlayer.isPlaying).put("autoPlay", keepPlaying).put("commandId", commandId)
             .put("positionMs", playbackPlayer.currentPosition.coerceAtLeast(0L))
             .put("durationMs", durationMs).put("error", error.orEmpty())
-            .put("radio", radioEnabled).put("playbackOnThisDevice", syncConfig == null || syncingLocally)
+            .put("radioSeed", radioSeed ?: JSONObject.NULL).put("radio", radioEnabled).put("playbackOnThisDevice", syncConfig == null || syncingLocally)
         if (queue.getOrNull(queueIndex)?.optString("id") == currentTrackId) {
             payload.put("queue", JSONArray(queue)).put("currentIndex", queueIndex)
         }
@@ -384,6 +393,9 @@ class CryonPlaybackService : MediaSessionService() {
             queue.addAll(nextQueue)
         }
         queueIndex = snapshot.optInt("currentIndex").coerceIn(0, (queue.size - 1).coerceAtLeast(0))
+        val incomingSeed = snapshot.optJSONObject("radioSeed")
+        if (incomingSeed?.optString("id") != radioSeed?.optString("id") || radioEnabled != snapshot.optBoolean("radio")) { radioEpoch++; radioLoading = false; retryRadioAt = 0L; radioAnchorOffset = 0 }
+        radioSeed = incomingSeed
         radioEnabled = snapshot.optBoolean("radio")
         repeat = snapshot.optString("repeat", "off")
         shuffle = snapshot.optBoolean("shuffle")
@@ -402,19 +414,20 @@ class CryonPlaybackService : MediaSessionService() {
     /** The service continues receiving LAN commands when WebView is suspended. */
     private fun syncDeviceState() {
         val config = syncConfig ?: return
-        if (uiForeground || syncInflight || !syncingLocally) return
+        if (uiForeground || syncInflight) return
+        val epoch = syncEpoch
         val p = player ?: return
         val revision = syncRevision
         val localSnapshot = JSONObject(config.toString()).put("queue", JSONArray(queue)).put("currentIndex", queueIndex)
             .put("isPlaying", keepPlaying).put("progress", p.currentPosition / 1000.0)
-            .put("radio", radioEnabled).put("repeat", repeat).put("shuffle", shuffle).put("seekNonce", syncSeekNonce)
+            .put("radioSeed", radioSeed ?: JSONObject.NULL).put("radio", radioEnabled).put("repeat", repeat).put("shuffle", shuffle).put("seekNonce", syncSeekNonce)
         syncInflight = true
         syncWorker.execute {
             val result = runCatching {
                 val base = config.getString("baseUrl")
                 val remote = syncRequest(base, "GET", null)
                 if (remote.optLong("revision") > revision) remote
-                else if (localSnapshot.optJSONArray("queue")?.length() != 0) {
+                else if (syncingLocally && localSnapshot.optJSONArray("queue")?.length() != 0) {
                     localSnapshot.put("baseRevision", revision)
                     val ack = syncRequest(base, "PUT", localSnapshot)
                     localSnapshot.put("revision", ack.optLong("revision"))
@@ -422,15 +435,15 @@ class CryonPlaybackService : MediaSessionService() {
             }
             progressHandler.post {
                 syncInflight = false
-                if (uiForeground || syncConfig?.optString("baseUrl") != config.optString("baseUrl")) return@post
+                if (uiForeground || epoch != syncEpoch || syncConfig?.optString("baseUrl") != config.optString("baseUrl")) return@post
                 val incoming = result.getOrNull() ?: return@post
                 if (incoming.optLong("revision") <= syncRevision) return@post
                 syncRevision = incoming.optLong("revision")
-                if (incoming.optString("deviceId") == config.optString("deviceId")) return@post
                 val owner = incoming.optString("playbackDeviceId", "host")
                 val release = incoming.optString("releaseDeviceId")
                 val active = incoming.optString("activePlaybackDeviceId", owner)
                 val own = release.isBlank() && active == owner && (owner == config.optString("deviceId") || (owner == "host" && config.optBoolean("isHost")))
+                if (incoming.optString("deviceId") == config.optString("deviceId") && own == syncingLocally && release.isBlank()) return@post
                 val currentPlayer = player ?: return@post
                 if (!own) {
                     syncingLocally = false
@@ -439,7 +452,7 @@ class CryonPlaybackService : MediaSessionService() {
                     currentPlayer.stop()
                     publishState(stateFor(currentPlayer))
                     if (release == config.optString("deviceId") || (release == "host" && config.optBoolean("isHost"))) {
-                        syncWorker.execute { runCatching { syncRequest(config.getString("baseUrl"), "POST", JSONObject().put("releaseDeviceId", release).put("baseRevision", incoming.optLong("revision"))) } }
+                        syncWorker.execute { runCatching { syncRequest(config.getString("baseUrl"), "POST", JSONObject().put("releaseDeviceId", release)) } }
                     }
                     return@post
                 }
@@ -447,9 +460,11 @@ class CryonPlaybackService : MediaSessionService() {
                 val index = incoming.optInt("currentIndex")
                 val incomingId = incomingQueue.optJSONObject(index)?.optString("id") ?: return@post
                 val requestedPlaying = incoming.optBoolean("isPlaying")
+                val wasLocal = syncingLocally
+                syncingLocally = true
                 updateQueue(JSONObject(incoming.toString()).put("serverBaseUrl", serverBaseUrl))
                 syncConfig = JSONObject(config.toString()).put("playbackDeviceId", owner).put("volume", incoming.optInt("volume", 68)).put("muted", incoming.optBoolean("muted"))
-                if (incomingId != currentTrackId) playQueueIndex(index, requestedPlaying, (incoming.optDouble("progress") * 1000).toLong())
+                if (!wasLocal || incomingId != currentTrackId || currentPlayer.playbackState == Player.STATE_IDLE) playQueueIndex(index, requestedPlaying, (incoming.optDouble("progress") * 1000).toLong())
                 else {
                     if (incoming.optLong("seekNonce") != syncSeekNonce) currentPlayer.seekTo((incoming.optDouble("progress") * 1000).toLong())
                     keepPlaying = requestedPlaying
@@ -672,11 +687,11 @@ class CryonPlaybackService : MediaSessionService() {
 
     private fun maybeRefillRadio() {
         if (!radioEnabled || radioLoading || serverBaseUrl.isBlank() || queue.isEmpty() || queue.size - queueIndex - 1 > 6 || System.currentTimeMillis() < retryRadioAt) return
-        val anchor = queue[(queue.lastIndex - radioAnchorOffset % minOf(queue.size, 6)).coerceAtLeast(0)]
+        val anchor = radioSeed ?: queue[(queue.lastIndex - radioAnchorOffset % minOf(queue.size, 6)).coerceAtLeast(0)]
         val token = radioEpoch
         radioLoading = true
         radioWorker.execute {
-            val result = runCatching { request("/v1/recommendations/related", JSONObject().put("track", backendTrack(anchor)).put("limit", 24)) }
+            val result = runCatching { request("/v1/recommendations/related", JSONObject().put("track", backendTrack(anchor)).put("limit", 24).put("exclude", JSONArray(if (radioSeed != null) queue.takeLast(200).map { backendTrack(it) } else emptyList<JSONObject>()))) }
             progressHandler.post {
                 if (token != radioEpoch) return@post
                 radioLoading = false

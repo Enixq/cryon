@@ -165,11 +165,19 @@ export async function newReleasesV1(limit: number): Promise<Track[]> {
   );
 }
 
-export async function relatedTracksV1(track: Track, limit: number): Promise<Track[]> {
+export async function relatedTracksV1(
+  track: Track,
+  limit: number,
+  exclude: Track[] = [],
+): Promise<Track[]> {
   const response = await request<domain.Track[]>("/v1/recommendations/related", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ track: toBackendTrack(track), limit }),
+    body: JSON.stringify({
+      track: toBackendTrack(track),
+      limit,
+      exclude: exclude.slice(-200).map(toBackendTrack),
+    }),
   });
   return mapTracks(response);
 }

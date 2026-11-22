@@ -41,6 +41,67 @@ func (a *App) handleAPIDeviceState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.remoteStateMu.Lock()
+	if action, _ := probe["action"].(string); r.Method == http.MethodPost && (action == "connect" || action == "disconnect") {
+		device, _ := probe["deviceId"].(string)
+		if device == "" || len(device) > 200 {
+			a.remoteStateMu.Unlock()
+			writeAPIError(w, 400, "нужен идентификатор устройства")
+			return
+		}
+		if a.detachedDevices == nil {
+			a.detachedDevices = map[string]bool{}
+		}
+		if action == "connect" {
+			delete(a.detachedDevices, device)
+			var previous map[string]any
+			_ = json.Unmarshal(a.remoteState, &previous)
+			if list, ok := previous["detachedDeviceIds"].([]any); ok {
+				remaining := []any{}
+				for _, id := range list {
+					if id != device {
+						remaining = append(remaining, id)
+					}
+				}
+				previous["detachedDeviceIds"] = remaining
+				a.remoteRevision++
+				previous["revision"] = a.remoteRevision
+				a.remoteState, _ = json.Marshal(previous)
+			}
+		} else {
+			a.detachedDevices[device] = true
+			peer, _ := probe["peerDeviceId"].(string)
+			if peer != "" && peer != "host" {
+				a.detachedDevices[peer] = true
+			}
+			var previous map[string]any
+			_ = json.Unmarshal(a.remoteState, &previous)
+			if previous != nil {
+				owner, _ := previous["playbackDeviceId"].(string)
+				if owner == device || owner == peer || probe["isHost"] == true {
+					previous["isPlaying"] = false
+					previous["playbackDeviceId"], previous["activePlaybackDeviceId"] = "host", "host"
+					delete(previous, "releaseDeviceId")
+				}
+				a.remoteRevision++
+				previous["revision"], previous["deviceId"] = a.remoteRevision, device
+				detached := []string{device}
+				if peer != "" && peer != "host" {
+					detached = append(detached, peer)
+				}
+				previous["detachedDeviceIds"] = detached
+				a.remoteState, _ = json.Marshal(previous)
+			}
+		}
+		revision := a.remoteRevision
+		a.remoteStateMu.Unlock()
+		writeAPIJSON(w, 200, map[string]any{"revision": revision})
+		return
+	}
+	if device, _ := probe["deviceId"].(string); r.Method == http.MethodPut && a.detachedDevices[device] {
+		a.remoteStateMu.Unlock()
+		writeAPIError(w, 403, "устройство отключено; подключитесь заново")
+		return
+	}
 	if base, ok := probe["baseRevision"].(float64); ok && uint64(base) != a.remoteRevision {
 		a.remoteStateMu.Unlock()
 		writeAPIError(w, http.StatusConflict, "состояние плеера изменилось; перечитайте очередь")

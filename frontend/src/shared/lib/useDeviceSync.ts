@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { usePlayerStore } from "../../store/playerStore";
-import { configuredBaseUrl } from "./httpBridge";
+import { configuredBaseUrl, setConfiguredBaseUrl } from "./httpBridge";
 import { apiV1BaseUrl, hasApiV1Runtime } from "../api/v1";
 import { configureNativeAndroidSync } from "./nativeAndroidPlayer";
 import { stopLocalPlayback } from "./localPlayback";
@@ -25,19 +25,62 @@ export function ownsPlayback(owner: string, id: string, connectedToPeer: boolean
   return owner === id || (owner === "host" && !connectedToPeer);
 }
 
-export function selectPlaybackDevice(local: boolean): void {
+const disabledKey = "cryon.device.syncDisabled";
+let confirmedPlaybackOwner = "";
+function resetDisconnectedPlayer(): void {
+  confirmedPlaybackOwner = "";
+  localStorage.setItem(disabledKey, "1");
+  configureNativeAndroidSync({ enabled: false });
+  usePlayerStore.setState({ isPlaying: false, playbackDeviceId: "host", playbackOnThisDevice: true, pairedDeviceId: "" });
+  setConfiguredBaseUrl("");
+}
+
+export async function disconnectDeviceSync(): Promise<boolean> {
+  const peer = configuredBaseUrl();
+  const base = peer || apiV1BaseUrl();
+  const paired = usePlayerStore.getState().pairedDeviceId;
+  localStorage.setItem(disabledKey, "1");
+  configureNativeAndroidSync({ enabled: false });
+  await stopLocalPlayback();
+  resetDisconnectedPlayer();
+  try {
+    const response = await fetch(base + "/v1/devices/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "disconnect", deviceId: localDeviceId(), peerDeviceId: peer ? "host" : paired, isHost: !peer }), signal: AbortSignal.timeout(5000) });
+    return response.ok;
+  } catch { return false; }
+}
+
+export async function enableDeviceSync(): Promise<void> {
+  const base = apiV1BaseUrl() || "http://127.0.0.1:8899";
+  const response = await fetch(base + "/v1/devices/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", deviceId: localDeviceId() }), signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new Error("Не удалось включить управление по Wi-Fi.");
+  localStorage.removeItem(disabledKey);
+  setConfiguredBaseUrl(configuredBaseUrl());
+}
+
+export async function selectPlaybackDevice(local: boolean): Promise<void> {
   const peer = configuredBaseUrl();
   const other = peer ? "host" : usePlayerStore.getState().pairedDeviceId;
+  if (!local && !other) throw new Error("Сначала подключите другое устройство.");
+  const target = local ? (peer ? localDeviceId() : "host") : other || "host";
   usePlayerStore.setState({
-    playbackDeviceId: local ? (peer ? localDeviceId() : "host") : other || "host",
+    playbackDeviceId: target,
   });
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const state = usePlayerStore.getState();
+    if (confirmedPlaybackOwner === target && state.playbackDeviceId === target && state.playbackOnThisDevice === local) return;
+    await new Promise(resolve => window.setTimeout(resolve, 100));
+  }
+  throw new Error("Устройство не подтвердило переключение. Проверьте сеть или отключите синхронизацию.");
 }
 
 export function startDeviceSync(): () => void {
   if (!hasApiV1Runtime()) return () => {};
+  if (localStorage.getItem(disabledKey) === "1") return () => {};
   const peer = configuredBaseUrl();
   const base = peer || apiV1BaseUrl() || "http://127.0.0.1:8899";
   const id = localDeviceId();
+  confirmedPlaybackOwner = "";
   // Silence a newly connected controller before receiving the first snapshot.
   if (peer) usePlayerStore.setState({ playbackOnThisDevice: false, playbackDeviceId: "host" });
   let revision = 0;
@@ -45,6 +88,7 @@ export function startDeviceSync(): () => void {
   let initialized = false;
   let stopped = false;
   let busy = false;
+  let rerun = false;
   let lastSignature = "";
   let activeOwner = "host";
   let releaseDeviceId = "";
@@ -71,6 +115,7 @@ export function startDeviceSync(): () => void {
       volume: s.volume,
       muted: s.muted,
       radio: s.radio,
+      radioSeed: s.radioSeed,
       repeat: s.repeat,
       shuffle: s.shuffle,
       seekNonce: s.seekRevision,
@@ -116,14 +161,21 @@ export function startDeviceSync(): () => void {
         deviceId?: string;
         activePlaybackDeviceId?: string;
         releaseDeviceId?: string;
+        detachedDeviceIds?: string[];
       };
       if (stopped) return;
+      if (incoming.detachedDeviceIds?.includes(id)) {
+        await stopLocalPlayback();
+        resetDisconnectedPlayer();
+        return;
+      }
       // A user command may have arrived while the GET/PUT was in flight.
       // Rebase that intent over the reply instead of replacing it with it.
       if (initialized && lastSignature && signature() !== lastSignature && !pendingIntent)
         pendingIntent = { desired: snapshot(), baseline: JSON.parse(lastSignature) as ReturnType<typeof snapshot> };
       activeOwner = incoming.activePlaybackDeviceId ?? incoming.playbackDeviceId ?? "host";
       releaseDeviceId = incoming.releaseDeviceId || "";
+      confirmedPlaybackOwner = releaseDeviceId ? "" : activeOwner;
       if (
         Array.isArray(incoming.queue) &&
         incoming.deviceId &&
@@ -133,7 +185,7 @@ export function startDeviceSync(): () => void {
         applying = true;
         const owner = incoming.playbackDeviceId || "host";
         if (!peer && incoming.deviceId !== id)
-          usePlayerStore.setState({ pairedDeviceId: incoming.deviceId });
+          usePlayerStore.setState({ pairedDeviceId: incoming.detachedDeviceIds?.includes(incoming.deviceId) ? "" : incoming.deviceId });
         usePlayerStore
           .getState()
           .replaceRemoteState({
@@ -155,6 +207,7 @@ export function startDeviceSync(): () => void {
           "volume",
           "muted",
           "radio",
+          "radioSeed",
           "repeat",
           "shuffle",
           "playbackDeviceId",
@@ -218,7 +271,7 @@ export function startDeviceSync(): () => void {
         const released = await request({
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ releaseDeviceId, baseRevision: revision }),
+          body: JSON.stringify({ releaseDeviceId }),
         });
         if (released.ok) {
           const ack = (await released.json()) as { revision: number };
@@ -229,6 +282,7 @@ export function startDeviceSync(): () => void {
       /* Keep the selected owner during transient network failures. */
     } finally {
       busy = false;
+      if (rerun && !stopped) { rerun = false; queueMicrotask(() => void tick()); }
     }
   };
   const off = usePlayerStore.subscribe((state, previous) => {
@@ -236,8 +290,8 @@ export function startDeviceSync(): () => void {
     // changes request an immediate sync; position uses the timed heartbeat.
     if (!applying && (state.queue !== previous.queue || state.currentIndex !== previous.currentIndex ||
       state.isPlaying !== previous.isPlaying || state.volume !== previous.volume || state.muted !== previous.muted ||
-      state.radio !== previous.radio || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle ||
-      state.seekRevision !== previous.seekRevision || state.playbackDeviceId !== previous.playbackDeviceId)) void tick();
+      state.radio !== previous.radio || state.radioSeed !== previous.radioSeed || state.repeat !== previous.repeat || state.shuffle !== previous.shuffle ||
+      state.seekRevision !== previous.seekRevision || state.playbackDeviceId !== previous.playbackDeviceId)) { if (busy) rerun = true; else void tick(); }
   });
   const timer = window.setInterval(() => {
     void tick();

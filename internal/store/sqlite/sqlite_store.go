@@ -24,7 +24,7 @@ type Store struct {
 
 var _ store.Store = (*Store)(nil)
 
-const coreSchemaVersion = 2
+const coreSchemaVersion = 3
 
 // New подготавливает путь к БД в каталоге данных приложения.
 func New(appName string) (*Store, error) {
@@ -91,6 +91,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_favorites_added_at ON favorites(added_at);`,
 
+		`CREATE TABLE IF NOT EXISTS library_clock(id INTEGER PRIMARY KEY CHECK(id=1),origin TEXT NOT NULL,counter INTEGER NOT NULL);`,
+		`CREATE TABLE IF NOT EXISTS library_entries(service TEXT NOT NULL,track_id TEXT NOT NULL,counter INTEGER NOT NULL,origin TEXT NOT NULL,deleted INTEGER NOT NULL,track_json TEXT NOT NULL,PRIMARY KEY(service,track_id));`,
 		`CREATE TABLE IF NOT EXISTS tokens (
 			service TEXT PRIMARY KEY,
 			access_token TEXT,
@@ -321,7 +323,12 @@ func (s *Store) FavoriteAdd(ctx context.Context, t domain.Track) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO favorites
 		 (added_at, service, track_id, title, artists_json, album, duration_ms, artwork_url, external_url, playable_kind)
@@ -338,20 +345,39 @@ func (s *Store) FavoriteAdd(ctx context.Context, t domain.Track) error {
 		nullIfEmpty(t.ExternalURL),
 		string(t.PlayableKind),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if added, _ := result.RowsAffected(); added > 0 {
+		if err = recordLibraryChange(ctx, tx, t, false); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) FavoriteRemove(ctx context.Context, service domain.ServiceID, trackID string) error {
 	if s.db == nil {
 		return errors.New("sqlite store не инициализирован")
 	}
-	_, err := s.db.ExecContext(
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(
 		ctx,
 		`DELETE FROM favorites WHERE service = ? AND track_id = ?;`,
 		string(service),
 		trackID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if err = recordLibraryChange(ctx, tx, domain.Track{Service: service, ID: trackID}, true); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) FavoriteList(ctx context.Context) ([]domain.Track, error) {
@@ -1109,6 +1135,7 @@ func (s *Store) ResetAllData(ctx context.Context) error {
 	defer func() { _ = tx.Rollback() }()
 
 	tables := []string{
+		"library_entries", "library_clock",
 		"history",
 		"favorites",
 		"playlist_tracks",

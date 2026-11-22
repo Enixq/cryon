@@ -34,6 +34,9 @@ func (a *App) APIHandler() http.Handler {
 	mux.HandleFunc("/v1/search", a.handleAPISearch)
 	mux.HandleFunc("/v1/catalog/playlists/search", a.handleAPICatalogPlaylistSearch)
 	mux.HandleFunc("/v1/catalog/collection", a.handleAPICatalogCollection)
+	mux.HandleFunc("/v1/accounts/vk/login", a.handleAPIVKLogin)
+	mux.HandleFunc("/v1/library/sync/config", a.handleAPILibrarySyncConfig)
+	mux.HandleFunc(libraryExchangePath, a.handleAPILibraryExchange)
 	mux.HandleFunc("/v1/lyrics", a.handleAPILyrics)
 	mux.HandleFunc("/v1/catalog/playlists/", a.handleAPICatalogPlaylistTracks)
 	mux.HandleFunc("/v1/recommendations", a.handleAPIRecommendations)
@@ -164,8 +167,9 @@ type apiPlaylistOrderRequest struct {
 }
 
 type apiRelatedTracksRequest struct {
-	Track domain.Track `json:"track"`
-	Limit int          `json:"limit"`
+	Exclude []domain.Track `json:"exclude,omitempty"`
+	Track   domain.Track   `json:"track"`
+	Limit   int            `json:"limit"`
 }
 
 func (a *App) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
@@ -419,7 +423,12 @@ func (a *App) handleAPIRecommendationByKind(w http.ResponseWriter, r *http.Reque
 		if req.Limit > 0 {
 			limit = min(req.Limit, 100)
 		}
-		tracks, err = a.ListRelatedTracks(req.Track, limit)
+		if len(req.Exclude) > 200 {
+			req.Exclude = req.Exclude[len(req.Exclude)-200:]
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		tracks, err = a.reco.RelatedTracks(ctx, req.Track, limit, req.Exclude...)
 	default:
 		writeAPIError(w, http.StatusNotFound, "маршрут не найден")
 		return

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Heart,
   ListMusic,
@@ -74,6 +75,24 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
   const accent = useCoverPalette(coverUrl);
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const zoomTrigger = useRef<HTMLButtonElement>(null);
+  const zoomClose = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!isExpanded) return;
+    zoomClose.current?.focus();
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsExpanded(false);
+      if (event.key === "Tab") {
+        event.preventDefault();
+        zoomClose.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", dismiss);
+    return () => {
+      document.removeEventListener("keydown", dismiss);
+      zoomTrigger.current?.focus();
+    };
+  }, [isExpanded]);
   // Нижняя область панели переключается между очередью и текстом песни.
   const [bottomTab, setBottomTab] = useState<"queue" | "lyrics">("queue");
 
@@ -94,11 +113,7 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
         "now-playing-panel flex shrink-0 flex-col gap-4 border-l border-white/5 bg-[#0c0e1a]/60 p-5",
         // В выдвижном режиме (узкий экран) панель занимает всю высоту контента
         // и фиксированную ширину; иначе — обычная встроенная ширина.
-        onClose
-          ? "h-full w-[min(360px,90vw)]"
-          : isExpanded
-            ? "w-[min(410px,30vw)]"
-            : "w-[clamp(280px,24vw,340px)]",
+        onClose ? "h-full w-[min(360px,90vw)]" : "w-[clamp(280px,24vw,340px)]",
       )}
     >
       {/* Заголовок */}
@@ -124,9 +139,11 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
             <MoreHorizontal size={18} />
           </button>
           <button
+            ref={zoomTrigger}
+            disabled={!track}
             onClick={() => setIsExpanded((v) => !v)}
             className="grid h-8 w-8 place-items-center rounded-lg hover:bg-white/5 hover:text-white"
-            aria-label="Развернуть"
+            aria-label="Увеличить обложку"
           >
             <Maximize2 size={16} />
           </button>
@@ -147,7 +164,7 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
             }}
             className="flex w-full items-center rounded-lg px-2 py-2 text-left hover:bg-white/10"
           >
-            Развернуть очередь
+            Увеличить обложку
           </button>
         </div>
       ) : null}
@@ -160,8 +177,9 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           <div
             className={cn(
               "panel-cover relative mx-auto aspect-square w-full overflow-hidden rounded-2xl",
-              isExpanded ? "max-w-[280px]" : "max-w-[200px]",
+              "max-w-[200px] cursor-zoom-in",
             )}
+            onClick={() => setIsExpanded(true)}
             style={accentStyle(track.accent)}
           >
             {coverUrl ? (
@@ -368,6 +386,49 @@ export function NowPlayingPanel({ onClose }: NowPlayingPanelProps = {}) {
           <LyricsView track={track} progress={progress} accent={accent} onSeek={seek} />
         )}
       </div>
+      {isExpanded &&
+        track &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Обложка: ${track.title}`}
+            className="fixed inset-0 z-[150] flex items-center justify-center bg-black/90 p-5 backdrop-blur-lg"
+            onClick={() => setIsExpanded(false)}
+          >
+            <button
+              ref={zoomClose}
+              type="button"
+              onClick={() => setIsExpanded(false)}
+              aria-label="Закрыть обложку"
+              className="absolute right-5 top-5 grid h-12 w-12 place-items-center rounded-full bg-white/10 text-white"
+            >
+              <X />
+            </button>
+            <div
+              className="flex max-w-full flex-col items-center gap-4"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {coverUrl ? (
+                <img
+                  src={coverUrl}
+                  alt={track.title}
+                  className="h-[min(78vh,90vw)] w-[min(78vh,90vw)] rounded-xl object-contain shadow-2xl"
+                />
+              ) : (
+                <Cover
+                  accent={track.accent}
+                  alt={track.title}
+                  className="h-[min(70vh,80vw)] w-[min(70vh,80vw)]"
+                />
+              )}
+              <p className="text-center text-sm text-white">
+                {track.artist} — {track.title}
+              </p>
+            </div>
+          </div>,
+          document.body,
+        )}
     </aside>
   );
 }
@@ -397,7 +458,10 @@ function LyricsView({
   }, [active]);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <LyricsSources lyrics={lyrics} hasSource={track?.source === "yandex"} />
+      <LyricsSources
+        lyrics={lyrics}
+        hasSource={track?.source === "yandex" || track?.source === "vk"}
+      />
       {lyrics.loading ? (
         <LyricsHint text="Загружаем текст…" />
       ) : lyrics.instrumental ? (

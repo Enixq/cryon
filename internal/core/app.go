@@ -32,6 +32,7 @@ import (
 	"Cryon2/internal/services/lyrics"
 	"Cryon2/internal/services/soundcloud"
 	"Cryon2/internal/services/spotify"
+	"Cryon2/internal/services/vk"
 	"Cryon2/internal/services/yandex"
 	"Cryon2/internal/services/youtube"
 	"Cryon2/internal/store"
@@ -93,24 +94,31 @@ var notifCounter uint64
 // и локальное хранилище. Методы с большой буквы доступны фронтенду
 // через Wails-биндинги.
 type App struct {
-	ctx            context.Context
-	startupError   string
-	workerCancel   context.CancelFunc
-	workerDone     chan struct{}
-	cfg            config.Config
-	registry       map[domain.ServiceID]domain.MusicService
-	local          *local.Service
-	player         *playback.Controller
-	store          store.Store
-	reco           *recommendations.Engine
-	lyrics         *lyrics.Client
-	mu             sync.Mutex
-	eventsMu       sync.Mutex
-	statusMu       sync.RWMutex
-	remoteStateMu  sync.RWMutex
-	remoteState    []byte
-	remoteRevision uint64
-	events         *apiEventHub
+	librarySyncMu       sync.Mutex
+	librarySyncConfigMu sync.Mutex
+	librarySyncStatusMu sync.Mutex
+	librarySyncCancel   context.CancelFunc
+	librarySyncMessage  string
+	vkLogin             vkLoginState
+	ctx                 context.Context
+	startupError        string
+	workerCancel        context.CancelFunc
+	workerDone          chan struct{}
+	cfg                 config.Config
+	registry            map[domain.ServiceID]domain.MusicService
+	local               *local.Service
+	player              *playback.Controller
+	store               store.Store
+	reco                *recommendations.Engine
+	lyrics              *lyrics.Client
+	mu                  sync.Mutex
+	eventsMu            sync.Mutex
+	statusMu            sync.RWMutex
+	remoteStateMu       sync.RWMutex
+	remoteState         []byte
+	detachedDevices     map[string]bool
+	remoteRevision      uint64
+	events              *apiEventHub
 	// validationErrors хранит только результат явной проверки API в текущем
 	// запуске. Это не подменяет конфигурационный статус, а дополняет его.
 	validationErrors map[domain.ServiceID]string
@@ -155,7 +163,13 @@ func NewApp() *App {
 	// рекомендации работают без настройки. Поиск делегируем SearchAll, чтобы
 	// находить реальные проигрываемые треки (аудио из Deezer не берётся).
 	app.reco = recommendations.New(app.store, lastfm.New(cfg.LastFMAPIKey), deezer.New(), func(ctx context.Context, query string) ([]domain.Track, error) {
-		return app.SearchAll(query)
+		return app.searchInSourcesContext(ctx, query, nil)
+	})
+	app.reco.SetTrackSimilarity(func(ctx context.Context, seed domain.Track) ([]domain.Track, error) {
+		if service, ok := app.registry[domain.ServiceYandex].(*yandex.Service); ok {
+			return service.SimilarTracks(ctx, seed)
+		}
+		return nil, nil
 	})
 	return app
 }
@@ -186,6 +200,7 @@ func (a *App) startup(ctx context.Context) {
 	a.startJobWorker(ctx)
 	// LAN-сервер для телефона и управления desktop из доверенной Wi-Fi-сети.
 	a.startLANServer()
+	a.startLibrarySync(ctx)
 }
 
 func (a *App) CurrentAccount() (LocalAccount, bool, error) {
@@ -554,6 +569,9 @@ func (a *App) restoreServiceCredentials(ctx context.Context) {
 		}
 		return strings.TrimSpace(v)
 	}
+	if service, ok := a.registry[domain.ServiceVK].(*vk.Service); ok {
+		service.SetToken(get("vk.token"))
+	}
 
 	if sp, ok := a.registry[domain.ServiceSpotify].(*spotify.Service); ok {
 		id, secret := get(keySpotifyClientID), get(keySpotifyClientSecret)
@@ -608,6 +626,9 @@ func (a *App) loadLocalLibraryCache(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {
+	if a.librarySyncCancel != nil {
+		a.librarySyncCancel()
+	}
 	if a.workerCancel != nil {
 		a.workerCancel()
 	}
@@ -685,6 +706,14 @@ const searchSourceTimeout = 8 * time.Second
 // SearchInSources параллельно ищет только в указанных источниках. Пустой
 // список означает «во всех», что сохраняет обратную совместимость SearchAll.
 func (a *App) SearchInSources(query string, sourceIDs []string) ([]domain.Track, error) {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.searchInSourcesContext(ctx, query, sourceIDs)
+}
+
+func (a *App) searchInSourcesContext(parent context.Context, query string, sourceIDs []string) ([]domain.Track, error) {
 	selected := make(map[domain.ServiceID]bool, len(sourceIDs))
 	for _, source := range sourceIDs {
 		if id := domain.ServiceID(source); a.registry[id] != nil {
@@ -709,7 +738,7 @@ func (a *App) SearchInSources(query string, sourceIDs []string) ([]domain.Track,
 		go func(id domain.ServiceID, svc domain.MusicService) {
 			defer wg.Done()
 			defer a.recoverGoroutine("SearchInSources")
-			ctx, cancel := context.WithTimeout(a.ctx, searchSourceTimeout)
+			ctx, cancel := context.WithTimeout(parent, searchSourceTimeout)
 			defer cancel()
 			tracks, err := svc.Search(ctx, query)
 			a.recordSourceResult(id, err)
@@ -724,12 +753,13 @@ func (a *App) SearchInSources(query string, sourceIDs []string) ([]domain.Track,
 	}
 	wg.Wait()
 
-	// Стабильный порядок источников для предсказуемой выдачи. Spotify и VK
-	// исключены из поиска (см. searchExcluded / реестр), поэтому здесь их нет.
+	// Стабильный порядок источников для предсказуемой выдачи.
+	// Spotify исключён из поиска: у него нет прямого аудиопотока.
 	order := []domain.ServiceID{
 		domain.ServiceYouTube,
 		domain.ServiceSoundCloud,
 		domain.ServiceYandex,
+		domain.ServiceVK,
 		domain.ServiceLocal,
 	}
 	total := 0
@@ -755,7 +785,7 @@ func songSearchResults(tracks []domain.Track) []domain.Track {
 
 // ResolvePlayableTrack подбирает прямую, наиболее предпочтительную версию
 // трека перед воспроизведением. Это особенно полезно для импортированных
-// записей (Spotify/VK), у которых нет собственного аудиопотока. Совпадение
+// записей Spotify, у которых нет собственного аудиопотока. Совпадение
 // намеренно строгое: нормализованные исполнитель и название должны совпасть,
 // чтобы не подменять композицию кавером, ремиксом или другим треком.
 //
@@ -783,6 +813,7 @@ func (a *App) ResolvePlayableTrack(track domain.Track) (domain.Track, error) {
 	sources := []domain.ServiceID{
 		domain.ServiceSoundCloud,
 		domain.ServiceYandex,
+		domain.ServiceVK,
 		domain.ServiceLocal,
 		domain.ServiceYouTube,
 	}
@@ -858,6 +889,7 @@ func (a *App) resolvePlaybackFallback(track domain.Track, failedService string, 
 		domain.ServiceLocal,
 		domain.ServiceSoundCloud,
 		domain.ServiceYandex,
+		domain.ServiceVK,
 		domain.ServiceYouTube,
 	}
 	ctx := a.ctx
@@ -967,6 +999,18 @@ func normalizeTrackText(value string) string {
 // GetAudioStream возвращает прямой аудиопоток трека, если источник его поддерживает.
 func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.AudioStream, error) {
 	switch domain.ServiceID(service) {
+	case domain.ServiceVK:
+		service, ok := a.registry[domain.ServiceVK].(*vk.Service)
+		if !ok {
+			return nil, fmt.Errorf("адаптер ВК Музыки недоступен")
+		}
+		ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
+		defer cancel()
+		info, err := service.ResolveStream(ctx, trackID)
+		if err != nil {
+			return nil, err
+		}
+		return &audiofetcher.AudioStream{URL: info.URL, Format: info.MimeType, Duration: int64(info.DurationMs / 1000)}, nil
 	case domain.ServiceYouTube:
 		// Резолв URL ограничен по времени. a.ctx (контекст запуска Wails или
 		// фоновый на мобиле) не имеет дедлайна, поэтому зависший запрос к
@@ -1445,6 +1489,7 @@ func defaultPlaybackPreferences() identity.Preferences {
 		domain.ServiceSoundCloud: 40,
 		domain.ServiceYouTube:    30,
 		domain.ServiceYandex:     0,
+		domain.ServiceVK:         0,
 	}}
 }
 
@@ -1752,6 +1797,9 @@ func (a *App) ResetAllData() error {
 		return err
 	}
 	// Сбрасываем адаптеры в рантайме, чтобы не ждать перезапуска.
+	if service, ok := a.registry[domain.ServiceVK].(*vk.Service); ok {
+		service.SetToken("")
+	}
 	if ya, ok := a.registry[domain.ServiceYandex].(*yandex.Service); ok {
 		ya.SetToken("")
 	}
@@ -1884,7 +1932,7 @@ const (
 //   - "limited" (жёлтый): источник работает частично. Spotify отдаёт только
 //     внешние ссылки (поиск есть, прямого потока нет); Yandex без токена
 //     живёт на веб-поиске; локальная библиотека без папок пуста.
-//   - "off" (красный): источник недоступен. VK — заглушка.
+//   - "off" (красный): источник недоступен или ВК Музыка ещё не подключена.
 func (a *App) ListSourceStatus() []SourceStatus {
 	a.statusMu.RLock()
 	validationErrors := make(map[domain.ServiceID]string, len(a.validationErrors))
@@ -1933,6 +1981,12 @@ func (a *App) ValidateSource(id string) error {
 	defer cancel()
 	var err error
 	switch domain.ServiceID(id) {
+	case domain.ServiceVK:
+		if service, ok := a.registry[domain.ServiceVK].(*vk.Service); ok {
+			err = service.ValidateToken(ctx)
+		} else {
+			err = fmt.Errorf("VK unavailable")
+		}
 	case domain.ServiceYandex:
 		if s, ok := a.registry[domain.ServiceYandex].(*yandex.Service); ok {
 			err = s.ValidateToken(ctx)

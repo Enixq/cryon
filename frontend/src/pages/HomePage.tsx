@@ -41,6 +41,12 @@ export function HomePage() {
               title={title}
               subtitle={subtitle}
               accent={accent}
+              covers={(id === "recent"
+                ? history.map((row) => row.track)
+                : [...favorites, ...history.map((row) => row.track)]
+              )
+                .map((track) => track.coverUrl || "")
+                .filter(Boolean)}
               cover={
                 id === "recent"
                   ? history[0]?.track.coverUrl
@@ -61,12 +67,14 @@ export function HomePage() {
             subtitle="Популярное сейчас · Яндекс Музыка"
             accent="amber"
             source="yandex"
+            catalogKind="russia-chart"
             onOpen={() => navigate("/collection/russia-chart")}
           />
           <CollectionCard
             title="Мировой чарт"
             subtitle="Популярные треки · Deezer"
             accent="cyan"
+            catalogKind="world-chart"
             onOpen={() => navigate("/collection/world-chart")}
           />
         </div>
@@ -80,6 +88,7 @@ export function HomePage() {
               title={genre.title}
               subtitle="Жанровая подборка"
               accent={genre.accent}
+              catalogKind={genre.slug}
               onOpen={() => navigate(`/genre/${genre.slug}`)}
             />
           ))}
@@ -111,6 +120,7 @@ export function HomePage() {
                 title={playlist.title}
                 subtitle={`${playlist.trackCount} треков`}
                 cover={playlist.coverUrls?.[0]}
+                covers={playlist.coverUrls}
                 onOpen={() => navigate(`/playlists/${playlist.id}`)}
               />
             ))}

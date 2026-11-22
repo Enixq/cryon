@@ -21,10 +21,12 @@ import { formatDuration } from "../shared/lib/format";
 import type { SourceId, Track } from "../shared/types";
 import { ServiceIcon } from "../shared/ui/ServiceIcon";
 import { PageHeader } from "../shared/ui/PageHeader";
+import { VKConnection } from "../shared/ui/VKConnection";
+import { LibrarySyncSettings } from "../shared/ui/LibrarySyncSettings";
 import { TabBar, type TabItem } from "../shared/ui/TabBar";
 import { useUiStore } from "../store/uiStore";
 import { usePlayerStore } from "../store/playerStore";
-import { selectPlaybackDevice } from "../shared/lib/useDeviceSync";
+import { selectPlaybackDevice, disconnectDeviceSync, enableDeviceSync, localDeviceId } from "../shared/lib/useDeviceSync";
 import { usePlaybackSettingsStore } from "../store/playbackSettingsStore";
 import { usePlaybackDiagnosticsStore } from "../store/playbackDiagnosticsStore";
 import { useFavoriteIds } from "../shared/lib/useFavorites";
@@ -77,7 +79,7 @@ const DEFAULT_PLAYBACK_PREFERENCES: PlaybackPreferencesV1 = {
   officialOnly: false,
   sourcePriority: {},
 };
-const PLAYBACK_SOURCE_ORDER: SourceId[] = ["soundcloud", "youtube", "local", "yandex"];
+const PLAYBACK_SOURCE_ORDER: SourceId[] = ["soundcloud", "youtube", "local", "yandex", "vk"];
 
 type SettingsTab = "music" | "connections" | "playback" | "diagnostics" | "general";
 
@@ -393,6 +395,7 @@ export function SettingsPage() {
           <SpotifySection anchorRef={spotifyConfigRef} />
           <SoundCloudSection anchorRef={soundcloudConfigRef} />
           <YouTubeSection anchorRef={youtubeConfigRef} />
+          <VKConnection />
           <AccountConnectionsSection />
         </div>
       )}
@@ -545,6 +548,7 @@ export function SettingsPage() {
           <div className="columns-1 gap-5 lg:columns-2">
             <UpdateSection />
             <MobileServerSection />
+            <LibrarySyncSettings />
             <Section title="Интерфейс" description="Оформление приложения.">
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between rounded-xl bg-white/[0.05] p-3">
@@ -669,11 +673,22 @@ function MobileServerSection() {
   const pairedDeviceId = usePlayerStore((s) => s.pairedDeviceId);
   const [discovering, setDiscovering] = useState(false);
   const [connectionMessage, setConnectionMessage] = useState("");
+  const [switching, setSwitching] = useState(false);
+  const disconnect = async () => {
+    setBusy(true);
+    try { const notified = await disconnectDeviceSync(); setUrl(""); setConnectionMessage(notified ? "Устройство отключено. Можно слушать музыку отдельно." : "Синхронизация отключена здесь. Другое устройство сейчас недоступно."); }
+    finally { setBusy(false); }
+  };
+  const selectDevice = async (local: boolean) => {
+    setSwitching(true); setConnectionMessage("Передаём воспроизведение…");
+    try { await selectPlaybackDevice(local); setConnectionMessage(local ? "Музыка играет на этом устройстве." : "Музыка играет на подключённом устройстве."); }
+    catch (error) { setConnectionMessage((error as Error).message); }
+    finally { setSwitching(false); }
+  };
   const apply = async () => {
     const address = url.trim().replace(/\/+$/, "");
     if (!address) {
-      setConfiguredBaseUrl("");
-      setConnectionMessage("Синхронизация отключена.");
+      await disconnect();
       return;
     }
     setBusy(true);
@@ -687,6 +702,9 @@ function MobileServerSection() {
       if (!response.ok) throw new Error("Устройство не ответило на проверку Cryon.");
       const health = await response.json() as { status?: string; api?: string };
       if (health.status !== "ok" || health.api !== "v1") throw new Error("По этому адресу не найдено работающее приложение Cryon.");
+      const connected = await fetch(parsed.origin + "/v1/devices/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "connect", deviceId: localDeviceId() }), signal: controller.signal });
+      if (!connected.ok) throw new Error("Устройство отклонило подключение.");
+      localStorage.removeItem("cryon.device.syncDisabled");
       setConfiguredBaseUrl(parsed.origin);
       setConnectionMessage("Устройство подключено. Музыка играет на нём; здесь можно управлять очередью.");
     } catch (error) {
@@ -737,11 +755,13 @@ function MobileServerSection() {
           {busy ? "Проверяем соединение…" : trimmed ? "Подключиться и синхронизировать" : "Отключить синхронизацию"}
         </button>
         {connectionMessage && <p role="status" className="text-sm text-slate-300">{connectionMessage}</p>}
+        {localStorage.getItem("cryon.device.syncDisabled") === "1" && <button type="button" disabled={busy} onClick={() => { setBusy(true); void enableDeviceSync().then(() => setConnectionMessage("Подключения по Wi-Fi разрешены. Теперь можно подключить другое устройство.")).catch(() => setConnectionMessage("Не удалось включить подключения. Проверьте, что Cryon запущен.")).finally(() => setBusy(false)); }} className="rounded-xl bg-white/10 px-3 py-2.5 text-sm text-white disabled:opacity-50">Включить управление по Wi-Fi</button>}
+        {(configuredBaseUrl() || pairedDeviceId) && <button type="button" disabled={busy || switching} onClick={() => void disconnect()} className="rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2.5 text-sm text-rose-200 disabled:opacity-50">Отключить устройство</button>}
         {(configuredBaseUrl() || pairedDeviceId) && <div className="rounded-xl bg-white/[0.04] p-3">
           <p className="mb-2 text-sm text-slate-300">Где воспроизводить музыку</p>
           <div className="flex gap-2">
-            <button type="button" aria-pressed={playbackOnThisDevice} onClick={() => selectPlaybackDevice(true)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${playbackOnThisDevice ? "bg-violet-500 text-white" : "bg-white/5 text-slate-300"}`}>На этом устройстве</button>
-            <button type="button" aria-pressed={!playbackOnThisDevice} onClick={() => selectPlaybackDevice(false)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${!playbackOnThisDevice ? "bg-violet-500 text-white" : "bg-white/5 text-slate-300"}`}>На подключённом</button>
+            <button type="button" aria-pressed={playbackOnThisDevice} disabled={switching || busy} onClick={() => void selectDevice(true)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${playbackOnThisDevice ? "bg-violet-500 text-white" : "bg-white/5 text-slate-300"}`}>На этом устройстве</button>
+            <button type="button" aria-pressed={!playbackOnThisDevice} disabled={switching || busy} onClick={() => void selectDevice(false)} className={`flex-1 rounded-lg px-3 py-2 text-sm ${!playbackOnThisDevice ? "bg-violet-500 text-white" : "bg-white/5 text-slate-300"}`}>На подключённом</button>
           </div>
         </div>}
       </div>

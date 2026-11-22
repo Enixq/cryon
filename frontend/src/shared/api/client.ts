@@ -406,10 +406,10 @@ export async function setRecoFeedback(
  * заканчивается и включён режим радио, плеер дозаполняет её этими треками.
  * В вебе без Wails возвращает пусто.
  */
-export async function listRelatedTracks(seed: Track, limit = 15): Promise<Track[]> {
+export async function listRelatedTracks(seed: Track, limit = 15, exclude: Track[] = []): Promise<Track[]> {
   if (!isWailsRuntime()) return [];
   try {
-    if (hasApiV1Runtime()) return await relatedTracksV1(seed, limit);
+    if (hasApiV1Runtime()) return await relatedTracksV1(seed, limit, exclude);
     return mapTracks(await App.ListRelatedTracks(toBackendTrack(seed), limit));
   } catch {
     return [];

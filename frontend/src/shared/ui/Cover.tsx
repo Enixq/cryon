@@ -1,5 +1,5 @@
 import { Music4 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import type { AccentColor } from "../types";
 import { accentStyle } from "./accents";
@@ -35,11 +35,17 @@ export function Cover({
   style,
 }: CoverProps) {
   const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
   const showImage = Boolean(src) && !failed;
 
   return (
     <div
-      className={cn("relative grid place-items-center overflow-hidden", neon && "neon-frame", rounded, className)}
+      className={cn(
+        "relative grid place-items-center overflow-hidden",
+        neon && "neon-frame",
+        rounded,
+        className,
+      )}
       style={{ ...accentStyle(accent), ...style }}
     >
       {showImage ? (

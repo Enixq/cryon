@@ -13,13 +13,14 @@ func TestBuildRegistryCoversAllSources(t *testing.T) {
 		t.Fatal("локальный адаптер не должен быть nil")
 	}
 
-	// VK убран из реестра (заглушка засоряла выдачу). Spotify остаётся ради
+	// ВК Музыка подключается отдельно. Spotify остаётся ради
 	// OAuth-импорта и «Радара новинок», хотя в поиске уже не участвует.
 	want := []domain.ServiceID{
 		domain.ServiceYouTube,
 		domain.ServiceSoundCloud,
 		domain.ServiceSpotify,
 		domain.ServiceYandex,
+		domain.ServiceVK,
 		domain.ServiceLocal,
 	}
 	for _, id := range want {

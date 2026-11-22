@@ -52,6 +52,7 @@ export function TrackRow({
   const disliked = (score ?? 0) < 0;
   return (
     <div
+      data-track-row
       onClick={() => onPlay(track)}
       className={cn(
         "group grid min-w-0 grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-1 rounded-xl px-2 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_12%,transparent)] active:bg-[color-mix(in_srgb,var(--app-accent)_16%,transparent)] sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:gap-4 sm:px-3",

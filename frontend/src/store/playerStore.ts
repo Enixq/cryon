@@ -39,6 +39,8 @@ interface PlayerState {
    * дозаполняет её треками, похожими на текущий (через backend/Last.fm).
    */
   radio: boolean;
+  radioSeed: Track | null;
+  startTrackRadio: (track: Track) => void;
 
   /** Цель перемотки в секундах и счётчик запросов (для движка звука). */
   seekTarget: number;
@@ -93,6 +95,7 @@ interface PlayerState {
     volume: number;
     muted: boolean;
     radio?: boolean;
+    radioSeed?: Track | null;
     repeat?: RepeatMode;
     shuffle?: boolean;
     seekNonce?: number;
@@ -120,6 +123,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   shuffle: false,
   repeat: "off",
   radio: false,
+  radioSeed: null,
   seekTarget: 0,
   seekNonce: 0,
   seekRevision: 0,
@@ -262,10 +266,27 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     })),
   toggleRadio: () => {
     resetRadioSession();
-    set((s) => ({ radio: !s.radio, radioWaiting: false }));
+    set((s) => ({ radio: !s.radio, radioSeed: null, radioWaiting: false }));
+  },
+
+  startTrackRadio: (track) => {
+    resetRadioSession();
+    set({
+      queue: [track],
+      currentIndex: 0,
+      progress: 0,
+      engineDuration: 0,
+      isPlaying: true,
+      radio: true,
+      radioSeed: track,
+      radioWaiting: false,
+      repeat: "off",
+      shuffle: false,
+    });
   },
 
   playTrack: (track, queue) => {
+    if (queue) set({ radioSeed: null });
     // История пишется в одном месте — в audioEngine, когда трек реально
     // стартует. Раньше запись дублировалась ещё и здесь, и каждое
     // прослушивание попадало в SQLite дважды: список истории показывал
@@ -395,6 +416,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         volume: clamp(Math.round(state.volume), 0, 100),
         muted: state.muted,
         radio: state.radio ?? old.radio,
+        radioSeed: state.radioSeed === undefined ? old.radioSeed : state.radioSeed,
         repeat: state.repeat ?? old.repeat,
         shuffle: state.shuffle ?? old.shuffle,
         playbackOnThisDevice: state.playbackOnThisDevice ?? old.playbackOnThisDevice,

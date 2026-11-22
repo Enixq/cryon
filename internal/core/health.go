@@ -1,4 +1,5 @@
 package core
+
 // Live-контроль доступности источников (задача 38).
 //
 // Раньше статус источника в боковой панели выводился только из конфигурации
@@ -18,6 +19,7 @@ import (
 	"Cryon2/internal/domain"
 	"Cryon2/internal/logging"
 	"Cryon2/internal/services/spotify"
+	"Cryon2/internal/services/vk"
 	"Cryon2/internal/services/yandex"
 )
 
@@ -54,6 +56,10 @@ func sourceDisplayName(id domain.ServiceID) string {
 // (без учёта live-сбоев). Вынесено из ListSourceStatus, чтобы health-check
 // мог по нему выбрать, какие источники вообще имеет смысл зондировать.
 func (a *App) configLevels() map[domain.ServiceID]string {
+	vkLevel := sourceOff
+	if service, ok := a.registry[domain.ServiceVK].(*vk.Service); ok && service.HasToken() {
+		vkLevel = sourceOK
+	}
 	yaConnected := false
 	if ya, ok := a.registry[domain.ServiceYandex].(*yandex.Service); ok {
 		yaConnected = ya.HasToken()
@@ -77,6 +83,7 @@ func (a *App) configLevels() map[domain.ServiceID]string {
 	}
 
 	return map[domain.ServiceID]string{
+		domain.ServiceVK:         vkLevel,
 		domain.ServiceYouTube:    sourceOK,
 		domain.ServiceSoundCloud: sourceOK,
 		domain.ServiceSpotify:    spotifyLevel,

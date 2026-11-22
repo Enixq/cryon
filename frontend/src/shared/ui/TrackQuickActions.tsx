@@ -4,6 +4,7 @@ import {
   ListPlus,
   ListStart,
   MoreHorizontal,
+  Radio,
   Share2,
   ThumbsDown,
 } from "lucide-react";
@@ -34,6 +35,7 @@ export function TrackQuickActions({ track }: Props) {
   const addToQueue = usePlayerStore((state) => state.addToQueue);
   const playNext = usePlayerStore((state) => state.playNext);
   const playTrack = usePlayerStore((state) => state.playTrack);
+  const startTrackRadio = usePlayerStore((state) => state.startTrackRadio);
   const toggleLikeWithTrack = usePlayerStore((state) => state.toggleLikeWithTrack);
   const openShare = useUiStore((state) => state.openShare);
   const feedback = useRecoFeedback();
@@ -87,6 +89,17 @@ export function TrackQuickActions({ track }: Props) {
     };
   }, [open]);
 
+  useLayoutEffect(() => {
+    const row = triggerRef.current?.closest("[data-track-row]");
+    if (!row) return;
+    const show = (event: Event) => {
+      event.preventDefault();
+      setOpen(true);
+    };
+    row.addEventListener("contextmenu", show);
+    return () => row.removeEventListener("contextmenu", show);
+  }, []);
+
   return (
     <div className="relative flex items-center gap-0.5">
       <button
@@ -122,6 +135,16 @@ export function TrackQuickActions({ track }: Props) {
             className="fixed z-[100] max-h-[calc(100vh-16px)] w-56 max-w-[calc(100vw-16px)] overflow-visible rounded-xl border border-white/10 bg-[#171722] p-2 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
+            <button
+              type="button"
+              onClick={() => {
+                startTrackRadio(track);
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-slate-200 hover:bg-white/8"
+            >
+              <Radio size={15} /> Радио по этому треку
+            </button>
             <button
               type="button"
               onClick={(event) => {

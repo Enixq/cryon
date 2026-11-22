@@ -36,6 +36,38 @@ func TestDeviceStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDisconnectedDeviceCannotResumeUntilExplicitReconnect(t *testing.T) {
+	app := &App{}
+	call := func(method, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		app.handleAPIDeviceState(w, httptest.NewRequest(method, "/v1/devices/state", bytes.NewBufferString(body)))
+		return w
+	}
+	call("PUT", `{"deviceId":"phone","playbackDeviceId":"phone","queue":[{"id":"one"}],"isPlaying":true}`)
+	if w := call("POST", `{"action":"disconnect","deviceId":"phone"}`); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	var state map[string]any
+	_ = json.Unmarshal(app.remoteState, &state)
+	if state["isPlaying"] != false || state["playbackDeviceId"] != "host" {
+		t.Fatal("disconnect retained mobile playback")
+	}
+	if w := call("PUT", `{"deviceId":"phone","isPlaying":true}`); w.Code != 403 {
+		t.Fatal("stale worker resumed disconnected player")
+	}
+	if w := call("POST", `{"action":"connect","deviceId":"phone"}`); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	state = nil
+	_ = json.Unmarshal(app.remoteState, &state)
+	if detached, _ := state["detachedDeviceIds"].([]any); len(detached) != 0 {
+		t.Fatal("reconnect still carries detach marker")
+	}
+	if w := call("PUT", `{"deviceId":"phone","playbackDeviceId":"host","isPlaying":false}`); w.Code != 204 {
+		t.Fatal("explicit reconnect rejected")
+	}
+}
+
 func TestDeviceDiscoveryFromNetworkLive(t *testing.T) {
 	if os.Getenv("CRYON_DISCOVERY_IT") != "1" {
 		t.Skip("network discovery test is disabled")

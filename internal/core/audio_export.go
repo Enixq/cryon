@@ -29,6 +29,8 @@ func exportExtension(contentType string) string {
 		return ".flac"
 	case "audio/wav", "audio/x-wav", "audio/wave":
 		return ".wav"
+	case "audio/aac":
+		return ".aac"
 	}
 	return ""
 }
@@ -88,9 +90,50 @@ func (a *App) exportFile(r *http.Request) (*os.File, string, string, error) {
 	if err != nil {
 		return nil, "", "", err
 	}
+	if detected, detectErr := audioFileType(f); detectErr != nil {
+		f.Close()
+		return nil, "", "", detectErr
+	} else if detected == "video/webm" && strings.HasPrefix(ct, "audio/webm") {
+		ct = "audio/webm"
+	} else {
+		ct = detected
+	}
+	if strings.Contains(strings.ToLower(ct), "mpegurl") {
+		f.Close()
+		target, resolveErr := (&localAssetHandler{app: a}).resolveStreamURL(service, id, false)
+		if resolveErr != nil {
+			return nil, "", "", resolveErr
+		}
+		f, err = exportHLS(r.Context(), target)
+		if err != nil {
+			return nil, "", "", err
+		}
+		ct, err = audioFileType(f)
+		if err != nil {
+			f.Close()
+			os.Remove(f.Name())
+			return nil, "", "", err
+		}
+	}
+	if ct == "video/mp4" || ct == "audio/mp4" {
+		audio, extractErr := extractMP4Audio(r.Context(), f)
+		if audio != f {
+			f.Close()
+			if strings.HasPrefix(filepath.Base(f.Name()), "cryon-export-") {
+				_ = os.Remove(f.Name())
+			}
+		}
+		if extractErr != nil {
+			return nil, "", "", extractErr
+		}
+		f, ct = audio, "audio/mp4"
+	}
 	ext := exportExtension(ct)
 	if ext == "" {
 		f.Close()
+		if strings.HasPrefix(filepath.Base(f.Name()), "cryon-export-") {
+			_ = os.Remove(f.Name())
+		}
 		return nil, "", "", fmt.Errorf("источник не отдал отдельный аудиофайл в поддерживаемом формате")
 	}
 	return f, ct, exportName(r.URL.Query().Get("name"), ext), nil
@@ -107,7 +150,12 @@ func (a *App) handleAPIAudioExport(w http.ResponseWriter, r *http.Request) {
 		writeAPIAppError(w, err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		f.Close()
+		if strings.HasPrefix(filepath.Base(f.Name()), "cryon-export-") {
+			_ = os.Remove(f.Name())
+		}
+	}()
 	if r.URL.Query().Get("metadata") == "1" {
 		writeAPIJSON(w, 200, map[string]string{"name": name, "mimeType": ct})
 		return

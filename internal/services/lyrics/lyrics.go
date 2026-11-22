@@ -71,32 +71,29 @@ func New() *Client {
 // «не найдено» отдаётся как Result{Found:false}, а не ошибкой.
 func (c *Client) Get(ctx context.Context, artist, title, album string, durationS int) (Result, error) {
 	artist = strings.TrimSpace(artist)
-	title = cleanTitle(title)
+	title = stripArtistPrefix(artist, cleanTitle(title))
 	if artist == "" || title == "" {
 		return Result{}, nil
 	}
 
 	// 1) Точное совпадение по метаданным.
-	exactCtx, exactCancel := context.WithTimeout(ctx, 5*time.Second)
-	exact, exactOK, exactErr := c.getExact(exactCtx, artist, title, album, durationS)
-	exactCancel()
-	if exactErr == nil && exactOK && toResult(exact).Found {
-		return toResult(exact), nil
+	fallbackCtx, fallbackCancel := context.WithTimeout(ctx, 12*time.Second)
+	defer fallbackCancel()
+	fallback := make(chan Result, 1)
+	go func() {
+		text, _ := c.getLyricsOVH(fallbackCtx, primaryArtist(artist), title)
+		fallback <- Result{Plain: text, Found: text != "", Provider: "lyrics.ovh"}
+	}()
+	result, _ := c.GetProvider(ctx, artist, title, album, durationS, "lrclib")
+	if result.Found {
+		return result, nil
 	}
-
-	// 2) Фолбэк: поиск и ближайший результат.
-	searchCtx, searchCancel := context.WithTimeout(ctx, 5*time.Second)
-	t, ok, err := c.search(searchCtx, artist, title, durationS)
-	searchCancel()
-	if err == nil && ok {
-		return toResult(t), nil
+	select {
+	case result = <-fallback:
+		return result, nil
+	case <-ctx.Done():
+		return Result{}, ctx.Err()
 	}
-	// SoundCloud uploads often have no album/duration metadata in LRCLIB's
-	// exact index. Try a second lyric provider with the artist/title pair.
-	if fallback, fallbackErr := c.getLyricsOVH(ctx, artist, title); fallbackErr == nil && fallback != "" {
-		return Result{Plain: fallback, Found: true, Provider: "lyrics.ovh"}, nil
-	}
-	return Result{Found: false}, nil
 }
 
 func (c *Client) getLyricsOVH(ctx context.Context, artist, title string) (string, error) {
@@ -128,7 +125,7 @@ func toResult(t apiTrack) Result {
 // «не найдено» (ok=false), а не ошибка.
 func (c *Client) getExact(ctx context.Context, artist, title, album string, durationS int) (apiTrack, bool, error) {
 	q := url.Values{}
-	q.Set("artist_name", artist)
+	q.Set("artist_name", primaryArtist(artist))
 	q.Set("track_name", title)
 	if strings.TrimSpace(album) != "" {
 		q.Set("album_name", album)
@@ -154,7 +151,7 @@ func (c *Client) getExact(ctx context.Context, artist, title, album string, dura
 // хоть какой-то текст (или он инструментальный).
 func (c *Client) search(ctx context.Context, artist, title string, durationS int) (apiTrack, bool, error) {
 	q := url.Values{}
-	q.Set("artist_name", artist)
+	q.Set("artist_name", primaryArtist(artist))
 	q.Set("track_name", title)
 	var list []apiTrack
 	status, err := c.doJSON(ctx, apiSearch+"?"+q.Encode(), &list)
@@ -167,10 +164,10 @@ func (c *Client) search(ctx context.Context, artist, title string, durationS int
 	// Приоритет — синхронизированный текст, затем обычный.
 	var plainMatch *apiTrack
 	for i := range list {
-		if domain.MusicKey(cleanTitle(list[i].TrackName)) != domain.MusicKey(title) || domain.MusicKey(list[i].ArtistName) != domain.MusicKey(artist) {
+		if domain.MusicKey(cleanTitle(list[i].TrackName)) != domain.MusicKey(title) || domain.MusicKey(primaryArtist(list[i].ArtistName)) != domain.MusicKey(primaryArtist(artist)) {
 			continue
 		}
-		if durationS > 0 && list[i].Duration > 0 && math.Abs(list[i].Duration-float64(durationS)) > 15 {
+		if durationS > 0 && list[i].Duration > 0 && math.Abs(list[i].Duration-float64(durationS)) > math.Max(30, float64(durationS)*0.12) {
 			continue
 		}
 		if list[i].SyncedLyrics != "" {
@@ -206,7 +203,7 @@ func (c *Client) doJSON(ctx context.Context, endpoint string, out any) (int, err
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return resp.StatusCode, nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(out); err != nil {
 		return resp.StatusCode, fmt.Errorf("lrclib: разбор ответа: %w", err)
 	}
 	return resp.StatusCode, nil
@@ -219,16 +216,22 @@ func cleanTitle(title string) string {
 }
 
 func (c *Client) GetProvider(ctx context.Context, artist, title, album string, durationS int, provider string) (Result, error) {
-	title = cleanTitle(title)
+	title = stripArtistPrefix(artist, cleanTitle(title))
 	if provider == "ovh" {
 		text, err := c.getLyricsOVH(ctx, artist, title)
 		return Result{Plain: text, Found: text != "", Provider: "lyrics.ovh"}, err
 	}
 	if provider == "lrclib" {
-		if t, ok, err := c.getExact(ctx, artist, title, album, durationS); err == nil && ok && toResult(t).Found {
+		ctx, cancel := context.WithTimeout(ctx, 14*time.Second)
+		defer cancel()
+		exactCtx, exactCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer exactCancel()
+		if t, ok, err := c.getExact(exactCtx, artist, title, album, durationS); err == nil && ok && toResult(t).Found {
 			return toResult(t), nil
 		}
-		t, ok, err := c.search(ctx, artist, title, durationS)
+		searchCtx, searchCancel := context.WithTimeout(ctx, 8*time.Second)
+		defer searchCancel()
+		t, ok, err := c.search(searchCtx, artist, title, durationS)
 		if err != nil {
 			return Result{}, err
 		}
@@ -238,4 +241,16 @@ func (c *Client) GetProvider(ctx context.Context, artist, title, album string, d
 		return Result{Provider: "LRCLIB"}, nil
 	}
 	return c.Get(ctx, artist, title, album, durationS)
+}
+
+var artistFeature = regexp.MustCompile(`(?i)\s+(?:feat\.?|ft\.?|featuring)\s+`)
+
+func primaryArtist(artist string) string { return strings.TrimSpace(artistFeature.Split(artist, 2)[0]) }
+func stripArtistPrefix(artist, title string) string {
+	for _, separator := range []string{" - ", " \u2014 ", " \u2013 "} {
+		if prefix, rest, ok := strings.Cut(title, separator); ok && domain.MusicKey(prefix) == domain.MusicKey(primaryArtist(artist)) {
+			return strings.TrimSpace(rest)
+		}
+	}
+	return title
 }

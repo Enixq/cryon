@@ -20,6 +20,7 @@ package recommendations
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,9 +41,10 @@ type SearchFunc func(ctx context.Context, query string) ([]domain.Track, error)
 
 // Engine — движок рекомендаций.
 type Engine struct {
-	feedbackMu sync.Mutex
-	store      store.Store
-	lastfm     *lastfm.Client
+	trackSimilar func(context.Context, domain.Track) ([]domain.Track, error)
+	feedbackMu   sync.Mutex
+	store        store.Store
+	lastfm       *lastfm.Client
 	// deezer — бесключевой граф похожести (fallback к Last.fm). Даёт похожих
 	// артистов, топ-треки и чарт без ключа/регистрации, поэтому рекомендации
 	// работают «из коробки». Только ГРАФ: аудио из Deezer не берём — найденные
@@ -60,6 +62,10 @@ type Engine struct {
 	// старта: пользователь, который только просканировал папку (без избранного/
 	// истории), всё равно получает непустой профиль и рекомендации.
 	localFn func(ctx context.Context) ([]store.LocalTrackRow, error)
+}
+
+func (e *Engine) SetTrackSimilarity(provider func(context.Context, domain.Track) ([]domain.Track, error)) {
+	e.trackSimilar = provider
 }
 
 // New собирает движок. store и search обязательны; lastfm может быть без ключа,
@@ -881,7 +887,7 @@ func (e *Engine) chartFallbackRecommendations(ctx context.Context, t taste, limi
 // основа «радио»/умной очереди. Похожесть берётся из Last.fm similar tracks
 // (по паре артист+название seed'а), а найденные названия ищутся в источниках.
 // Без ключа Last.fm — фолбэк: ещё треки того же артиста.
-func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int) ([]domain.Track, error) {
+func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int, exclude ...domain.Track) ([]domain.Track, error) {
 	if limit <= 0 {
 		limit = 15
 	}
@@ -894,6 +900,9 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 	}
 
 	seen := map[string]bool{trackKey(seed): true}
+	for _, track := range exclude {
+		seen[trackKey(track)] = true
+	}
 	out := make([]domain.Track, 0, limit)
 
 	// Радио тоже подчиняется профилю: трек берём из привычного пользователю
@@ -902,8 +911,27 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 	// этот трек» вполне может быть знакомым.
 	profile := e.buildTaste(ctx)
 
+	if e.trackSimilar != nil {
+		similarCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		similar, err := e.trackSimilar(similarCtx, seed)
+		cancel()
+		if err == nil {
+			for _, candidate := range similar {
+				key := trackKey(candidate)
+				if seen[key] || profile.blockedTracks[key] || profile.blockedArtists[artistKey(candidate)] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, candidate)
+			}
+			if diverse := diversifyTracks(out, nil, limit, artistCap); len(diverse) >= limit {
+				return diverse, nil
+			}
+		}
+	}
+
 	if e.lastfm.Available() {
-		similar := e.similarTracksCached(ctx, artist, seed.Title, limit*2)
+		similar := e.similarTracksCached(ctx, artist, seed.Title, min(300, limit*3+len(exclude)))
 		// Поиск волнами: радио дозаполняет очередь в момент, когда трек
 		// закончился, поэтому последовательные limit*2 поисков давали слышимую
 		// паузу. Порядок похожести сохраняется — волна разбирается по индексам.
@@ -932,14 +960,20 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 			}
 			wg.Wait()
 
-			for _, found := range results {
+			for batchIndex, found := range results {
 				if len(out) >= limit*3 {
 					break
 				}
 				if len(found) == 0 {
 					continue
 				}
-				best, ok := e.pickCandidateFor(found, profile.sources)
+				matching := []domain.Track{}
+				for _, candidate := range found {
+					if domain.SameRecording(candidate, batch[batchIndex].Artist, batch[batchIndex].Name) && !seen[trackKey(candidate)] {
+						matching = append(matching, candidate)
+					}
+				}
+				best, ok := e.pickCandidateFor(matching, profile.sources)
 				if !ok {
 					continue
 				}
@@ -1000,7 +1034,7 @@ func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int
 
 // similarTracksCached — SimilarTracks с кэшем в SQLite (TTL сутки).
 func (e *Engine) similarTracksCached(ctx context.Context, artist, title string, limit int) []lastfm.Track {
-	key := "lastfm:similartracks:" + strings.ToLower(artist+"|"+title)
+	key := fmt.Sprintf("lastfm:similartracks:%d:%s", limit, strings.ToLower(artist+"|"+title))
 	if e.store != nil {
 		if raw, ok, _ := e.store.RecoCacheGet(ctx, key); ok {
 			var cached []lastfm.Track

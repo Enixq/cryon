@@ -11,6 +11,7 @@ export type NativePlaybackState = {
   currentIndex?: number;
   autoPlay?: boolean;
   radio?: boolean;
+  radioSeed?: Track | null;
   playbackOnThisDevice?: boolean;
   commandId?: number;
 };

@@ -37,6 +37,28 @@ export function TabBar<T extends string>({
 }: TabBarProps<T>) {
   const ref = useRef<HTMLDivElement>(null);
   const suppressClick = useRef(0);
+  const previousActive = useRef(active);
+  useEffect(() => {
+    const oldIndex = tabs.findIndex((tab) => tab.id === previousActive.current);
+    const newIndex = tabs.findIndex((tab) => tab.id === active);
+    previousActive.current = active;
+    if (oldIndex === newIndex || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches)
+      return;
+    const parent = ref.current?.parentElement;
+    if (!parent) return;
+    const animations = Array.from(parent.children)
+      .filter((element) => element !== ref.current && !element.contains(ref.current))
+      .map((element) =>
+        element.animate?.(
+          [
+            { opacity: 0.4, transform: `translateX(${newIndex > oldIndex ? 22 : -22}px)` },
+            { opacity: 1, transform: "translateX(0)" },
+          ],
+          { duration: 210, easing: "ease-out" },
+        ),
+      );
+    return () => animations.forEach((animation) => animation?.cancel());
+  }, [active, tabs]);
   useEffect(() => {
     const parent = ref.current?.parentElement;
     if (!parent) return;

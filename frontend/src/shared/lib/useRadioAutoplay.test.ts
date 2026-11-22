@@ -24,6 +24,7 @@ beforeEach(() => {
     queue: [track("seed")],
     currentIndex: 0,
     radio: true,
+    radioSeed: null,
     radioWaiting: false,
     isPlaying: true,
     playbackOnThisDevice: true,
@@ -37,6 +38,42 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("radio prefetch", () => {
+  it("keeps track radio anchored to its seed and excludes the existing queue", async () => {
+    const seed = track("original");
+    usePlayerStore.getState().startTrackRadio(seed);
+    vi.mocked(listRelatedTracks)
+      .mockResolvedValueOnce(Array.from({ length: 8 }, (_, i) => track(`related${i}`)))
+      .mockResolvedValueOnce([track("fresh")]);
+    stop = startRadioAutoplay();
+    await vi.advanceTimersByTimeAsync(0);
+    usePlayerStore.getState().next();
+    usePlayerStore.getState().next();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(listRelatedTracks).toHaveBeenLastCalledWith(
+      seed,
+      24,
+      expect.arrayContaining([seed, track("related7")]),
+    );
+    expect(usePlayerStore.getState().radioSeed?.id).toBe("original");
+    expect(usePlayerStore.getState().queue.some((item) => item.id === "fresh")).toBe(true);
+  });
+  it("discards a previous track radio response after starting a new station", async () => {
+    let resolve!: (tracks: Track[]) => void;
+    usePlayerStore.getState().startTrackRadio(track("old"));
+    vi.mocked(listRelatedTracks)
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done;
+          }),
+      )
+      .mockResolvedValue([]);
+    stop = startRadioAutoplay();
+    usePlayerStore.getState().startTrackRadio(track("new"));
+    resolve([track("stale")]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(usePlayerStore.getState().queue.map((item) => item.id)).toEqual(["new"]);
+  });
   it("continues a favorites queue when its track metadata is replaced while loading", async () => {
     let resolve!: (tracks: Track[]) => void;
     vi.mocked(listRelatedTracks)

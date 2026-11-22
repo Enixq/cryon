@@ -72,90 +72,107 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex shrink-0 flex-col gap-6 border-r border-white/5 bg-[#0c0e1a]/60 py-5 transition-[width] duration-200",
+        "app-sidebar flex min-h-0 shrink-0 flex-col gap-4 overflow-hidden border-r border-white/5 bg-[#0c0e1a]/60 py-4 transition-[width] duration-200",
         collapsed ? "w-[68px] items-center px-2" : "w-[248px] px-4",
       )}
     >
       {/* Логотип */}
-      {collapsed ? <LogoMark size={36} className="mx-auto" /> : <LogoFull className="px-2" size={36} />}
+      {collapsed ? (
+        <LogoMark size={36} className="mx-auto" />
+      ) : (
+        <LogoFull className="px-2" size={36} />
+      )}
 
-      {/* Навигация */}
-      <nav className={cn("flex flex-col gap-1", collapsed && "w-full items-center")}>
-        {navItems.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            title={collapsed ? label : undefined}
-            className={({ isActive }) =>
-              cn(
-                "flex items-center rounded-xl text-[15px] font-medium transition-colors",
-                collapsed ? "h-11 w-11 justify-center" : "gap-3 px-3 py-2.5",
-                isActive
-                  ? "text-white"
-                  : "text-slate-400 hover:bg-white/5 hover:text-white",
-              )
-            }
-            style={({ isActive }) => (isActive ? { backgroundColor: "var(--app-accent)" } : undefined)}
-          >
-            <Icon size={20} />
-            {!collapsed && <span>{label}</span>}
-          </NavLink>
-        ))}
-      </nav>
+      <div className="sidebar-scroll flex min-h-0 w-full flex-1 flex-col gap-5 overflow-y-auto overscroll-contain">
+        {/* Навигация */}
+        <nav className={cn("flex flex-col gap-1", collapsed && "w-full items-center")}>
+          {navItems.map(({ to, label, icon: Icon, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              title={collapsed ? label : undefined}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center rounded-xl text-[15px] font-medium transition-colors",
+                  collapsed ? "h-11 w-11 justify-center" : "gap-3 px-3 py-2.5",
+                  isActive ? "text-white" : "text-slate-400 hover:bg-white/5 hover:text-white",
+                )
+              }
+              style={({ isActive }) =>
+                isActive ? { backgroundColor: "var(--app-accent)" } : undefined
+              }
+            >
+              <Icon size={20} />
+              {!collapsed && <span>{label}</span>}
+            </NavLink>
+          ))}
+        </nav>
 
-      {/* Мои сервисы */}
-      <div className={cn("flex flex-col gap-2", collapsed && "w-full items-center")}>
-        {!collapsed && (
-          <div className="flex items-center justify-between px-3">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Мои сервисы
-            </span>
-            <button type="button" onClick={() => navigate("/settings")} className="text-slate-500 transition-colors hover:text-white" aria-label="Настроить сервисы" title="Настроить сервисы">
-              <Plus size={16} />
-            </button>
-          </div>
-        )}
-        <div className={cn("flex flex-col gap-0.5", collapsed && "items-center")}>
-          {serviceOrder.map((id) => {
-            const meta = SOURCES[id];
-            const level = levels[id] ?? "off";
-            const status = STATUS_META[level];
-            if (collapsed) {
+        {/* Мои сервисы */}
+        <div
+          className={cn("sidebar-services flex flex-col gap-2", collapsed && "w-full items-center")}
+        >
+          {!collapsed && (
+            <div className="flex items-center justify-between px-3">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Мои сервисы
+              </span>
+              <button
+                type="button"
+                onClick={() => navigate("/settings")}
+                className="text-slate-500 transition-colors hover:text-white"
+                aria-label="Настроить сервисы"
+                title="Настроить сервисы"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          )}
+          <div className={cn("service-list flex flex-col gap-0.5", collapsed && "items-center")}>
+            {serviceOrder.map((id) => {
+              const meta = SOURCES[id];
+              const level = levels[id] ?? "off";
+              const status = STATUS_META[level];
+              if (collapsed) {
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => navigate("/settings")}
+                    className="relative grid h-11 w-11 place-items-center rounded-lg transition-colors hover:bg-white/5"
+                    title={`${meta.name} — ${status.title}`}
+                  >
+                    <ServiceIcon id={id} size={24} badge />
+                    <span
+                      className={cn(
+                        "absolute right-1.5 top-1.5 h-2 w-2 rounded-full ring-2 ring-[#0c0e1a]",
+                        status.color,
+                      )}
+                      aria-label={status.title}
+                    />
+                  </button>
+                );
+              }
               return (
                 <button
                   key={id}
                   type="button"
                   onClick={() => navigate("/settings")}
-                  className="relative grid h-11 w-11 place-items-center rounded-lg transition-colors hover:bg-white/5"
-                  title={`${meta.name} — ${status.title}`}
+                  className="flex items-center gap-3 rounded-lg px-3 py-2 text-[15px] text-slate-300 transition-colors hover:bg-white/5"
+                  title={`Настроить ${meta.name}`}
                 >
                   <ServiceIcon id={id} size={24} badge />
+                  <span className="service-name flex-1">{meta.name}</span>
                   <span
-                    className={cn("absolute right-1.5 top-1.5 h-2 w-2 rounded-full ring-2 ring-[#0c0e1a]", status.color)}
+                    className={cn("h-2 w-2 rounded-full", status.color)}
+                    title={status.title}
                     aria-label={status.title}
                   />
                 </button>
               );
-            }
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => navigate("/settings")}
-                className="flex items-center gap-3 rounded-lg px-3 py-2 text-[15px] text-slate-300 transition-colors hover:bg-white/5"
-                title={`Настроить ${meta.name}`}
-              >
-                <ServiceIcon id={id} size={24} badge />
-                <span className="flex-1">{meta.name}</span>
-                <span
-                  className={cn("h-2 w-2 rounded-full", status.color)}
-                  title={status.title}
-                  aria-label={status.title}
-                />
-              </button>
-            );
-          })}
+            })}
+          </div>
         </div>
       </div>
 
@@ -163,9 +180,21 @@ export function Sidebar() {
           «Оформление» (рубашка) и «Тема» (луна), но обе вели в те же настройки,
           а обещанных ими экранов нет — иконки вводили в заблуждение, поэтому
           убраны. Осталась одна честная кнопка: шестерёнка → настройки. */}
-      <div className={cn("mt-auto flex flex-col gap-4", collapsed && "w-full items-center")}>
-        <div className={cn("flex items-center gap-4 text-slate-400", collapsed ? "flex-col" : "px-3")}>
-          <NavLink to="/settings" className="transition-colors hover:text-white" aria-label="Настройки" title="Настройки">
+      <div
+        className={cn(
+          "flex shrink-0 flex-col gap-3 border-t border-white/5 pt-3",
+          collapsed && "w-full items-center",
+        )}
+      >
+        <div
+          className={cn("flex items-center gap-4 text-slate-400", collapsed ? "flex-col" : "px-3")}
+        >
+          <NavLink
+            to="/settings"
+            className="transition-colors hover:text-white"
+            aria-label="Настройки"
+            title="Настройки"
+          >
             <Settings size={18} />
           </NavLink>
         </div>
@@ -184,7 +213,11 @@ export function Sidebar() {
             />
           </button>
         ) : (
-          <button type="button" onClick={() => navigate("/settings")} className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2.5 text-left transition-colors hover:bg-white/10">
+          <button
+            type="button"
+            onClick={() => navigate("/settings")}
+            className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2.5 text-left transition-colors hover:bg-white/10"
+          >
             <div
               className="h-9 w-9 rounded-lg"
               style={{ background: "linear-gradient(135deg, #ec4899, #8b5cf6)" }}

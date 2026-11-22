@@ -60,11 +60,11 @@ func TestSearchFiltersSongBoundariesForSingleAndCombinedSources(t *testing.T) {
 
 func TestAudioExportPreservesActualFormatFilenameAndBytes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audio")
-	payload := []byte("complete-audio-payload")
+	payload := []byte("ID3\x04\x00\x00\x00\x00\x00\x00complete-audio-payload")
 	if err := os.WriteFile(path, payload, 0600); err != nil {
 		t.Fatal(err)
 	}
-	(&localAssetHandler{}).writeStreamFileContentType(path, "audio/mp4")
+	(&localAssetHandler{}).writeStreamFileContentType(path, "application/octet-stream")
 	key := "youtube\x00export-fixture"
 	streamFileCache.Lock()
 	streamFileCache.m[key] = cachedStreamFile{path: path, size: int64(len(payload)), at: time.Now()}
@@ -74,10 +74,23 @@ func TestAudioExportPreservesActualFormatFilenameAndBytes(t *testing.T) {
 	response := httptest.NewRecorder()
 	app.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/library/export?service=youtube&id=export-fixture&name=Artist%20Song", nil))
 	_, params, err := mime.ParseMediaType(response.Header().Get("Content-Disposition"))
-	if response.Code != 200 || err != nil || params["filename"] != "Artist Song.m4a" || !bytes.Equal(payload, response.Body.Bytes()) {
+	if response.Code != 200 || err != nil || params["filename"] != "Artist Song.mp3" || !bytes.Equal(payload, response.Body.Bytes()) {
 		t.Fatalf("bad export: %d %s %v", response.Code, response.Header(), err)
 	}
 	(&localAssetHandler{}).writeStreamFileContentType(path, "video/mp4")
+	if err := os.WriteFile(path, []byte("<html>upstream error</html>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	(&localAssetHandler{}).writeStreamFileContentType(path, "audio/mpeg")
+	response = httptest.NewRecorder()
+	app.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/library/export?service=youtube&id=export-fixture", nil))
+	if response.Code == 200 {
+		t.Fatal("upstream error exported as MP3")
+	}
+	(&localAssetHandler{}).writeStreamFileContentType(path, "video/mp4")
+	if err := os.WriteFile(path, []byte("\x00\x00\x00\x18ftypisom\x00\x00\x00\x00isommp41"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	response = httptest.NewRecorder()
 	app.APIHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1/library/export?service=youtube&id=export-fixture", nil))
 	if response.Code == 200 {

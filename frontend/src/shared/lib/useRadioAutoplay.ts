@@ -32,10 +32,14 @@ export function startRadioAutoplay(): () => void {
   let cancelled = false;
   let anchorOffset = 0;
   let session = usePlayerStore.getState().radio;
+  let seedId = usePlayerStore.getState().radioSeed?.id;
+  let epoch = 0;
 
   const pump = () => {
     const state = usePlayerStore.getState();
-    if (state.radio !== session) {
+    if (state.radio !== session || state.radioSeed?.id !== seedId) {
+      seedId = state.radioSeed?.id;
+      epoch++;
       session = state.radio;
       retryAt = 0;
       anchorOffset = 0;
@@ -44,16 +48,19 @@ export function startRadioAutoplay(): () => void {
     if (!state.radio || !state.playbackOnThisDevice || state.queue.length === 0) return;
     if (state.queue.length - 1 - state.currentIndex > TAIL_TARGET) return;
     const anchor =
+      state.radioSeed ||
       state.queue[
         Math.max(0, state.queue.length - 1 - (anchorOffset % Math.min(state.queue.length, 6)))
       ];
     const originalCurrent = state.queue[state.currentIndex];
+    const token = epoch;
     inflight = true;
     // listRelatedTracks сам глотает сетевые ошибки и отдаёт пустой список,
     // поэтому здесь достаточно обработать «рекомендаций нет».
-    void listRelatedTracks(anchor, BATCH_SIZE)
+    void listRelatedTracks(anchor, BATCH_SIZE, state.radioSeed ? state.queue : [])
       .then((related) => {
-        if (cancelled) return;
+        if (cancelled || epoch !== token || usePlayerStore.getState().radioSeed?.id !== seedId)
+          return;
         const latest = usePlayerStore.getState();
         if (
           !latest.radio ||

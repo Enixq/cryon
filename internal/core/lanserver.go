@@ -29,6 +29,7 @@ func (a *App) startLANServer() {
 	}
 	mux.HandleFunc("/v1/system/health", handle(a.handleAPIHealth))
 	mux.HandleFunc("/v1/devices/state", handle(a.handleAPIDeviceState))
+	mux.HandleFunc(libraryExchangePath, handle(a.handleAPILibraryExchange))
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("0.0.0.0:%d", lanServerPort),

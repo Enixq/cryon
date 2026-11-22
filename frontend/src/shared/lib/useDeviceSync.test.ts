@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { usePlayerStore } from "../../store/playerStore";
-import { startDeviceSync, ownsPlayback } from "./useDeviceSync";
+import { startDeviceSync, ownsPlayback, selectPlaybackDevice, disconnectDeviceSync } from "./useDeviceSync";
 import { setConfiguredBaseUrl } from "./httpBridge";
 
 let stop: (() => void) | undefined;
@@ -13,6 +13,59 @@ afterEach(() => {
   delete (window as Window & { __CRYON_BASE__?: string }).__CRYON_BASE__;
 });
 describe("device ownership and transport", () => {
+  it("removes the paired phone from the host after remote disconnect", async () => {
+    vi.useFakeTimers();
+    localStorage.setItem("cryon.device.id", "pc");
+    setConfiguredBaseUrl("");
+    (window as Window & { __CRYON_BASE__?: string }).__CRYON_BASE__ = "http://127.0.0.1:12345";
+    usePlayerStore.setState({ pairedDeviceId: "phone" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ deviceId: "phone", revision: 1, queue: [], currentIndex: 0, isPlaying: false, volume: 68, muted: false, progress: 0, playbackDeviceId: "host", activePlaybackDeviceId: "host", detachedDeviceIds: ["phone"] }) })));
+    stop = startDeviceSync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(usePlayerStore.getState().pairedDeviceId).toBe("");
+    expect(usePlayerStore.getState().playbackOnThisDevice).toBe(true);
+  });
+  it("confirms a single device selection after a revision conflict", async () => {
+    vi.useFakeTimers();
+    localStorage.setItem("cryon.device.id", "phone");
+    setConfiguredBaseUrl("http://desktop:8899");
+    (window as Window & { __CRYON_BASE__?: string }).__CRYON_BASE__ = "http://127.0.0.1:12345";
+    const track = { id: "youtube:0", title: "Song", artist: "Artist", source: "youtube" as const, duration: 180, accent: "violet" as const };
+    let shared = { deviceId: "pc", revision: 1, queue: [track], currentIndex: 0, isPlaying: true, progress: 20, volume: 68, muted: false, playbackDeviceId: "host", activePlaybackDeviceId: "host" };
+    let conflict = true;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        if (conflict) { conflict = false; shared.revision++; return { ok: false, status: 409 }; }
+        shared = { ...JSON.parse(String(init.body)), revision: shared.revision + 1, activePlaybackDeviceId: JSON.parse(String(init.body)).playbackDeviceId };
+        return { ok: true, json: async () => ({ revision: shared.revision }) };
+      }
+      return { ok: true, json: async () => shared };
+    }));
+    stop = startDeviceSync();
+    await vi.advanceTimersByTimeAsync(0);
+    const selected = selectPlaybackDevice(true);
+    await vi.advanceTimersByTimeAsync(1500);
+    await selected;
+    expect(shared.playbackDeviceId).toBe("phone");
+    expect(usePlayerStore.getState().playbackOnThisDevice).toBe(true);
+    const returned = selectPlaybackDevice(false);
+    await vi.advanceTimersByTimeAsync(1500);
+    await returned;
+    expect(shared.playbackDeviceId).toBe("host");
+    expect(usePlayerStore.getState().playbackOnThisDevice).toBe(false);
+  });
+  it("disconnects explicitly and stays independent after restarting sync", async () => {
+    localStorage.setItem("cryon.device.id", "phone");
+    setConfiguredBaseUrl("http://desktop:8899");
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    usePlayerStore.setState({ isPlaying: true, playbackDeviceId: "phone", playbackOnThisDevice: true, pairedDeviceId: "pc" });
+    expect(await disconnectDeviceSync()).toBe(true);
+    expect(usePlayerStore.getState()).toMatchObject({ isPlaying: false, playbackDeviceId: "host", playbackOnThisDevice: true, pairedDeviceId: "" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    stop = startDeviceSync();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it("does not sync each position observation or echo a received seek", async () => {
     vi.useFakeTimers();
     localStorage.setItem("cryon.device.id", "pc");

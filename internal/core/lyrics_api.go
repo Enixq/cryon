@@ -17,7 +17,7 @@ func (a *App) handleAPILyrics(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	provider := q.Get("provider")
 	duration, _ := strconv.Atoi(q.Get("duration"))
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 	source, ok := a.registry[domain.ServiceID(q.Get("service"))].(interface {
 		TrackLyrics(context.Context, string) (lyrics.Result, error)
@@ -41,7 +41,7 @@ func (a *App) handleAPILyrics(w http.ResponseWriter, r *http.Request) {
 	}
 	if provider == "auto" || provider == "" {
 		if ok {
-			sourceCtx, sourceCancel := context.WithTimeout(ctx, 4*time.Second)
+			sourceCtx, sourceCancel := context.WithTimeout(ctx, 8*time.Second)
 			result, err := source.TrackLyrics(sourceCtx, q.Get("id"))
 			sourceCancel()
 			if err == nil && result.Found {

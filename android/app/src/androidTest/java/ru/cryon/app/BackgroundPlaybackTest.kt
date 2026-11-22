@@ -39,7 +39,7 @@ class BackgroundPlaybackTest {
 
     private fun state(): JSONObject = JSONObject(CryonPlaybackService.latestState.ifBlank { "{}" })
 
-    private fun start(fixture: Fixture, tracks: JSONArray, radio: Boolean) {
+    private fun start(fixture: Fixture, tracks: JSONArray, radio: Boolean, seed: JSONObject? = null) {
         // Android 15 requires an activity or established foreground service to
         // request initial audio focus. Subsequent transitions run without it.
         val launch = Intent(context, PlaybackTestActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -48,7 +48,7 @@ class BackgroundPlaybackTest {
         command(CryonPlaybackService.ACTION_STOP)
         command(CryonPlaybackService.ACTION_QUEUE) {
             putExtra(CryonPlaybackService.EXTRA_QUEUE, JSONObject().put("queue", tracks).put("currentIndex", 0)
-                .put("radio", radio).put("serverBaseUrl", fixture.base).toString())
+                .put("radio", radio).put("radioSeed", seed ?: JSONObject.NULL).put("serverBaseUrl", fixture.base).toString())
         }
         command(CryonPlaybackService.ACTION_PLAY) {
             putExtra(CryonPlaybackService.EXTRA_TRACK_ID, tracks.getJSONObject(0).getString("id"))
@@ -96,8 +96,24 @@ class BackgroundPlaybackTest {
                 }
                 waitFor { (state().optJSONArray("queue")?.length() ?: 0) >= 6 }
                 check(state().optBoolean("radio")) { "Favorite playback disabled radio" }
-                check(state().optBoolean("playing")) { "Refill paused selected favorite" }
+                check(state().optBoolean("autoPlay")) { "Refill cleared playback intent: ${state()}" }
+                waitFor { state().optString("trackId") == fixture.id(1) && state().optBoolean("playing") }
+                Thread.sleep(1200)
+                check(state().optBoolean("playing")) { "Refill paused selected favorite: ${state()}" }
                 check(fixture.relatedRequests.get() <= 2) { "Track selection restarted the in-flight refill" }
+            } finally { command(CryonPlaybackService.ACTION_STOP) }
+        }
+    }
+
+    @Test fun focusedRadioKeepsOriginalSeedDuringBackgroundRefills() {
+        Fixture().use { fixture ->
+            try {
+                val seed = fixture.track(0)
+                start(fixture, JSONArray().put(seed).put(fixture.track(1)), true, seed)
+                waitFor { fixture.relatedRequests.get() >= 2 }
+                check(fixture.radioInputs.all { it.getJSONObject("track").getString("id") == fixture.id(0).substringAfter(':') }) { "Radio drifted away from seed" }
+                check(fixture.radioInputs.all { (it.optJSONArray("exclude")?.length() ?: 0) >= 2 }) { "Radio omitted queue exclusions" }
+                check(state().getJSONObject("radioSeed").getString("id") == fixture.id(0)) { "Seed was lost in player state" }
             } finally { command(CryonPlaybackService.ACTION_STOP) }
         }
     }
@@ -144,6 +160,9 @@ class BackgroundPlaybackTest {
                 fixture.requestHandoff(queue)
                 waitFor { fixture.releaseRequests.get() > 0 }
                 check(!state().optBoolean("playing") && !state().optBoolean("playbackOnThisDevice")) { "Old device still playing: ${state()}" }
+                fixture.remoteChange(queue, 0, true)
+                waitFor { state().optBoolean("playbackOnThisDevice") && state().optBoolean("playing") }
+                check(state().optString("trackId") == fixture.id(0)) { "Return handoff lost the current track" }
             } finally { command(CryonPlaybackService.ACTION_STOP) }
         }
     }
@@ -276,6 +295,7 @@ class BackgroundPlaybackTest {
                                     JSONObject().put("track", json.getJSONObject("track")).put("streamUrl", "/stream/" + json.getJSONObject("track").getString("id")).toString().toByteArray()
                                 }
                                 path == "/v1/recommendations/related" -> {
+                                    radioInputs.add(json)
                                     relatedRequests.incrementAndGet()
                                     Thread.sleep(relatedDelayMs)
                                     JSONArray().apply { repeat(4) { val track = track(nextTrack.getAndIncrement()); put(JSONObject().put("id", track.getString("id").substringAfter(':')).put("service", "youtube").put("title", track.getString("title")).put("artists", JSONArray().put("Artist")).put("durationMs", 2000)) } }.toString().toByteArray()
@@ -299,6 +319,7 @@ class BackgroundPlaybackTest {
         // Every fixture models a separate library. IDs must not collide with
         // the player's recent-radio exclusion list from earlier test cases.
         fun id(index: Int) = "youtube:test-${socket.localPort}-$index"
+        val radioInputs = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
         fun track(id: Int) = JSONObject().put("id", id(id)).put("source", "youtube").put("title", "Track $id").put("artist", "Artist").put("duration", durationSeconds).put("accent", "violet")
         fun snapshot(queue: JSONArray, index: Int) = JSONObject().put("queue", queue).put("currentIndex", index).put("playbackDeviceId", "phone").put("isPlaying", true).put("progress", 0).put("volume", 50)
         fun remoteChange(queue: JSONArray, index: Int, playing: Boolean) = synchronized(this) {
