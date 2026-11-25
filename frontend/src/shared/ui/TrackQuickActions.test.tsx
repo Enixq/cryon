@@ -7,7 +7,7 @@ import { usePlayerStore } from "../../store/playerStore";
 
 const rate = vi.hoisted(() => vi.fn());
 vi.mock("../lib/useRecoFeedback", () => ({
-  useRecoFeedback: () => ({ scoreFor: () => 0, rate, saving: false }),
+  useRecoFeedback: () => ({ artistBlocked: () => false, toggleArtist: vi.fn(), scoreFor: () => 0, rate, saving: false }),
 }));
 vi.mock("../lib/useFavorites", () => ({ useFavoriteIds: () => new Set() }));
 vi.mock("./AddToPlaylistButton", () => ({ AddToPlaylistButton: () => <div>Плейлисты</div> }));

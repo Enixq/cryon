@@ -31,6 +31,7 @@ import { notify } from "./notificationStore";
 import { recordPlaybackDiagnostic, usePlaybackDiagnosticsStore } from "./playbackDiagnosticsStore";
 import { PlaybackFallbackSession } from "./playbackFallback";
 import { recordRadioSignal } from "./radioSession";
+import { reportDJEvent } from "../shared/api/intelligence";
 import { useEqualizerStore, EQ_FREQS } from "./equalizerStore";
 import { usePlaybackSettingsStore, CROSSFADE_MS } from "./playbackSettingsStore";
 import {
@@ -163,6 +164,7 @@ export function useAudioEngine() {
     positionSeconds: number,
     errorMessage?: string,
   ) => {
+    if (!hasNativeAndroidQueue()) reportDJEvent(failedTrack, "playback_error", positionSeconds * 1000);
     const session = fallbackSessionRef.current;
     if (failedTrack.forcedSource) {
       usePlayerStore.getState().pause();
@@ -250,7 +252,7 @@ export function useAudioEngine() {
       }
       if (hasNativeAndroidQueue() && state.queue && state.currentIndex !== undefined && state.queue[state.currentIndex]?.id === state.trackId) {
         const switched = store.currentTrack()?.id !== state.trackId;
-        if (switched && store.radio && store.currentTrack()) recordRadioSignal(store.currentTrack()!, "completed");
+        if (switched && store.radio && store.currentTrack()) recordRadioSignal(store.currentTrack()!, "completed", 0, true);
         loadedTrackIdRef.current = state.trackId;
         const queueChanged = JSON.stringify(store.queue) !== JSON.stringify(state.queue);
         usePlayerStore.setState({ ...(queueChanged ? { queue: state.queue } : {}), currentIndex: state.currentIndex, isPlaying: state.state === "error" ? store.isPlaying : state.autoPlay ?? state.playing, radio: state.radio ?? store.radio, radioSeed: state.radioSeed === undefined ? store.radioSeed : state.radioSeed, ...(switched ? { engineDuration: 0 } : {}) });
@@ -818,6 +820,7 @@ export function useAudioEngine() {
     const handleTrackEnd = async (store: ReturnType<typeof usePlayerStore.getState>) => {
       if (store.radio) recordRadioSignal(track, "completed");
       if (store.repeat === "one") {
+        if (store.radio) reportDJEvent(track, "replay", store.progress * 1000);
         // Повтор одного трека: перематываем в начало и играем снова.
         // next() при repeat==="one" не меняет индекс, поэтому эффект
         // загрузки не сработает — перезапускаем воспроизведение вручную.

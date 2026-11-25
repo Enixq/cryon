@@ -94,6 +94,7 @@ var notifCounter uint64
 // и локальное хранилище. Методы с большой буквы доступны фронтенду
 // через Wails-биндинги.
 type App struct {
+	dj                  djState
 	vkWebLogin          vkWebLogin
 	librarySyncMu       sync.Mutex
 	librarySyncConfigMu sync.Mutex
@@ -170,6 +171,10 @@ func NewApp() *App {
 			return service.SimilarTracks(ctx, seed)
 		}
 		return nil, nil
+	})
+	app.reco.SetTrackSimilarityAvailability(func() bool {
+		service, ok := app.registry[domain.ServiceYandex].(*yandex.Service)
+		return ok && service.HasToken()
 	})
 	return app
 }
@@ -630,6 +635,18 @@ func (a *App) loadLocalLibraryCache(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {
+	a.dj.Lock()
+	if a.dj.cancel != nil {
+		a.dj.cancel()
+	}
+	done := a.dj.done
+	a.dj.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	}
 	a.vkWebLogin.Lock()
 	if attempt := a.vkWebLogin.current; attempt != nil {
 		attempt.cancel()
@@ -1243,12 +1260,14 @@ func (a *App) ListRecommendations(limit int) ([]domain.Track, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	tracks, err := a.reco.Recommendations(a.ctx, limit)
+	ctx, cancel := context.WithTimeout(a.ctx, 12*time.Second)
+	defer cancel()
+	tracks, err := a.reco.Recommendations(ctx, min(80, max(limit, limit*2)))
 	if err != nil {
 		logging.L().Warn("рекомендации не удалось получить", "err", err)
 		return []domain.Track{}, nil
 	}
-	return tracks, nil
+	return a.reco.Rotate(a.ctx, tracks, limit), nil
 }
 
 // RecommendationsAvailable сообщает, доступен ли онлайн-движок (граф похожести).
@@ -1298,12 +1317,14 @@ func (a *App) ListAutoMix(kind string, limit int) ([]domain.Track, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	tracks, err := a.reco.AutoMix(a.ctx, recommendations.MixKind(kind), limit)
+	ctx, cancel := context.WithTimeout(a.ctx, 12*time.Second)
+	defer cancel()
+	tracks, err := a.reco.AutoMix(ctx, recommendations.MixKind(kind), min(80, max(limit, limit*2)))
 	if err != nil {
 		logging.L().Warn("авто-подборку не удалось получить", "kind", kind, "err", err)
 		return []domain.Track{}, nil
 	}
-	return tracks, nil
+	return a.reco.Rotate(a.ctx, tracks, limit), nil
 }
 
 // ListDailyMix — авто-подборка «Микс дня» (стабильна в течение суток).
@@ -1497,6 +1518,9 @@ func firstArtist(t domain.Track) string {
 
 // GetSetting возвращает значение настройки по ключу. Если ключа нет — пустая строка.
 func (a *App) GetSetting(key string) (string, error) {
+	if strings.HasPrefix(key, "intelligence.") {
+		return "", fmt.Errorf("private setting")
+	}
 	if a.store == nil {
 		return "", fmt.Errorf("хранилище недоступно")
 	}
@@ -1509,6 +1533,9 @@ func (a *App) GetSetting(key string) (string, error) {
 
 // SetSetting сохраняет значение настройки по ключу.
 func (a *App) SetSetting(key string, value string) error {
+	if strings.HasPrefix(key, "intelligence.") {
+		return fmt.Errorf("private setting")
+	}
 	if a.store == nil {
 		return fmt.Errorf("хранилище недоступно")
 	}
@@ -1822,6 +1849,26 @@ func (a *App) ClearHistory() error {
 //
 // NOTE: добавлено koda.
 func (a *App) ResetAllData() error {
+	a.dj.Lock()
+	if a.dj.cancel != nil {
+		a.dj.cancel()
+	}
+	done := a.dj.done
+	a.dj.ready = nil
+	a.dj.pending = nil
+	a.dj.Unlock()
+	if done != nil {
+		<-done
+	}
+	a.dj.Lock()
+	a.dj.day = ""
+	a.dj.used = 0
+	a.dj.tokens = 0
+	a.dj.prepared = 0
+	a.dj.fallbacks = 0
+	a.dj.cooldown = time.Time{}
+	a.dj.state = ""
+	a.dj.Unlock()
 	a.vkWebLogin.Lock()
 	if attempt := a.vkWebLogin.current; attempt != nil {
 		attempt.cancel()

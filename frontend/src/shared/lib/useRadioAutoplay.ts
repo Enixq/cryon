@@ -1,3 +1,5 @@
+import { hasApiV1Runtime } from "../api/v1";
+import { djRadio, resetDJSession, reportDJEvent } from "../api/intelligence";
 // Упреждающее дозаполнение радио-очереди («умная очередь» играет бесконечно).
 //
 // Прежняя логика запрашивала похожие треки в МОМЕНТ, когда очередь уже
@@ -38,6 +40,7 @@ export function startRadioAutoplay(): () => void {
   const pump = () => {
     const state = usePlayerStore.getState();
     if (state.radio !== session || state.radioSeed?.id !== seedId) {
+      resetDJSession();
       seedId = state.radioSeed?.id;
       epoch++;
       session = state.radio;
@@ -57,7 +60,12 @@ export function startRadioAutoplay(): () => void {
     inflight = true;
     // listRelatedTracks сам глотает сетевые ошибки и отдаёт пустой список,
     // поэтому здесь достаточно обработать «рекомендаций нет».
-    void listRelatedTracks(anchor, BATCH_SIZE, state.radioSeed ? state.queue : [])
+    const relatedRequest = hasApiV1Runtime()
+      ? djRadio(state.radioSeed, anchor, state.queue, BATCH_SIZE)
+          .catch(() => null)
+          .then((tracks) => tracks ?? listRelatedTracks(anchor, BATCH_SIZE, state.queue))
+      : listRelatedTracks(anchor, BATCH_SIZE, state.queue);
+    void relatedRequest
       .then((related) => {
         if (cancelled || epoch !== token || usePlayerStore.getState().radioSeed?.id !== seedId)
           return;
@@ -69,7 +77,7 @@ export function startRadioAutoplay(): () => void {
         )
           return;
         const known = new Set(latest.queue.map((track) => track.id));
-        const fresh = rankRadioTracks(related)
+        const fresh = (related.some((t) => t.djPlanId) ? related : rankRadioTracks(related))
           .filter((track) => !known.has(track.id))
           .slice(0, 12);
         if (fresh.length === 0) {
@@ -84,6 +92,7 @@ export function startRadioAutoplay(): () => void {
             currentIndex: 100,
           });
         latest.appendToQueue(fresh);
+        fresh.forEach((track) => reportDJEvent(track, "shown"));
         if (usePlayerStore.getState().radioWaiting) usePlayerStore.getState().next();
       })
       .catch(() => {

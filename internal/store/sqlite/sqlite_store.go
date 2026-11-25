@@ -24,7 +24,7 @@ type Store struct {
 
 var _ store.Store = (*Store)(nil)
 
-const coreSchemaVersion = 3
+const coreSchemaVersion = 5
 
 // New подготавливает путь к БД в каталоге данных приложения.
 func New(appName string) (*Store, error) {
@@ -232,6 +232,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return tx.Commit()
 	}
 
+	stmts = append(stmts, intelligenceSchema...)
 	for _, stmt := range stmts[1:] {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("миграция схемы %d: %w", coreSchemaVersion, err)
@@ -1147,6 +1148,7 @@ func (s *Store) ResetAllData(ctx context.Context) error {
 	defer func() { _ = tx.Rollback() }()
 
 	tables := []string{
+		"dj_plans", "dj_candidates", "dj_feedback", "dj_sessions",
 		"library_entries", "library_clock",
 		"history",
 		"favorites",

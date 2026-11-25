@@ -7,6 +7,8 @@ export type AccentColor =
   "violet" | "cyan" | "pink" | "orange" | "rose" | "amber" | "slate" | "emerald";
 
 export interface Track {
+	djSessionId?: string;
+	djPlanId?: string;
   forcedSource?: boolean;
   recommendationReason?: string;
   fromCache?: boolean;

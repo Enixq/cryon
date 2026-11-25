@@ -1,0 +1,139 @@
+import { hasApiV1Runtime, request } from "./v1";
+import { toBackendTrack, mapTracks } from "./mappers";
+import type { Track } from "../types";
+import type { domain } from "../../../wailsjs/go/models";
+
+export type DJStatus = {
+  usedToday: number;
+  tokensToday: number;
+  events: Record<string, number>;
+  enabled: boolean;
+  configured: boolean;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  dailySegments: number;
+  state: string;
+  prepared: number;
+  fallbacks: number;
+  updatedAt?: string;
+  trackCount: number;
+};
+let sessionId = "";
+let generation = 0;
+let enabled = false;
+const sessions = new Map<string, string>();
+const plans = new Map<string, string>();
+export function canUseDJ(): boolean {
+  return hasApiV1Runtime() && enabled;
+}
+export async function getDJStatus(): Promise<DJStatus> {
+  const status = await request<DJStatus>("/v1/intelligence/config");
+  enabled = status.enabled && status.configured;
+  return status;
+}
+export async function saveDJConfig(value: {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  baseUrl: string;
+  apiKey: string;
+  dailySegments: number;
+}): Promise<DJStatus> {
+  const status = await request<DJStatus>("/v1/intelligence/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(value),
+  });
+  enabled = status.enabled && status.configured;
+  resetDJSession();
+  return status;
+}
+export function resetDJSession(): void {
+  const old = sessionId;
+  sessionId = "";
+  generation++;
+  if (old && hasApiV1Runtime())
+    void request("/v1/intelligence/end", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: old }),
+    }).catch(() => {});
+}
+export async function djRadio(
+  seed: Track | null,
+  anchor: Track,
+  exclude: Track[],
+  limit: number,
+): Promise<Track[] | null> {
+  if (!hasApiV1Runtime()) return null;
+  if (!enabled) {
+    try {
+      await getDJStatus();
+    } catch {
+      return null;
+    }
+  }
+  if (!enabled) return null;
+  const token = generation;
+  const result = await request<{ sessionId: string; tracks: domain.Track[] }>(
+    "/v1/intelligence/radio",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        mode: seed ? "track" : "infinite",
+        track: toBackendTrack(seed ?? anchor),
+        exclude: exclude.slice(-200).map(toBackendTrack),
+        limit,
+      }),
+    },
+  );
+  if (token !== generation) return [];
+  sessionId = result.sessionId;
+  const tracks = mapTracks(result.tracks);
+  tracks.forEach((track, index) => {
+    const raw = result.tracks[index] as domain.Track & { djPlanId?: string };
+    if (sessionId) sessions.set(track.id, sessionId);
+    if (raw.djPlanId) plans.set(track.id, raw.djPlanId);
+  });
+  if (sessions.size > 1000) {
+    for (const key of [...sessions.keys()].slice(0, 500)) {
+      sessions.delete(key);
+      plans.delete(key);
+    }
+  }
+  return tracks;
+}
+export function reportDJEvent(
+  track: Track,
+  kind: "shown" | "like" | "dislike" | "skip" | "completed" | "replay" | "playback_error",
+  playedMs = 0,
+): void {
+  const session = track.djSessionId || sessions.get(track.id);
+  if (!session || !hasApiV1Runtime()) return;
+  void request("/v1/intelligence/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id: crypto.randomUUID(),
+      session_id: session,
+      plan_id: track.djPlanId || plans.get(track.id) || "",
+      track_id: track.id,
+      kind,
+      played_ms: Math.max(0, Math.round(playedMs)),
+      duration_ms: Math.max(0, Math.round(track.duration * 1000)),
+      at: new Date().toISOString(),
+    }),
+  }).catch(() => {});
+}
+
+export async function getDJCollection(): Promise<Track[]> {
+  if (!hasApiV1Runtime()) return [];
+  const result = await request<{ tracks: domain.Track[] }>("/v1/intelligence/collection");
+  return mapTracks(result.tracks);
+}
+export async function refreshDJCollection(): Promise<void> {
+  await request("/v1/intelligence/collection", { method: "POST" });
+}

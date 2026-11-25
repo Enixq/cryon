@@ -31,6 +31,8 @@ const (
 // Track — единый доменный трек. JSON-теги совпадают с фронтендом,
 // чтобы Wails-биндинги отдавали данные без дополнительного маппинга.
 type Track struct {
+	DJSessionID          string       `json:"djSessionId,omitempty"`
+	DJPlanID             string       `json:"djPlanId,omitempty"`
 	ForcedSource         bool         `json:"forcedSource,omitempty"`
 	RecommendationReason string       `json:"recommendationReason,omitempty"`
 	FromCache            bool         `json:"fromCache,omitempty"`

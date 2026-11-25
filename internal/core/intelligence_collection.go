@@ -1,0 +1,93 @@
+package core
+
+import (
+	"Cryon2/internal/domain"
+	"Cryon2/internal/intelligence"
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+)
+
+type djCollection struct {
+	Tracks    []domain.Track `json:"tracks"`
+	UpdatedAt string         `json:"updatedAt,omitempty"`
+}
+
+func (a *App) loadDJCollection(ctx context.Context) djCollection {
+	c := djCollection{Tracks: []domain.Track{}}
+	if a.store != nil {
+		raw, _, _ := a.store.SettingGet(ctx, "intelligence.collection")
+		_ = json.Unmarshal([]byte(raw), &c)
+	}
+	if c.Tracks == nil {
+		c.Tracks = []domain.Track{}
+	}
+	return c
+}
+func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeAPIError(w, 405, "требуется GET или POST")
+		return
+	}
+	if r.Method == http.MethodPost {
+		cfg := a.djConfig(r.Context())
+		if !cfg.Enabled || cfg.APIKey == "" {
+			writeAPIError(w, 400, "Включите AI DJ и укажите модель и ключ в настройках")
+			return
+		}
+		repo, ok := a.store.(intelligence.SessionRepository)
+		if !ok || a.reco == nil {
+			writeAPIError(w, 503, "движок недоступен")
+			return
+		}
+		// A dedicated session for the visible collection does not change active radio.
+		raw, _, _ := a.store.SettingGet(r.Context(), "intelligence.collection.session")
+		session, exists, err := repo.DJSession(r.Context(), raw)
+		if err != nil {
+			writeAPIAppError(w, err)
+			return
+		}
+		if !exists {
+			session = intelligence.SessionProfile{ID: djID(), Mode: intelligence.RadioInfinite, PlayedIDs: []string{}}
+			if err = repo.CreateDJSession(r.Context(), session); err != nil {
+				writeAPIAppError(w, err)
+				return
+			}
+			if err = a.store.SettingSet(r.Context(), "intelligence.collection.session", session.ID); err != nil {
+				writeAPIAppError(w, err)
+				return
+			}
+		}
+		a.dj.Lock()
+		busy := a.dj.busy
+		cooldown := a.dj.cooldown
+		a.dj.Unlock()
+		if busy {
+			writeAPIError(w, 409, "AI уже подготавливает музыку. Подборка появится здесь автоматически")
+			return
+		}
+		if a.IntelligenceStatus().UsedToday >= cfg.DailySegments {
+			writeAPIError(w, 429, "Достигнут дневной лимит AI-подборок")
+			return
+		}
+		if time.Now().Before(cooldown) {
+			writeAPIError(w, 429, "Предыдущая AI-подборка не завершилась. Проверьте модель и ключ; повторить можно через минуту")
+			return
+		}
+		req := djRadioRequest{SessionID: session.ID, Mode: intelligence.RadioInfinite, Limit: 40}
+		go func() {
+			defer a.recoverGoroutine("intelligence collection")
+			ctx := a.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			a.prepareDJ(cfg, session, a.reco.IntelligenceTaste(ctx), req, nil)
+		}()
+	}
+	c := a.loadDJCollection(r.Context())
+	if a.reco != nil {
+		c.Tracks = a.reco.Allowed(r.Context(), c.Tracks)
+	}
+	writeAPIJSON(w, 200, c)
+}

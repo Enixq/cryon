@@ -1,13 +1,25 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { reportDJEvent } from "../shared/api/intelligence";
 import type { Track } from "../shared/types";
 import { consumeRadioCompletion, rankRadioTracks, recordRadioSignal, resetRadioSession } from "./radioSession";
+
+vi.mock("../shared/api/intelligence", () => ({ reportDJEvent: vi.fn() }));
 
 function track(id: string, artist: string): Track {
   return { id, artist, title: id, source: "youtube", duration: 180, accent: "violet" };
 }
 
 describe("radio session", () => {
-  beforeEach(resetRadioSession);
+  beforeEach(() => { resetRadioSession(); vi.mocked(reportDJEvent).mockClear(); });
+
+  it("does not duplicate native completion observations", () => {
+    const item = track("native", "Artist");
+    recordRadioSignal(item, "completed", 0, true);
+    expect(reportDJEvent).not.toHaveBeenCalled();
+    expect(consumeRadioCompletion(item)).toBe(true);
+    recordRadioSignal(item, "completed");
+    expect(reportDJEvent).toHaveBeenCalledWith(item, "completed", 180000);
+  });
 
   it("removes skipped tracks and favours artists completed in this session", () => {
     recordRadioSignal(track("skipped", "Other"), "skipped");

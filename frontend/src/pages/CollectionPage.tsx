@@ -1,3 +1,5 @@
+import { getDJCollection } from "../shared/api/intelligence";
+import { IntelligencePanel } from "../shared/ui/IntelligencePanel";
 import { useEffect, useMemo } from "react";
 import { Play, RefreshCw, Sparkles } from "lucide-react";
 import { useParams } from "react-router-dom";
@@ -63,6 +65,13 @@ const newReleasesMeta: CollectionMeta = {
 };
 
 const collectionMeta: Record<string, CollectionMeta> = {
+  "cryon-ai": {
+    title: "Подобрал AI Cryon",
+    subtitle: "Музыка, найденная и оценённая вашим AI DJ",
+    emptyHint:
+      "Нажмите «Подобрать музыку». Результат появится автоматически после поиска и оценки кандидатов.",
+    rateable: true,
+  },
   "for-you": {
     title: "Специально для вас",
     subtitle: "Новые песни по вашим предпочтениям",
@@ -148,6 +157,8 @@ export function CollectionPage() {
     queryFn: async () => {
       if (!kind) return [];
       switch (kind) {
+        case "cryon-ai":
+          return getDJCollection();
         case "for-you":
           return listRecommendations(40);
         case "recent":
@@ -176,7 +187,8 @@ export function CollectionPage() {
     // с чужими обложками, по которым Play молчит.
     placeholderData: isWailsRuntime() ? undefined : () => (kind ? mockForKind(kind) : []),
     // Кэш 5 минут — не дёргаем бэкенд при каждом заходе.
-    staleTime: 5 * 60 * 1000,
+    staleTime: kind === "cryon-ai" ? 0 : 5 * 60 * 1000,
+    refetchInterval: kind === "cryon-ai" ? 5000 : false,
     // Не фэйлим страницу при ошибке — показываем ошибку с кнопкой «Обновить».
     retry: false,
   });
@@ -192,16 +204,11 @@ export function CollectionPage() {
   const feedback = useRecoFeedback();
   const rateScore = feedback.scoreFor;
   const rateable = Boolean(meta.rateable);
-  const items = useMemo(() => {
-    const all = data ?? [];
-    // Дизлайкнутый трек исчезает из подборки сразу, не дожидаясь пересборки.
-    return rateable || kind === "m2" || kind === "new-releases"
-      ? all.filter((t) => rateScore(t) >= 0)
-      : all;
-  }, [data, kind, rateable, rateScore]);
+  const items = data ?? [];
+  const playableItems = items.filter((t) => rateScore(t) >= 0);
 
   const handlePlay = (track: Track) => {
-    playTrack(track, items);
+    if (rateScore(track) >= 0) playTrack(track, playableItems);
   };
 
   // Нет kind — подборка не выбрана.
@@ -232,8 +239,8 @@ export function CollectionPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => items.length > 0 && playTrack(items[0], items)}
-            disabled={items.length === 0}
+            onClick={() => playableItems.length > 0 && playTrack(playableItems[0], playableItems)}
+            disabled={playableItems.length === 0}
             className="flex items-center gap-2 rounded-full bg-[#a855f7] px-6 py-3 font-semibold text-white shadow-lg shadow-[#a855f7]/40 transition-transform hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
           >
             <Play size={20} fill="currentColor" />
@@ -251,6 +258,7 @@ export function CollectionPage() {
         </div>
       </div>
 
+      {kind === "cryon-ai" && <IntelligencePanel />}
       {isLoading ? (
         <CollectionSkeleton />
       ) : error ? (

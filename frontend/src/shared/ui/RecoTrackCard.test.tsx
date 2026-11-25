@@ -11,6 +11,7 @@ import type { Track } from "../types";
 // поведение (нижний регистр, «артист|название») обязано совпадать с Go, поэтому
 // повторяем её в моке, а не подменяем заглушкой.
 const api = vi.hoisted(() => ({
+  isWailsRuntime: () => false,
   recoFeedbackKey: (artist: string, title: string) =>
     `${artist.trim()}|${title.trim()}`.toLowerCase(),
   recoFeedbackState: vi.fn(),
@@ -114,5 +115,13 @@ describe("RecoTrackCard + useRecoFeedback", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Воспроизвести Aurora — Nightfall" }));
     expect(onPlay).toHaveBeenCalledWith(track);
+  });
+
+  it("перечёркивает и отключает треки запрещённого исполнителя", async () => {
+    api.recoFeedbackState.mockResolvedValue({"aurora|*": -1});
+    renderCard();
+    await waitFor(() => expect(screen.getByRole("button",{name:"Воспроизвести Aurora — Nightfall"})).toBeDisabled());
+    expect(screen.getByText("Nightfall")).toHaveClass("line-through");
+    expect(screen.getByRole("button",{name:"Разрешить исполнителя"})).toBeEnabled();
   });
 });

@@ -22,6 +22,7 @@ import (
 // migrate endpoint by endpoint without changing the current Wails frontend.
 func (a *App) APIHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/intelligence/", a.handleIntelligence)
 	mux.HandleFunc("/v1/system/health", a.handleAPIHealth)
 	mux.HandleFunc("/v1/system/update", a.handleAPIUpdate)
 	mux.HandleFunc("/v1/events", a.handleAPIEvents)
@@ -50,6 +51,7 @@ func (a *App) APIHandler() http.Handler {
 	mux.HandleFunc("/v1/library/downloads/file", a.handleAPIDownloadFile)
 	mux.HandleFunc("/v1/library/downloads/artwork", a.handleAPIDownloadFile)
 	mux.HandleFunc("/v1/library/feedback", a.handleAPILibraryFeedback)
+	mux.HandleFunc("/v1/recommendations/block-artist", a.handleAPIRecommendationBlock)
 	mux.HandleFunc("/v1/library/history", a.handleAPIHistory)
 	mux.HandleFunc("/v1/library/local/tracks", a.handleAPILocalTracks)
 	mux.HandleFunc("/v1/library/local/cover", func(w http.ResponseWriter, r *http.Request) {

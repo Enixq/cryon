@@ -4,6 +4,7 @@ import { clamp } from "../shared/lib/format";
 import { initialQueue } from "../mocks/data";
 import { isWailsRuntime, addFavorite, removeFavorite } from "../shared/api/client";
 import { notify } from "./notificationStore";
+import { reportDJEvent } from "../shared/api/intelligence";
 import {
   consumeRadioCompletion,
   isRadioArtistBlocked,
@@ -151,9 +152,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       get().isPlaying &&
       (duration <= 0 || get().progress / duration < 0.5)
     ) {
-      recordRadioSignal(current, "skipped");
+      recordRadioSignal(current, "skipped", get().progress * 1000);
+    } else if (get().radio && current && !completed && get().isPlaying) {
+      reportDJEvent(current, "skip", get().progress * 1000);
     }
     if (repeat === "one") {
+      if (current) reportDJEvent(current, "replay", get().progress * 1000);
       // Перезапуск текущего трека. Одного set({progress:0}) недостаточно:
       // движок звука реагирует только на seekNonce, поэтому раньше полоска
       // прогресса прыгала в начало, а звук продолжал играть с того же места.
@@ -202,6 +206,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // Если прошло больше 3 секунд — перемотка в начало трека. Через seek(),
     // иначе движок звука не получает сигнал и трек продолжает играть дальше.
     if (progress > 3) {
+      if (get().radio && queue[currentIndex]) reportDJEvent(queue[currentIndex], "replay", progress * 1000);
       get().seek(0);
       return;
     }

@@ -16,7 +16,7 @@ func (e *Engine) Allowed(ctx context.Context, tracks []domain.Track) []domain.Tr
 	t := e.buildTaste(ctx)
 	out := []domain.Track{}
 	for _, track := range tracks {
-		if !t.blockedTracks[trackKey(track)] && !t.blockedArtists[artistKey(track)] {
+		if !t.blockedTracks[trackKey(track)] && !trackArtistBlocked(track, t.blockedArtists) {
 			out = append(out, track)
 		}
 	}

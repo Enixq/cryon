@@ -45,6 +45,68 @@ export namespace core {
 	        this.setupHint = source["setupHint"];
 	    }
 	}
+	export class DJConfig {
+	    enabled: boolean;
+	    provider: string;
+	    model: string;
+	    baseUrl: string;
+	    apiKey?: string;
+	    revision: number;
+	    dailySegments: number;
+
+	    static createFrom(source: any = {}) {
+	        return new DJConfig(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.baseUrl = source["baseUrl"];
+	        this.apiKey = source["apiKey"];
+	        this.revision = source["revision"];
+	        this.dailySegments = source["dailySegments"];
+	    }
+	}
+	export class DJStatus {
+	    tokensToday: number;
+	    usedToday: number;
+	    events: Record<string, number>;
+	    enabled: boolean;
+	    configured: boolean;
+	    provider: string;
+	    model: string;
+	    baseUrl: string;
+	    dailySegments: number;
+	    state: string;
+	    prepared: number;
+	    fallbacks: number;
+	    updatedAt?: string;
+	    trackCount: number;
+
+	    static createFrom(source: any = {}) {
+	        return new DJStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tokensToday = source["tokensToday"];
+	        this.usedToday = source["usedToday"];
+	        this.events = source["events"];
+	        this.enabled = source["enabled"];
+	        this.configured = source["configured"];
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.baseUrl = source["baseUrl"];
+	        this.dailySegments = source["dailySegments"];
+	        this.state = source["state"];
+	        this.prepared = source["prepared"];
+	        this.fallbacks = source["fallbacks"];
+	        this.updatedAt = source["updatedAt"];
+	        this.trackCount = source["trackCount"];
+	    }
+	}
 	export class FavoritesImportResult {
 	    source: string;
 	    found: number;
@@ -142,6 +204,7 @@ export namespace domain {
 	    title: string;
 	    artist?: string;
 	    year?: number;
+	    releaseDate?: string;
 	    artworkUrl?: string;
 	    kind?: string;
 	    trackCount?: number;
@@ -158,6 +221,7 @@ export namespace domain {
 	        this.title = source["title"];
 	        this.artist = source["artist"];
 	        this.year = source["year"];
+	        this.releaseDate = source["releaseDate"];
 	        this.artworkUrl = source["artworkUrl"];
 	        this.kind = source["kind"];
 	        this.trackCount = source["trackCount"];
@@ -165,11 +229,18 @@ export namespace domain {
 	    }
 	}
 	export class Track {
+	    djSessionId?: string;
+	    djPlanId?: string;
+	    forcedSource?: boolean;
+	    recommendationReason?: string;
+	    fromCache?: boolean;
 	    id: string;
 	    service: string;
 	    title: string;
 	    artists: string[];
 	    album?: string;
+	    releaseDate?: string;
+	    genre?: string;
 	    durationMs?: number;
 	    playCount?: number;
 	    quality?: string;
@@ -183,11 +254,18 @@ export namespace domain {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.djSessionId = source["djSessionId"];
+	        this.djPlanId = source["djPlanId"];
+	        this.forcedSource = source["forcedSource"];
+	        this.recommendationReason = source["recommendationReason"];
+	        this.fromCache = source["fromCache"];
 	        this.id = source["id"];
 	        this.service = source["service"];
 	        this.title = source["title"];
 	        this.artists = source["artists"];
 	        this.album = source["album"];
+	        this.releaseDate = source["releaseDate"];
+	        this.genre = source["genre"];
 	        this.durationMs = source["durationMs"];
 	        this.playCount = source["playCount"];
 	        this.quality = source["quality"];
@@ -341,6 +419,7 @@ export namespace lyrics {
 	    plain: string;
 	    instrumental: boolean;
 	    found: boolean;
+	    provider?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Result(source);
@@ -352,6 +431,7 @@ export namespace lyrics {
 	        this.plain = source["plain"];
 	        this.instrumental = source["instrumental"];
 	        this.found = source["found"];
+	        this.provider = source["provider"];
 	    }
 	}
 

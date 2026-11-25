@@ -38,6 +38,10 @@ export function ClearNotifications() {
   return window['go']['main']['App']['ClearNotifications']();
 }
 
+export function ConfigureIntelligence(arg1) {
+  return window['go']['main']['App']['ConfigureIntelligence'](arg1);
+}
+
 export function ContinueAsGuest() {
   return window['go']['main']['App']['ContinueAsGuest']();
 }
@@ -104,6 +108,10 @@ export function ImportSpotifyLibraryExport(arg1) {
 
 export function InstallUpdate() {
   return window['go']['main']['App']['InstallUpdate']();
+}
+
+export function IntelligenceStatus() {
+  return window['go']['main']['App']['IntelligenceStatus']();
 }
 
 export function LastFMConnected() {

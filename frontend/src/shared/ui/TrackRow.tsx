@@ -1,3 +1,4 @@
+import { useRecoFeedback } from "../lib/useRecoFeedback";
 import { Play, Pause, ThumbsDown, ThumbsUp } from "lucide-react";
 import type { Track } from "../types";
 import { Cover } from "./Cover";
@@ -10,7 +11,9 @@ import { ServiceIcon } from "./ServiceIcon";
 import { ArtistLink } from "./ArtistLink";
 
 function formatPlayCount(count: number): string {
-  return new Intl.NumberFormat("ru", { notation: "compact", maximumFractionDigits: 1 }).format(count);
+  return new Intl.NumberFormat("ru", { notation: "compact", maximumFractionDigits: 1 }).format(
+    count,
+  );
 }
 
 interface TrackRowProps {
@@ -48,15 +51,22 @@ export function TrackRow({
   rateDisabled,
 }: TrackRowProps) {
   const coverUrl = useTrackCover(track);
+  const feedback = useRecoFeedback();
+  const blocked = feedback.scoreFor(track) < 0;
   const liked = (score ?? 0) > 0;
   const disliked = (score ?? 0) < 0;
   return (
     <div
       data-track-row
-      onClick={() => onPlay(track)}
+      onClick={() => {
+        if (!blocked) onPlay(track);
+      }}
+      data-recommendation-blocked={blocked || undefined}
       className={cn(
         "group grid min-w-0 grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-1 rounded-xl px-2 py-2 transition-colors hover:bg-[color-mix(in_srgb,var(--app-accent)_12%,transparent)] active:bg-[color-mix(in_srgb,var(--app-accent)_16%,transparent)] sm:grid-cols-[40px_minmax(0,1fr)_auto] sm:gap-4 sm:px-3",
-        active && "bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--app-accent)_28%,transparent)]",
+        blocked && "opacity-45 [&_[data-track-title]]:line-through",
+        active &&
+          "bg-[color-mix(in_srgb,var(--app-accent)_14%,transparent)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--app-accent)_28%,transparent)]",
       )}
     >
       {/* Номер / кнопка воспроизведения */}
@@ -67,11 +77,15 @@ export function TrackRow({
           </span>
         )}
         <button
-          onClick={(event) => { event.stopPropagation(); onPlay(track); }}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!blocked) onPlay(track);
+          }}
           className={cn(
             "hidden place-items-center text-white sm:group-hover:grid",
             active && "grid",
           )}
+          disabled={blocked}
           aria-label={active && playing ? "Пауза" : "Воспроизвести"}
         >
           {active && playing ? (
@@ -94,6 +108,7 @@ export function TrackRow({
         />
         <div className="min-w-0 flex-1">
           <div
+            data-track-title
             className={cn(
               "whitespace-normal break-words text-[14px] font-medium leading-snug text-white sm:text-[15px]",
               active && "bg-[color-mix(in_srgb,var(--app-accent)_12%,transparent)] text-[#c084fc]",
@@ -105,7 +120,15 @@ export function TrackRow({
             <ArtistLink name={track.artist} />
             {showAlbum && track.album ? ` · ${track.album}` : ""}
           </div>
-          {(track.recommendationReason || track.fromCache) && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500" title={track.recommendationReason}>{track.fromCache ? "Из кэша · " : ""}{track.recommendationReason || "Для прослушивания без сети скачайте трек"}</p>}
+          {(track.recommendationReason || track.fromCache) && (
+            <p
+              className="mt-0.5 line-clamp-2 text-xs text-slate-500"
+              title={track.recommendationReason}
+            >
+              {track.fromCache ? "Из кэша · " : ""}
+              {track.recommendationReason || "Для прослушивания без сети скачайте трек"}
+            </p>
+          )}
         </div>
       </div>
 
@@ -170,14 +193,49 @@ export function TrackRow({
         )}
         {showAddToPlaylist && <TrackQuickActions track={track} />}
         <div className="flex shrink-0 flex-col items-end leading-tight">
-          {track.playCount ? <span className="hidden text-[11px] tabular-nums text-slate-500 sm:inline">▶ {formatPlayCount(track.playCount)}</span> : null}
-          <span className="w-9 text-right text-[13px] tabular-nums text-slate-400 sm:w-10 sm:text-sm">{formatDuration(track.duration)}</span>
+          {track.playCount ? (
+            <span className="hidden text-[11px] tabular-nums text-slate-500 sm:inline">
+              ▶ {formatPlayCount(track.playCount)}
+            </span>
+          ) : null}
+          <span className="w-9 text-right text-[13px] tabular-nums text-slate-400 sm:w-10 sm:text-sm">
+            {formatDuration(track.duration)}
+          </span>
         </div>
       </div>
-      {onRate && <div className="col-start-2 col-end-4 flex gap-2 sm:hidden" onClick={(event) => event.stopPropagation()}>
-        <button type="button" onClick={() => onRate(track, 1)} disabled={rateDisabled} aria-label="Нравится — больше такого" aria-pressed={liked} className={cn("grid h-8 w-10 place-items-center rounded-full", liked ? "text-[#c084fc]" : "text-slate-400")}><ThumbsUp size={16} /></button>
-        <button type="button" onClick={() => onRate(track, -1)} disabled={rateDisabled} aria-label="Не нравится — меньше такого" aria-pressed={disliked} className={cn("grid h-8 w-10 place-items-center rounded-full", disliked ? "text-rose-400" : "text-slate-400")}><ThumbsDown size={16} /></button>
-      </div>}
+      {onRate && (
+        <div
+          className="col-start-2 col-end-4 flex gap-2 sm:hidden"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => onRate(track, 1)}
+            disabled={rateDisabled}
+            aria-label="Нравится — больше такого"
+            aria-pressed={liked}
+            className={cn(
+              "grid h-8 w-10 place-items-center rounded-full",
+              liked ? "text-[#c084fc]" : "text-slate-400",
+            )}
+          >
+            <ThumbsUp size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => onRate(track, -1)}
+            disabled={rateDisabled}
+            aria-label="Не нравится — меньше такого"
+            aria-pressed={disliked}
+            className={cn(
+              "grid h-8 w-10 place-items-center rounded-full",
+              disliked ? "text-rose-400" : "text-slate-400",
+            )}
+          >
+            <ThumbsDown size={16} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

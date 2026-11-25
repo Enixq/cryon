@@ -1,3 +1,5 @@
+import { djRadio, resetDJSession } from "../shared/api/intelligence";
+import { useRecoFeedback } from "../shared/lib/useRecoFeedback";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Play, X } from "lucide-react";
@@ -11,6 +13,7 @@ import { SOURCES } from "../shared/sources";
 import type { Track, SourceId } from "../shared/types";
 
 export function TrackDiscovery() {
+  const feedback = useRecoFeedback();
   const radio = useUiStore((s) => s.radioPreviewTrack);
   const sourceTrack = useUiStore((s) => s.sourcePickerTrack);
   const track = sourceTrack || radio;
@@ -49,12 +52,20 @@ export function TrackDiscovery() {
         ? searchV1(`${track!.primaryArtist || track!.artist} ${track!.title}`, selectedSource).then(
             (found) => found.filter((t) => t.playableKind !== "external_only"),
           )
-        : listRelatedTracks(track!, 30, [track!]),
+        : (async () => {
+            resetDJSession();
+            return (
+              (await djRadio(track!, track!, [track!], 24).catch(() => null)) ??
+              listRelatedTracks(track!, 24, [track!])
+            );
+          })(),
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
   if (!track) return null;
+  const playableTracks = tracks.filter((t) => feedback.scoreFor(t) >= 0);
   const play = (candidate: Track) => {
+    if (feedback.scoreFor(candidate) < 0) return;
     const player = usePlayerStore.getState();
     if (sourceTrack) {
       candidate = { ...candidate, forcedSource: true };
@@ -64,7 +75,12 @@ export function TrackDiscovery() {
         nextQueue[player.currentIndex] = candidate;
         player.playTrack(candidate, nextQueue);
       } else player.playTrack(candidate, [candidate]);
-    } else player.startTrackRadio(track, tracks, candidate);
+    } else
+      player.startTrackRadio(
+        track,
+        tracks.filter((t) => feedback.scoreFor(t) >= 0),
+        candidate,
+      );
     close();
   };
   return (
@@ -120,8 +136,8 @@ export function TrackDiscovery() {
           </div>
         ) : (
           <button
-            disabled={!tracks.length}
-            onClick={() => play(tracks[0])}
+            disabled={!playableTracks.length}
+            onClick={() => play(playableTracks[0])}
             className="mb-4 flex w-fit items-center gap-2 rounded-full bg-[var(--app-accent)] px-5 py-2 text-white disabled:opacity-40"
           >
             <Play size={18} />

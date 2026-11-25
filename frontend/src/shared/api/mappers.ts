@@ -54,6 +54,8 @@ export function mapTrack(src: domain.Track): Track {
 
   return {
     id: `${source}:${src.id}`,
+    djSessionId: (src as domain.Track & Track).djSessionId,
+    djPlanId: (src as domain.Track & Track).djPlanId,
     forcedSource: (src as domain.Track & Track).forcedSource,
     recommendationReason: (src as domain.Track & Track).recommendationReason,
     fromCache: (src as domain.Track & Track).fromCache,
@@ -134,6 +136,8 @@ export function toBackendTrack(t: Track): domain.Track {
     id: rawId,
     forcedSource: t.forcedSource,
     recommendationReason: t.recommendationReason,
+    djSessionId: t.djSessionId,
+    djPlanId: t.djPlanId,
     fromCache: t.fromCache,
     service: source,
     title: t.title,

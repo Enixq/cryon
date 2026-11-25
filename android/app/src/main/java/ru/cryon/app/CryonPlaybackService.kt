@@ -162,6 +162,11 @@ class CryonPlaybackService : MediaSessionService() {
                     // Media3 advanced to the item the service queued itself. The UI
                     // mirrors this transition instead of driving it.
                     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) reportDJ("replay")
+                        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                            val previous = queue.getOrNull(queueIndex)
+                            reportDJ("completed", previous, ((previous?.optDouble("duration", 0.0) ?: 0.0) * 1000).toLong())
+                        }
                         waitingAfterError = false
                         mediaItem?.mediaId?.takeIf { it.isNotEmpty() }?.let { trackId ->
                             currentTrackId = trackId
@@ -189,6 +194,7 @@ class CryonPlaybackService : MediaSessionService() {
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        reportDJ("playback_error")
                         recoverCurrent(error)
                     }
                 })
@@ -292,6 +298,9 @@ class CryonPlaybackService : MediaSessionService() {
             ACTION_NEXT -> skipNext()
             ACTION_PREVIOUS -> { if (playbackPlayer.currentPosition > 3000) playbackPlayer.seekTo(0) else playQueueIndex((queueIndex - 1).coerceAtLeast(0)) }
             ACTION_STOP -> {
+                val endedSession = djSessionId
+                djSessionId = ""
+                if (endedSession.isNotBlank()) feedbackWorker.execute { runCatching { request("/v1/intelligence/end", JSONObject().put("sessionId", endedSession)) } }
                 syncEpoch++
                 radioEpoch++
                 generation++
@@ -394,7 +403,11 @@ class CryonPlaybackService : MediaSessionService() {
         }
         queueIndex = snapshot.optInt("currentIndex").coerceIn(0, (queue.size - 1).coerceAtLeast(0))
         val incomingSeed = snapshot.optJSONObject("radioSeed")
-        if (incomingSeed?.optString("id") != radioSeed?.optString("id") || radioEnabled != snapshot.optBoolean("radio")) { radioEpoch++; radioLoading = false; retryRadioAt = 0L; radioAnchorOffset = 0 }
+        if (incomingSeed?.optString("id") != radioSeed?.optString("id") || radioEnabled != snapshot.optBoolean("radio")) {
+            val endedSession = djSessionId
+            if (endedSession.isNotBlank()) feedbackWorker.execute { runCatching { request("/v1/intelligence/end", JSONObject().put("sessionId", endedSession)) } }
+            radioEpoch++; djSessionId = ""; radioLoading = false; retryRadioAt = 0L; radioAnchorOffset = 0
+        }
         radioSeed = incomingSeed
         radioEnabled = snapshot.optBoolean("radio")
         repeat = snapshot.optString("repeat", "off")
@@ -507,6 +520,7 @@ class CryonPlaybackService : MediaSessionService() {
         (track.optString("primaryArtist").ifBlank { track.optString("artist") }.trim() + "|" + track.optString("title").trim()).lowercase(java.util.Locale.ROOT)
 
     private fun rateCurrent(score: Int) {
+        reportDJ(if (score == 1) "like" else "dislike")
         val track = queue.getOrNull(queueIndex)?.takeIf { it.optString("id") == currentTrackId } ?: return
         val trackCopy = JSONObject(track.toString())
         if (score == -1) {
@@ -546,6 +560,7 @@ class CryonPlaybackService : MediaSessionService() {
         return JSONObject().put("id", track.optString("service") + ":" + track.optString("id"))
             .put("source", track.optString("service")).put("title", track.optString("title"))
             .put("artists", artists).put("artist", (0 until artists.length()).joinToString(", ") { artists.optString(it) })
+            .put("djSessionId", track.optString("djSessionId")).put("djPlanId", track.optString("djPlanId")).put("recommendationReason", track.optString("recommendationReason"))
             .put("primaryArtist", artists.optString(0)).put("album", track.optString("album"))
             .put("duration", track.optLong("durationMs") / 1000).put("coverUrl", track.optString("artworkUrl"))
             .put("playableKind", track.optString("playableKind", "stream")).put("quality", track.optString("quality"))
@@ -658,7 +673,17 @@ class CryonPlaybackService : MediaSessionService() {
         else { maybePreloadNext(p); maybeRefillRadio() }
     }
 
+    private fun reportDJ(kind: String, track: JSONObject? = queue.getOrNull(queueIndex), playedMs: Long = player?.currentPosition ?: 0) {
+        val spec = track ?: return
+        val session = spec.optString("djSessionId").ifBlank { djSessionId }
+        if (session.isBlank()) return
+        val event = JSONObject().put("id", java.util.UUID.randomUUID().toString()).put("session_id", session).put("plan_id", spec.optString("djPlanId"))
+            .put("track_id", spec.optString("id")).put("kind", kind).put("played_ms", playedMs.coerceAtLeast(0)).put("duration_ms", (spec.optDouble("duration",0.0)*1000).toLong().coerceAtLeast(0))
+            .put("at", java.time.Instant.now().toString())
+        feedbackWorker.execute { runCatching { request("/v1/intelligence/feedback", event) } }
+    }
     private fun skipNext() {
+        reportDJ("skip")
         val p = player ?: return
         keepPlaying = true
         if (shuffle && queue.size > 1) {
@@ -687,17 +712,26 @@ class CryonPlaybackService : MediaSessionService() {
         }
     }
 
+    private var djSessionId = ""
     private fun maybeRefillRadio() {
         if (!radioEnabled || radioLoading || serverBaseUrl.isBlank() || queue.isEmpty() || queue.size - queueIndex - 1 > 6 || System.currentTimeMillis() < retryRadioAt) return
         val anchor = radioSeed ?: queue[(queue.lastIndex - radioAnchorOffset % minOf(queue.size, 6)).coerceAtLeast(0)]
         val token = radioEpoch
         radioLoading = true
         radioWorker.execute {
-            val result = runCatching { request("/v1/recommendations/related", JSONObject().put("track", backendTrack(anchor)).put("limit", 24).put("exclude", JSONArray(if (radioSeed != null) queue.takeLast(200).map { backendTrack(it) } else emptyList<JSONObject>()))) }
+            val body = JSONObject().put("track", backendTrack(anchor)).put("limit", 24).put("exclude", JSONArray(queue.takeLast(200).map { backendTrack(it) }))
+            val result = runCatching {
+                runCatching {
+                    request("/v1/intelligence/radio", JSONObject(body.toString()).put("sessionId", djSessionId).put("mode", if (radioSeed != null) "track" else "infinite"))
+                        .also { check(it.optJSONArray("tracks") != null) { "Intelligence route unavailable" } }
+                }
+                    .getOrElse { request("/v1/recommendations/related", body) }
+            }
             progressHandler.post {
                 if (token != radioEpoch) return@post
                 radioLoading = false
                 if (!radioEnabled) return@post
+                result.getOrNull()?.optString("sessionId")?.takeIf { it.isNotBlank() }?.let { djSessionId = it }
                 val candidates = result.getOrNull()?.optJSONArray("tracks") ?: JSONArray()
                 val known = queue.map { it.optString("id") }.toMutableSet()
                 val fresh = (0 until candidates.length()).map { frontendTrack(candidates.getJSONObject(it)) }
@@ -706,6 +740,7 @@ class CryonPlaybackService : MediaSessionService() {
                 radioAnchorOffset = 0
                 if (queueIndex > 100) { val remove = queueIndex - 100; repeat(remove) { queue.removeAt(0) }; queueIndex = 100 }
                 queue.addAll(fresh)
+                fresh.forEach { reportDJ("shown", it, 0) }
                 player?.let { publishState(stateFor(it)); maybePreloadNext(it) }
             }
         }

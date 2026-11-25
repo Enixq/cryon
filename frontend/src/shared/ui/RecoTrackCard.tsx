@@ -1,3 +1,4 @@
+import { useRecoFeedback } from "../lib/useRecoFeedback";
 import { Play, ThumbsDown, ThumbsUp } from "lucide-react";
 import type { Track } from "../types";
 import { Cover } from "./Cover";
@@ -24,14 +25,19 @@ interface RecoTrackCardProps {
  */
 export function RecoTrackCard({ track, onPlay, score, onRate, disabled }: RecoTrackCardProps) {
   const coverUrl = useTrackCover(track);
+  const feedback = useRecoFeedback();
+  const blocked = feedback.scoreFor(track) < 0;
   const liked = score > 0;
   const disliked = score < 0;
 
   return (
-    <div className="group flex flex-col text-left">
+    <div className={cn("group relative flex flex-col text-left", blocked && "opacity-45")}>
       <div className="relative">
         <button
-          onClick={() => onPlay(track)}
+          disabled={blocked}
+          onClick={() => {
+            if (!blocked) onPlay(track);
+          }}
           className="block w-full"
           aria-label={`Воспроизвести ${track.artist} — ${track.title}`}
         >
@@ -96,9 +102,28 @@ export function RecoTrackCard({ track, onPlay, score, onRate, disabled }: RecoTr
           </button>
         </div>
       </div>
-      <strong className="mt-3 line-clamp-2 whitespace-normal text-[15px] font-semibold text-white">{track.title}</strong>
-      <p className="line-clamp-2 whitespace-normal text-sm text-slate-400"><ArtistLink name={track.artist} /></p>
-      {track.recommendationReason && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{track.recommendationReason}</p>}
+
+      <strong
+        className={cn(
+          "mt-3 line-clamp-2 whitespace-normal text-[15px] font-semibold text-white",
+          blocked && "line-through",
+        )}
+      >
+        {track.title}
+      </strong>
+      <p className="line-clamp-2 whitespace-normal text-sm text-slate-400">
+        <ArtistLink name={track.artist} />
+      </p>
+      <button
+        onClick={() => feedback.toggleArtist(track)}
+        disabled={feedback.saving}
+        className="mt-1 text-left text-xs text-slate-400 hover:text-rose-300"
+      >
+        {feedback.artistBlocked(track) ? "Разрешить исполнителя" : "Не рекомендовать исполнителя"}
+      </button>
+      {track.recommendationReason && (
+        <p className="mt-1 line-clamp-2 text-xs text-slate-500">{track.recommendationReason}</p>
+      )}
     </div>
   );
 }

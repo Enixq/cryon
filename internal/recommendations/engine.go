@@ -41,10 +41,11 @@ type SearchFunc func(ctx context.Context, query string) ([]domain.Track, error)
 
 // Engine — движок рекомендаций.
 type Engine struct {
-	trackSimilar func(context.Context, domain.Track) ([]domain.Track, error)
-	feedbackMu   sync.Mutex
-	store        store.Store
-	lastfm       *lastfm.Client
+	trackSimilarAvailable func() bool
+	trackSimilar          func(context.Context, domain.Track) ([]domain.Track, error)
+	feedbackMu            sync.Mutex
+	store                 store.Store
+	lastfm                *lastfm.Client
 	// deezer — бесключевой граф похожести (fallback к Last.fm). Даёт похожих
 	// артистов, топ-треки и чарт без ключа/регистрации, поэтому рекомендации
 	// работают «из коробки». Только ГРАФ: аудио из Deezer не берём — найденные
@@ -66,6 +67,10 @@ type Engine struct {
 
 func (e *Engine) SetTrackSimilarity(provider func(context.Context, domain.Track) ([]domain.Track, error)) {
 	e.trackSimilar = provider
+}
+
+func (e *Engine) SetTrackSimilarityAvailability(available func() bool) {
+	e.trackSimilarAvailable = available
 }
 
 // New собирает движок. store и search обязательны; lastfm может быть без ключа,
@@ -370,6 +375,10 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 	blocked := map[string]bool{}
 	for key, score := range fb.Tracks {
 		if score < 0 {
+			if strings.HasSuffix(key, "|*") {
+				blocked[strings.TrimSuffix(key, "|*")] = true
+				continue
+			}
 			// Дизлайкнутый трек не должен возвращаться ни в одной подборке.
 			seenTrackKeys[key] = true
 			blockedTracks[key] = true
@@ -401,6 +410,9 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 	// поэтому случайное прослушивание не способно перехватить рекомендации.
 	out := make([]artistWeight, 0, len(weights))
 	for _, w := range weights {
+		if blocked[feedbackArtistKey(w.name)] {
+			continue
+		}
 		out = append(out, *w)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -527,7 +539,7 @@ func (e *Engine) PersonalizeReleases(ctx context.Context, in []domain.Track) []d
 	reordered := make([]scored, 0, len(in))
 	for _, t := range in {
 		key := artistKey(t)
-		if profile.blockedArtists[key] || profile.blockedTracks[trackKey(t)] {
+		if trackArtistBlocked(t, profile.blockedArtists) || profile.blockedTracks[trackKey(t)] {
 			continue
 		}
 		famScore := familiar[key]
@@ -892,29 +904,25 @@ func (e *Engine) chartFallbackRecommendations(ctx context.Context, t taste, limi
 // Без ключа Last.fm — фолбэк: ещё треки того же артиста.
 func (e *Engine) RelatedTracks(ctx context.Context, seed domain.Track, limit int, exclude ...domain.Track) (result []domain.Track, resultErr error) {
 	key := "radio:v1:" + string(seed.Service) + ":" + seed.ID + ":ad" + strconv.Itoa(int(e.Adventure(ctx)*100))
-	defer func() {
-		if len(result) == 0 {
-			result = e.staleTracks(ctx, key)
-		}
-		blocked := e.buildTaste(context.WithoutCancel(ctx))
-		seen := map[string]bool{trackKey(seed): true}
-		for _, t := range exclude {
-			seen[trackKey(t)] = true
-		}
-		filtered := []domain.Track{}
-		for _, t := range result {
-			if !seen[trackKey(t)] && !blocked.blockedTracks[trackKey(t)] {
-				seen[trackKey(t)] = true
-				filtered = append(filtered, t)
+	defer func() { result = e.finalizeRelatedResult(ctx, seed, limit, exclude, result, key) }()
+	// A warmed radio must not repeat the source search on every refill.
+	if e.store != nil {
+		if raw, ok, _ := e.store.RecoCacheGet(ctx, key); ok {
+			var cached []domain.Track
+			if json.Unmarshal([]byte(raw), &cached) == nil {
+				fresh := e.FinalizeDJ(ctx, cached, append(append([]domain.Track{}, exclude...), seed), limit)
+				if len(fresh) >= min(6, max(1, limit)) {
+					for i := range cached {
+						cached[i].FromCache = true
+					}
+					return cached, nil
+				}
 			}
 		}
-		result = diversifyTracks(adventureOrder(filtered, blocked, e.Adventure(ctx)), blocked.recentArtists, limit, artistCap)
-		result = e.Explain(context.WithoutCancel(ctx), result)
-		if len(result) > 0 && e.store != nil && !result[0].FromCache {
-			raw, _ := json.Marshal(result)
-			_ = e.store.RecoCacheSet(context.WithoutCancel(ctx), key, string(raw), recoTTL)
-		}
-	}()
+	}
+	searchCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	ctx = searchCtx
 
 	if limit <= 0 {
 		limit = 15
@@ -1417,7 +1425,7 @@ func filterRecommended(in []domain.Track, profile taste) []domain.Track {
 	out := make([]domain.Track, 0, len(in))
 	known := map[string]bool{}
 	for _, track := range in {
-		if !known[trackKey(track)] && !profile.blockedTracks[trackKey(track)] && !profile.blockedArtists[artistKey(track)] {
+		if !known[trackKey(track)] && !profile.blockedTracks[trackKey(track)] && !trackArtistBlocked(track, profile.blockedArtists) {
 			known[trackKey(track)] = true
 			out = append(out, track)
 		}
@@ -1736,4 +1744,30 @@ func trackKey(t domain.Track) string {
 		artist = t.Artists[0]
 	}
 	return strings.ToLower(strings.TrimSpace(artist) + "|" + strings.TrimSpace(t.Title))
+}
+
+func (e *Engine) finalizeRelatedResult(ctx context.Context, seed domain.Track, limit int, exclude []domain.Track, result []domain.Track, key string) []domain.Track {
+	if len(result) == 0 {
+		result = e.staleTracks(ctx, key)
+	}
+	blocked := e.buildTaste(context.WithoutCancel(ctx))
+	seen := map[string]bool{trackKey(seed): true}
+	for _, t := range exclude {
+		seen[trackKey(t)] = true
+	}
+	filtered := []domain.Track{}
+	for _, t := range result {
+		if !seen[trackKey(t)] && !blocked.blockedTracks[trackKey(t)] && !trackArtistBlocked(t, blocked.blockedArtists) {
+			seen[trackKey(t)] = true
+			filtered = append(filtered, t)
+		}
+	}
+	// Cache the whole resolved pool, rather than shrinking it after every refill.
+	if len(filtered) > 0 && e.store != nil && !filtered[0].FromCache {
+		raw, _ := json.Marshal(filtered)
+		_ = e.store.RecoCacheSet(context.WithoutCancel(ctx), key, string(raw), recoTTL)
+	}
+	result = e.Rotate(context.WithoutCancel(ctx), filtered, limit)
+	result = e.Explain(context.WithoutCancel(ctx), result)
+	return result
 }

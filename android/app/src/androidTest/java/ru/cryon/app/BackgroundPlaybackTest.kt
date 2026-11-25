@@ -16,6 +16,7 @@ import org.junit.runner.RunWith
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.ServerSocket
+import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Executors
@@ -38,6 +39,36 @@ class BackgroundPlaybackTest {
     }
 
     private fun state(): JSONObject = JSONObject(CryonPlaybackService.latestState.ifBlank { "{}" })
+
+    @Test fun intelligenceStatusWorksWithEmbeddedGoAndAndroidSQLite() {
+        // Read-only against the normal local backend; no credentials or settings
+        // are changed. This also exercises the actual Android SQLite JSON query.
+        val base = mobile.Mobile.start(context.filesDir.absolutePath)
+        val connection = URL(base.trimEnd('/') + "/v1/intelligence/config").openConnection() as java.net.HttpURLConnection
+        try {
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+            check(connection.responseCode == 200)
+            val status = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+            check(!status.has("apiKey")) { "Saved key exposed" }
+            check(status.has("configured") && status.has("dailySegments") && status.has("events")) { "Invalid status: $status" }
+            check(status.getJSONObject("events").has("unfamiliar_artist_likes")) { "Android SQLite metrics unavailable" }
+        } finally { connection.disconnect() }
+    }
+
+    @Test fun aiRadioCarriesPlanAndFeedbackWithoutWebView() {
+        Fixture().use { fixture ->
+            fixture.intelligenceEnabled = true
+            try {
+                start(fixture, JSONArray().put(fixture.track(0)).put(fixture.track(1)), true)
+                waitFor { fixture.djEvents.any { it.optString("kind") == "shown" && it.optString("plan_id") == "test-plan" } }
+                waitFor { fixture.djInputs.size >= 2 }
+                check(fixture.relatedRequests.get() == 0) { "AI route incorrectly fell back" }
+                check(fixture.djInputs.drop(1).all { it.optString("sessionId") == "test-session" }) { "Lost session" }
+                waitFor { fixture.djEvents.any { it.optString("kind") == "completed" && it.optString("plan_id") == "test-plan" } }
+            } finally { command(CryonPlaybackService.ACTION_STOP) }
+        }
+    }
 
     private fun start(fixture: Fixture, tracks: JSONArray, radio: Boolean, seed: JSONObject? = null): android.app.Activity {
         // Android 15 requires an activity or established foreground service to
@@ -293,6 +324,16 @@ class BackgroundPlaybackTest {
                                 request[0] == "OPTIONS" -> "{}".toByteArray()
                                 path == "/v1/library/feedback" -> { feedbackScores.add(json.optInt("score")); "{}".toByteArray() }
                                 path == "/v1/library/history" -> { historyRequests.incrementAndGet(); "{}".toByteArray() }
+                                path == "/v1/intelligence/feedback" -> { djEvents.add(json); "{}".toByteArray() }
+                                path == "/v1/intelligence/radio" && intelligenceEnabled -> {
+                                    djInputs.add(json)
+                                    val candidates = JSONArray().apply { repeat(4) {
+                                        val track = track(nextTrack.getAndIncrement())
+                                        put(JSONObject().put("id", track.getString("id").substringAfter(':')).put("service", "youtube").put("title", track.getString("title")).put("artists", JSONArray().put("Artist")).put("durationMs", 2000)
+                                            .put("djSessionId", "test-session").put("djPlanId", "test-plan").put("recommendationReason", "Рекомендовано Cryon AI"))
+                                    } }
+                                    JSONObject().put("sessionId", "test-session").put("tracks", candidates).toString().toByteArray()
+                                }
                                 path.startsWith("/stream/") -> wav
                                 path == "/v1/playback/resolve" -> {
                                     Thread.sleep(resolveDelayMs)
@@ -324,6 +365,9 @@ class BackgroundPlaybackTest {
         // the player's recent-radio exclusion list from earlier test cases.
         fun id(index: Int) = "youtube:test-${socket.localPort}-$index"
         val radioInputs = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
+        @Volatile var intelligenceEnabled = false
+        val djInputs = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
+        val djEvents = java.util.concurrent.CopyOnWriteArrayList<JSONObject>()
         fun track(id: Int) = JSONObject().put("id", id(id)).put("source", "youtube").put("title", "Track $id").put("artist", "Artist").put("duration", durationSeconds).put("accent", "violet")
         fun snapshot(queue: JSONArray, index: Int) = JSONObject().put("queue", queue).put("currentIndex", index).put("playbackDeviceId", "phone").put("isPlaying", true).put("progress", 0).put("volume", 50)
         fun remoteChange(queue: JSONArray, index: Int, playing: Boolean) = synchronized(this) {
