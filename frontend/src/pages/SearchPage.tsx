@@ -20,11 +20,11 @@ import type { SourceId, Track } from "../shared/types";
 
 type Filter = "all" | "tracks" | "albums" | "artists" | "playlists";
 
-const searchableSources: SourceId[] = ["youtube", "soundcloud", "yandex", "local"];
+const searchableSources: SourceId[] = ["youtube", "soundcloud", "yandex", "vk", "local"];
 
 // Порядок предпочтения источника для «основного» значка на карточке альбома,
 // когда релиз найден сразу в нескольких сервисах (нецензурный SoundCloud выше).
-const sourcePriority: SourceId[] = ["soundcloud", "yandex", "youtube", "spotify", "vk", "local"];
+const sourcePriority: SourceId[] = ["soundcloud", "yandex", "youtube", "spotify", "local"];
 
 function primarySource(sources: Set<SourceId>): SourceId {
   for (const id of sourcePriority) {
@@ -87,8 +87,14 @@ export function SearchPage() {
   const [resultSource, setResultSource] = useState<SourceId | "all">("all");
   const navigate = useNavigate();
 
-  const q = query.trim().toLowerCase();
-  const trimmed = query.trim();
+  const inputQuery = query.trim();
+  const [trimmed, setTrimmed] = useState(inputQuery);
+  useEffect(() => {
+    if (!inputQuery) { setTrimmed(""); return; }
+    const timer = window.setTimeout(() => setTrimmed(inputQuery), 650);
+    return () => window.clearTimeout(timer);
+  }, [inputQuery]);
+  const q = trimmed.toLowerCase();
 
   // Треки ищем в реальных источниках через backend (в вебе — мок-фолбэк).
   // Прогрессивная выдача: вместо одного запроса, ждущего ВСЕ источники, шлём по
@@ -97,11 +103,14 @@ export function SearchPage() {
   // дозаполняются, а отказ одного источника не мешает остальным. Ищем в выбранных
   // источниках (чипсы «Искать в источниках»), при пустом выборе — во всех.
   const activeSources = selectedSources.length > 0 ? selectedSources : searchableSources;
+  const activeSourceSignature = activeSources.join("|");
   const trackQueries = useQueries({
     queries: activeSources.map((source) => ({
       queryKey: ["search", trimmed, source],
-      queryFn: () => search(source, trimmed),
+      queryFn: ({ signal }: { signal: AbortSignal }) => search(source, trimmed, signal),
       retry: 0,
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
       enabled: trimmed.length > 0,
     })),
   });
@@ -112,12 +121,15 @@ export function SearchPage() {
   const foundTracks = useMemo(
     () => trackQueries.reduce<Track[]>((tracks, qr) => tracks.concat(qr.data ?? []), []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tracksSignature],
+    [trimmed, activeSourceSignature, tracksSignature],
   );
   // «Идёт поиск», пока грузится хоть один источник; «ошибка» — только если ВСЕ
   // источники упали (частичный сбой переживаем — показываем, что пришло).
-  const isFetching = trackQueries.some((qr) => qr.isFetching);
+  const isFetching = inputQuery !== trimmed || trackQueries.some((qr) => qr.isFetching);
   const isError = trackQueries.length > 0 && trackQueries.every((qr) => qr.isError);
+  const sourceFailures = trackQueries.flatMap((qr, index) => qr.isError
+    ? [{ source: activeSources[index], message: (qr.error as Error).message }]
+    : []);
 
   const { data: userPlaylists = [] } = useQuery({
     queryKey: ["playlists"],
@@ -125,10 +137,12 @@ export function SearchPage() {
   });
 
   const remotePlaylistQueries = useQueries({
-    queries: (["youtube", "soundcloud", "yandex"] as SourceId[]).map((source) => ({
+    queries: activeSources.filter(source => ["youtube", "soundcloud", "yandex"].includes(source)).map((source) => ({
       queryKey: ["remotePlaylists", trimmed, source],
       queryFn: () => searchRemotePlaylists(trimmed, source),
       retry: 0,
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
       enabled: trimmed.length > 0,
     })),
   });
@@ -147,7 +161,7 @@ export function SearchPage() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remotePlaylistSignature]);
+  }, [trimmed, activeSourceSignature, remotePlaylistSignature]);
 
   // Производные сущности строим только из реальной выдачи. Внешние сервисы
   // отдают треки, поэтому отдельного API каталога альбомов/артистов не нужно.
@@ -256,6 +270,7 @@ export function SearchPage() {
   const totalFound = view
     ? view.tracks.length + view.albums.length + view.artists.length + view.playlists.length
     : 0;
+  const visibleFound = filter === "all" ? totalFound : (view?.[filter].length ?? 0);
 
   // Вкладки-фильтры с подчёркиванием и счётчиками — как на макете поиска.
   // Счётчики отражают текущий фильтр по источнику (view), а не всю выдачу.
@@ -340,8 +355,16 @@ export function SearchPage() {
               ? "Идёт поиск в выбранных источниках…"
               : isError
                 ? "Не удалось получить результаты из источников"
-                : `Найдено ${pluralWithCount(totalFound, "результат", "результата", "результатов")}`}
+                : `Найдено ${pluralWithCount(visibleFound, "результат", "результата", "результатов")}`}
           </p>
+        )}
+        {sourceFailures.length > 0 && trimmed && (
+          <div role="alert" className="mt-3 space-y-2 text-sm text-amber-300">
+            {sourceFailures.map(failure => <p key={failure.source}>{SOURCES[failure.source].name}: {failure.message}</p>)}
+            <button disabled={isFetching} className="rounded-lg bg-white/10 px-3 py-2 text-slate-200 disabled:opacity-50" onClick={() => {
+              for (const query of trackQueries) if (query.isError) void query.refetch();
+            }}>Повторить поиск</button>
+          </div>
         )}
       </div>
 
@@ -388,11 +411,11 @@ export function SearchPage() {
             </div>
           )}
 
-          {totalFound === 0 && !isFetching && (
+          {visibleFound === 0 && !isFetching && !isError && (
             <div className="grid place-items-center rounded-2xl border border-white/8 bg-white/5 py-16 text-center text-slate-400">
               <div>
                 <SearchIcon size={40} className="mx-auto mb-3 opacity-40" />
-                <p>Ничего не найдено. Попробуйте изменить запрос.</p>
+                <p>{totalFound > 0 ? "В этом разделе ничего не найдено. Выберите вкладку «Всё»." : "Ничего не найдено. Попробуйте изменить запрос."}</p>
               </div>
             </div>
           )}

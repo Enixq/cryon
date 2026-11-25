@@ -1,5 +1,10 @@
 ﻿# Dependencies
 node_modules/
+# Generated files from the removed VK experiment (not used by any build).
+.venv-vk/
+internal/services/vkpython/runtime/
+internal/services/vkpython/__pycache__/
+build/vk-python/
 go/pkg/
 vendor/
 

@@ -138,6 +138,25 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
 
+      - name: Verify APK uses the existing release signing certificate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          previous_url=$(curl --fail --silent --show-error --retry 3 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/Enixq/cryon/releases/latest \
+            | jq -r '.assets[] | select(.name | endswith("-android-arm64.apk")) | .browser_download_url')
+          test -n "$previous_url"
+          curl --fail --location --silent --show-error --retry 3 \
+            "$previous_url" -o "$RUNNER_TEMP/cryon-previous.apk"
+          signer="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          previous_certificate=$("$signer" verify --print-certs "$RUNNER_TEMP/cryon-previous.apk" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}')
+          current_certificate=$("$signer" verify --print-certs android/app/build/outputs/apk/release/app-release.apk | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF}')
+          test -n "$previous_certificate"
+          test "$current_certificate" = "$previous_certificate" || { echo "Release signing certificate changed; refusing to publish an incompatible update."; exit 1; }
+          echo "Release signing certificate matches the previous published APK."
+
       - name: Prepare artifacts
         run: |
           mkdir -p dist

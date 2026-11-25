@@ -21,7 +21,7 @@ import { formatDuration } from "../shared/lib/format";
 import type { SourceId, Track } from "../shared/types";
 import { ServiceIcon } from "../shared/ui/ServiceIcon";
 import { PageHeader } from "../shared/ui/PageHeader";
-import { VKConnection } from "../shared/ui/VKConnection";
+import { VKWebConnection } from "../shared/ui/VKWebConnection";
 import { ReceiveTrackButton } from "../shared/ui/ReceiveTrackButton";
 import { RecommendationSettings } from "../shared/ui/RecommendationSettings";
 import { LibrarySyncSettings } from "../shared/ui/LibrarySyncSettings";
@@ -112,6 +112,7 @@ export function SettingsPage() {
   const spotifyConfigRef = useRef<HTMLDivElement | null>(null);
   const soundcloudConfigRef = useRef<HTMLDivElement | null>(null);
   const youtubeConfigRef = useRef<HTMLDivElement | null>(null);
+  const vkConfigRef = useRef<HTMLDivElement | null>(null);
   const queryClient = useQueryClient();
   const setEqualizerOpen = useUiStore((s) => s.setEqualizerOpen);
   const playbackDiagnostics = usePlaybackDiagnosticsStore((s) => s.items);
@@ -161,6 +162,7 @@ export function SettingsPage() {
   // Каждый источник ведёт к своей секции настройки. Раньше все варианты
   // прокручивали к Yandex — теперь у каждого сервиса собственный якорь.
   const configRefs: Partial<Record<SourceId, RefObject<HTMLDivElement | null>>> = {
+    vk: vkConfigRef,
     yandex: yandexConfigRef,
     local: localConfigRef,
     spotify: spotifyConfigRef,
@@ -172,6 +174,7 @@ export function SettingsPage() {
   // обзоре источников (вкладка «Музыка») переключает на нужную вкладку и уже
   // там прокручивает к секции.
   const configTab: Partial<Record<SourceId, SettingsTab>> = {
+    vk: "connections",
     yandex: "connections",
     spotify: "connections",
     soundcloud: "connections",
@@ -399,7 +402,7 @@ export function SettingsPage() {
           <SpotifySection anchorRef={spotifyConfigRef} />
           <SoundCloudSection anchorRef={soundcloudConfigRef} />
           <YouTubeSection anchorRef={youtubeConfigRef} />
-          <VKConnection />
+          <div ref={vkConfigRef}><VKWebConnection /></div>
           <AccountConnectionsSection />
         </div>
       )}

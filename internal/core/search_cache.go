@@ -17,7 +17,12 @@ func (a *App) cachedSourceSearch(ctx context.Context, svc domain.MusicService, q
 	if svc.ID() == domain.ServiceLocal {
 		return svc.Search(ctx, query)
 	}
-	key := fmt.Sprintf("search:v2:%s:%s:%x", svc.ID(), a.sourceCacheScope(ctx), sha256.Sum256([]byte(query)))
+	version := "v2"
+	if svc.ID() == domain.ServiceVK {
+		// Previous API snapshots contain web_ ids without website reload hashes.
+		version = "vk-site-v1"
+	}
+	key := fmt.Sprintf("search:%s:%s:%s:%x", version, svc.ID(), a.sourceCacheScope(ctx), sha256.Sum256([]byte(query)))
 	if a.store != nil {
 		if raw, ok, _ := a.store.RecoCacheGet(ctx, key); ok {
 			var tracks []domain.Track
@@ -57,7 +62,7 @@ func (a *App) sourceCacheScope(ctx context.Context) string {
 		parts = append(parts, string(id)+":"+mode)
 	}
 	if a.store != nil {
-		for _, key := range []string{keyYandexToken, "vk.token", keySpotifyClientID, keySpotifyClientSecret, keySoundCloudClientID, keyYouTubeAPIKey} {
+		for _, key := range []string{keyYandexToken, keyVKWebSession, keySpotifyClientID, keySpotifyClientSecret, keySoundCloudClientID, keyYouTubeAPIKey} {
 			value, _, _ := a.store.SettingGet(ctx, key)
 			parts = append(parts, key+":"+value)
 		}

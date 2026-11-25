@@ -7,17 +7,15 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/go-ole/go-ole v1.3.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/kkdai/youtube/v2 v2.10.8
 	github.com/mattn/go-sqlite3 v1.14.32
-	github.com/oklog/ulid/v2 v2.1.0
-	github.com/oklookat/govkm v0.0.6
-	github.com/oklookat/vantuz v1.0.5
 	github.com/wailsapp/wails/v2 v2.13.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.62.0
-	golang.org/x/oauth2 v0.10.0
 	golang.org/x/sys v0.49.0
+	golang.org/x/text v0.43.0
 	modernc.org/sqlite v1.50.0
 )
 
@@ -30,10 +28,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
-	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/pprof v0.0.0-20261103193413-97e8293de3c4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/labstack/echo/v4 v4.13.3 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
@@ -54,10 +50,6 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	golang.org/x/text v0.43.0 // indirect
-	golang.org/x/time v0.8.0 // indirect
-	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/protobuf v1.31.0 // indirect
 	modernc.org/libc v1.72.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

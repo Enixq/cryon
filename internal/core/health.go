@@ -19,7 +19,7 @@ import (
 	"Cryon2/internal/domain"
 	"Cryon2/internal/logging"
 	"Cryon2/internal/services/spotify"
-	"Cryon2/internal/services/vk"
+	"Cryon2/internal/services/vkweb"
 	"Cryon2/internal/services/yandex"
 )
 
@@ -57,7 +57,7 @@ func sourceDisplayName(id domain.ServiceID) string {
 // мог по нему выбрать, какие источники вообще имеет смысл зондировать.
 func (a *App) configLevels() map[domain.ServiceID]string {
 	vkLevel := sourceOff
-	if service, ok := a.registry[domain.ServiceVK].(*vk.Service); ok && service.HasToken() {
+	if provider, ok := a.registry[domain.ServiceVK].(*vkweb.Service); ok && provider.HasToken() {
 		vkLevel = sourceOK
 	}
 	yaConnected := false
@@ -154,12 +154,14 @@ func (a *App) startHealthChecks(ctx context.Context) {
 
 // runHealthChecks параллельно зондирует сетевые источники лёгким поиском и
 // обновляет их live-статус. Локальную библиотеку (не сеть) и заведомо
-// отключённые источники (VK-заглушка) не трогаем.
+// отключённые источники не трогаем.
 func (a *App) runHealthChecks(ctx context.Context) {
 	levels := a.configLevels()
 	var wg sync.WaitGroup
 	for id, svc := range a.registry {
-		if id == domain.ServiceLocal || levels[id] == sourceOff {
+		// VK search has account-level flood control; user requests establish its
+		// live status. A periodic music search is not an authentication check.
+		if id == domain.ServiceLocal || id == domain.ServiceVK || levels[id] == sourceOff {
 			continue
 		}
 		wg.Add(1)

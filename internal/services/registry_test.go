@@ -7,14 +7,14 @@ import (
 	"Cryon2/internal/domain"
 )
 
-func TestBuildRegistryCoversAllSources(t *testing.T) {
+func TestBuildRegistryCoversActiveSources(t *testing.T) {
 	registry, local := BuildRegistry(config.Config{})
 	if local == nil {
 		t.Fatal("локальный адаптер не должен быть nil")
 	}
 
-	// ВК Музыка подключается отдельно. Spotify остаётся ради
-	// OAuth-импорта и «Радара новинок», хотя в поиске уже не участвует.
+	// Spotify остаётся ради OAuth-импорта и «Радара новинок»,
+	// хотя в поиске уже не участвует.
 	want := []domain.ServiceID{
 		domain.ServiceYouTube,
 		domain.ServiceSoundCloud,

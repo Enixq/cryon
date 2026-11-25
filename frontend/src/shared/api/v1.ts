@@ -110,10 +110,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function searchV1(query: string, service?: string): Promise<Track[]> {
+export async function searchV1(query: string, service?: string, signal?: AbortSignal): Promise<Track[]> {
   const params = new URLSearchParams({ q: query });
   if (service && service !== "all") params.set("service", service);
-  const response = await request<SearchResponse>(`/v1/search?${params}`);
+  const response = await request<SearchResponse>(`/v1/search?${params}`, { signal });
   return mapTracks(response.tracks);
 }
 

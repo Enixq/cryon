@@ -25,7 +25,7 @@ const cover = (seed: string) => `https://picsum.photos/seed/${seed}/300/300`;
 export const tracks: Track[] = [
   { id: "t1", title: "After Dark", artist: "Mr.Kitty", album: "Time", source: "youtube", duration: 241, accent: "violet", liked: true, coverUrl: cover("afterdark") },
   { id: "t2", title: "Sweater Weather", artist: "The Neighbourhood", album: "I Love You.", source: "soundcloud", duration: 229, accent: "slate", coverUrl: cover("sweater") },
-  { id: "t3", title: "Пачка сигарет", artist: "Кино", album: "Звезда по имени Солнце", source: "vk", duration: 269, accent: "amber", coverUrl: cover("kino1") },
+  { id: "t3", title: "Пачка сигарет", artist: "Кино", album: "Звезда по имени Солнце", source: "yandex", duration: 269, accent: "amber", coverUrl: cover("kino1") },
   { id: "t4", title: "Звезда по имени Солнце", artist: "Кино", album: "Звезда по имени Солнце", source: "youtube", duration: 238, accent: "orange", coverUrl: cover("kino2") },
   { id: "t5", title: "Smells Like Teen Spirit", artist: "Nirvana", album: "Nevermind", source: "youtube", duration: 301, accent: "cyan", coverUrl: cover("nirvana") },
   { id: "t6", title: "Nightcall", artist: "Kavinsky", album: "OutRun", source: "local", duration: 257, accent: "rose", coverUrl: cover("nightcall") },
@@ -42,7 +42,7 @@ export const recentTracks: Track[] = [tracks[0], tracks[1], tracks[2], tracks[3]
 export const recommendedPlaylists: Playlist[] = [
   { id: "p1", title: "Synthwave Chill", description: "Мягкий неон и поздний вечер", source: "spotify", accent: "violet", trackCount: 42, coverUrl: cover("synthwave") },
   { id: "p2", title: "Лёгкий рок 90-х", description: "Гитары и ностальгия", source: "yandex", accent: "cyan", trackCount: 58, coverUrl: cover("rock90") },
-  { id: "p3", title: "Инди-открытия", description: "Новые находки на каждый день", source: "vk", accent: "pink", trackCount: 30, coverUrl: cover("indie") },
+  { id: "p3", title: "Инди-открытия", description: "Новые находки на каждый день", source: "yandex", accent: "pink", trackCount: 30, coverUrl: cover("indie") },
   { id: "p4", title: "Энергия утра", description: "Бодрый старт без суеты", source: "soundcloud", accent: "orange", trackCount: 24, coverUrl: cover("morning") },
   { id: "p5", title: "Вечерний вайб", description: "Спокойный неон перед сном", source: "youtube", accent: "violet", trackCount: 36, coverUrl: cover("evening") },
 ];
@@ -101,7 +101,6 @@ export const localFolders: LocalFolder[] = [
 export const services: ServiceState[] = [
   { id: "spotify", name: "Spotify", connected: true },
   { id: "soundcloud", name: "SoundCloud", connected: true },
-  { id: "vk", name: "VK Музыка", connected: true },
   { id: "yandex", name: "Яндекс Музыка", connected: false },
   { id: "youtube", name: "YouTube Music", connected: true },
   { id: "local", name: "Локальная музыка", connected: true },

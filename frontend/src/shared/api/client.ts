@@ -118,11 +118,11 @@ function mockSearch(query: string): Track[] {
 // --- Публичное API ---
 
 /** Поиск по одному источнику. */
-export async function search(source: string, query: string): Promise<Track[]> {
+export async function search(source: string, query: string, signal?: AbortSignal): Promise<Track[]> {
   if (!isWailsRuntime()) {
     return mockSearch(query).filter((t) => t.source === source);
   }
-  if (hasApiV1Runtime()) return searchV1(query, source);
+  if (hasApiV1Runtime()) return searchV1(query, source, signal);
   const result = await App.Search(source, query);
   return mapTracks(result);
 }
@@ -194,7 +194,7 @@ export async function resolveAlbum(artist: string, title: string): Promise<Track
 /** Список подключённых источников. */
 export async function listSources(): Promise<string[]> {
   if (!isWailsRuntime()) {
-    return ["youtube", "soundcloud", "spotify", "yandex", "vk", "local"];
+    return ["youtube", "soundcloud", "spotify", "yandex", "local"];
   }
   return App.ListSources();
 }
@@ -845,7 +845,6 @@ export async function listSourceStatus(): Promise<SourceStatusDto[]> {
       { id: "soundcloud", connected: true, level: "ok" },
       { id: "spotify", connected: true, level: "limited" },
       { id: "yandex", connected: false, level: "limited" },
-      { id: "vk", connected: false, level: "off" },
       { id: "local", connected: false, level: "off" },
     ];
   }

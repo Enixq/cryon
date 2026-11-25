@@ -17,6 +17,9 @@ export type NativePlaybackState = {
 };
 
 type NativeAndroidBridge = {
+	openVKLogin?: (sessionId: string) => void;
+	openVKFreshLogin?: (sessionId: string) => void;
+	openVKWebsite?: () => void;
   nativeDownload?: (url: string) => string;
   nativeDeleteDownload?: (key: string) => boolean;
   nativeDownloadStatus?: (ticket: string) => string;

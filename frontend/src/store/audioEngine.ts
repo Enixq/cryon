@@ -52,6 +52,7 @@ import { registerLocalPlaybackStop } from "../shared/lib/localPlayback";
 
 export function useAudioEngine() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hlsCleanupRef = useRef<(() => void) | null>(null);
   // mpv установлен и доступен в принципе. Определяется один раз при старте.
   const mpvAvailableRef = useRef<boolean>(false);
   // Текущий трек реально играет через mpv (а не <audio>). Решается для
@@ -577,7 +578,10 @@ export function useAudioEngine() {
 
       // Фолбэк: HTML5 <audio>. Локальные файлы идут через /local/<id>,
       // т.к. WebView2 не проигрывает абсолютные file://-пути.
-      const html5Url = await getPlaybackUrlForHtml5(track.id).catch(() => null);
+      const vkStream = track.source === "vk" ? await resolvePlaybackV1(track, false).catch(() => null) : null;
+      const html5Url = vkStream
+        ? new URL(vkStream.streamUrl, apiV1BaseUrl() || window.location.origin).href
+        : await getPlaybackUrlForHtml5(track.id).catch(() => null);
       if (cancelled) return;
       const el = audioRef.current;
       if (!el) return;
@@ -608,7 +612,15 @@ export function useAudioEngine() {
             if (usePlayerStore.getState().isPlaying) void el.play().catch(() => requestPlaybackFallback(track, usePlayerStore.getState().progress, message));
           }, 250);
         };
-        el.src = html5Url;
+        hlsCleanupRef.current?.(); hlsCleanupRef.current = null;
+        if (vkStream?.mimeType?.toLowerCase().includes("mpegurl")) {
+          const { attachHls } = await import("./hlsPlayback");
+          if (cancelled) return;
+          hlsCleanupRef.current = attachHls(el, html5Url, (message) => {
+            if (loadedTrackIdRef.current === track.id) requestPlaybackFallback(track, Math.max(usePlayerStore.getState().progress, el.currentTime || 0), message);
+          });
+          el.onerror = null;
+        } else { el.src = html5Url; }
         // Как только известны метаданные — сообщаем реальную длительность
         // (у локальных файлов теги её часто не содержат).
         const trackId = track.id;
@@ -626,6 +638,7 @@ export function useAudioEngine() {
           // Для уже сменившегося трека молчим: прежний элемент может отдать
           // error после отмены загрузки.
           if (loadedTrackIdRef.current !== trackId) return;
+          if (hlsCleanupRef.current) { requestPlaybackFallback(track, usePlayerStore.getState().progress, "ВК: ошибка воспроизведения HLS."); return; }
           retryHtml5Stream(`${track.artist} — ${track.title}: источник не отдал аудиопоток.`);
         };
         setEnginePosition(startPositionSeconds);
@@ -662,6 +675,7 @@ export function useAudioEngine() {
 
     return () => {
       cancelled = true;
+      hlsCleanupRef.current?.(); hlsCleanupRef.current = null;
     };
   }, [trackId, requestPlaybackFallback]);
 

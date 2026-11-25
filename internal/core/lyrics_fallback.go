@@ -28,7 +28,7 @@ func (a *App) autoLyrics(ctx context.Context, track domain.Track) (lyrics.Result
 		public <- reply{result, err}
 	}()
 	go func() {
-		for _, id := range []domain.ServiceID{track.Service, domain.ServiceYandex, domain.ServiceVK} {
+		for _, id := range []domain.ServiceID{track.Service, domain.ServiceYandex} {
 			svc := a.registry[id]
 			source, ok := svc.(trackLyricSource)
 			if !ok {

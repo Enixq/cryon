@@ -17,9 +17,8 @@ const STATUS_META: Record<SourceLevel, { color: string; label: string }> = {
   off: { color: "bg-rose-500", label: "Не подключено" },
 };
 
-// Порядок карточек. VK исключён (нефункционален, убран из поиска), Spotify
-// оставлен — он рабочий для импорта лайков и «Радара новинок».
-const order: SourceId[] = ["youtube", "soundcloud", "yandex", "spotify", "local"];
+// Spotify доступен для импорта лайков и «Радара новинок».
+const order: SourceId[] = ["youtube", "soundcloud", "yandex", "vk", "spotify", "local"];
 
 /**
  * Экран «Сервисы» — отдельный пункт нижней навигации на телефоне. Показывает

@@ -11,8 +11,9 @@ const (
 	ServiceSoundCloud ServiceID = "soundcloud"
 	ServiceSpotify    ServiceID = "spotify"
 	ServiceYandex     ServiceID = "yandex"
-	ServiceVK         ServiceID = "vk"
-	ServiceLocal      ServiceID = "local"
+	// ServiceVK is retained for metadata in previously saved library items.
+	ServiceVK    ServiceID = "vk"
+	ServiceLocal ServiceID = "local"
 )
 
 // PlayableKind — способ воспроизведения трека.

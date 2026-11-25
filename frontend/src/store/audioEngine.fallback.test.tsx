@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Track } from "../shared/types";
 import { useAudioEngine } from "./audioEngine";
 import { usePlayerStore } from "./playerStore";
-import { resolvePlaybackFallbackV1, resolvePlaybackV1 } from "../shared/api/v1";
+import { apiV1BaseUrl, resolvePlaybackFallbackV1, resolvePlaybackV1 } from "../shared/api/v1";
 import { getAudioStreamInfo, getPlaybackUrlForHtml5, playerBackendAvailable, playerPlay, playerSetEqualizer, playerSetNormalize, playerStatus, playerStop, playerResume, resolvePlayableTrack, addHistory } from "../shared/api/client";
 
 vi.mock("../shared/api/v1", () => ({
@@ -154,11 +154,36 @@ describe("Android playback fallback", () => {
   });
 });
 
-describe("desktop YouTube playback", () => {
+describe("desktop playback", () => {
   afterEach(() => {
     vi.mocked(playerBackendAvailable).mockResolvedValue(false);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("plays the saved VK file returned by the resolver without requesting a VK stream", async () => {
+    const saved = track("vk:web_1_2");
+    const audio = document.createElement("audio");
+    vi.stubGlobal("Audio", vi.fn(() => audio));
+    vi.mocked(apiV1BaseUrl).mockReturnValue("http://localhost:1234");
+    vi.mocked(playerBackendAvailable).mockResolvedValue(false);
+    vi.mocked(playerSetEqualizer).mockResolvedValue(undefined);
+    vi.mocked(playerSetNormalize).mockResolvedValue(undefined);
+    vi.mocked(playerStop).mockResolvedValue(undefined);
+    vi.mocked(resolvePlayableTrack).mockImplementation(async item => item);
+    vi.mocked(resolvePlaybackV1).mockResolvedValue({
+      track: saved,
+      streamUrl: "/v1/library/downloads/file?key=saved",
+      mimeType: "audio/mpeg",
+    });
+    vi.mocked(getPlaybackUrlForHtml5).mockClear();
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    usePlayerStore.setState({ queue: [saved], currentIndex: 0, isPlaying: false, playbackOnThisDevice: true });
+    const { unmount } = renderHook(() => useAudioEngine());
+    await waitFor(() => expect(audio.src).toBe("http://localhost:1234/v1/library/downloads/file?key=saved"));
+    expect(getPlaybackUrlForHtml5).not.toHaveBeenCalled();
+    unmount();
   });
 
   it("searches for another version when mpv cannot open a stream", async () => {

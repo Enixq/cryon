@@ -215,6 +215,32 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun openVKLogin(sessionId: String) {
+            launchVKLogin(sessionId, false)
+        }
+
+        @JavascriptInterface
+        fun openVKFreshLogin(sessionId: String) {
+            launchVKLogin(sessionId, true)
+        }
+
+        @JavascriptInterface
+        fun openVKWebsite() {
+            runOnUiThread {
+                startActivity(Intent(this@MainActivity, VKVerificationActivity::class.java)
+                    .putExtra("base", baseURL).putExtra("browse", true))
+            }
+        }
+
+        private fun launchVKLogin(sessionId: String, fresh: Boolean) {
+            if (!sessionId.matches(Regex("[a-f0-9]{32}"))) return
+            runOnUiThread {
+                startActivity(Intent(this@MainActivity, VKVerificationActivity::class.java)
+                    .putExtra("base", baseURL).putExtra("attempt", sessionId).putExtra("fresh", fresh))
+            }
+        }
+
+        @JavascriptInterface
         fun wifiIPv4(): String {
             val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return ""
             @Suppress("DEPRECATION")

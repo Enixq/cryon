@@ -32,7 +32,7 @@ import (
 	"Cryon2/internal/services/lyrics"
 	"Cryon2/internal/services/soundcloud"
 	"Cryon2/internal/services/spotify"
-	"Cryon2/internal/services/vk"
+	"Cryon2/internal/services/vkweb"
 	"Cryon2/internal/services/yandex"
 	"Cryon2/internal/services/youtube"
 	"Cryon2/internal/store"
@@ -94,12 +94,12 @@ var notifCounter uint64
 // и локальное хранилище. Методы с большой буквы доступны фронтенду
 // через Wails-биндинги.
 type App struct {
+	vkWebLogin          vkWebLogin
 	librarySyncMu       sync.Mutex
 	librarySyncConfigMu sync.Mutex
 	librarySyncStatusMu sync.Mutex
 	librarySyncCancel   context.CancelFunc
 	librarySyncMessage  string
-	vkLogin             vkLoginState
 	ctx                 context.Context
 	startupError        string
 	workerCancel        context.CancelFunc
@@ -562,6 +562,13 @@ func (a *App) restoreLastFMKey(ctx context.Context) {
 // источников (Spotify client_id/secret, SoundCloud client_id, YouTube API-ключ),
 // чтобы подключение сохранялось между запусками без переменных окружения.
 func (a *App) restoreServiceCredentials(ctx context.Context) {
+	if provider, ok := a.registry[domain.ServiceVK].(*vkweb.Service); ok {
+		if raw, exists, _ := a.store.SettingGet(ctx, keyVKWebSession); exists {
+			if session, err := vkweb.DecodeSession(raw); err == nil {
+				provider.SetSession(session)
+			}
+		}
+	}
 	get := func(key string) string {
 		v, _, err := a.store.SettingGet(ctx, key)
 		if err != nil {
@@ -569,10 +576,6 @@ func (a *App) restoreServiceCredentials(ctx context.Context) {
 		}
 		return strings.TrimSpace(v)
 	}
-	if service, ok := a.registry[domain.ServiceVK].(*vk.Service); ok {
-		service.SetToken(get("vk.token"))
-	}
-
 	if sp, ok := a.registry[domain.ServiceSpotify].(*spotify.Service); ok {
 		id, secret := get(keySpotifyClientID), get(keySpotifyClientSecret)
 		if id != "" && secret != "" {
@@ -627,6 +630,12 @@ func (a *App) loadLocalLibraryCache(ctx context.Context) {
 }
 
 func (a *App) shutdown(_ context.Context) {
+	a.vkWebLogin.Lock()
+	if attempt := a.vkWebLogin.current; attempt != nil {
+		attempt.cancel()
+		attempt.State = "cancelled"
+	}
+	a.vkWebLogin.Unlock()
 	if a.librarySyncCancel != nil {
 		a.librarySyncCancel()
 	}
@@ -666,11 +675,19 @@ func (a *App) recoverGoroutine(where string) {
 
 // Search ищет треки в одном источнике по его идентификатору.
 func (a *App) Search(service string, query string) ([]domain.Track, error) {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.searchSource(ctx, service, query)
+}
+
+func (a *App) searchSource(parent context.Context, service string, query string) ([]domain.Track, error) {
 	svc, ok := a.registry[domain.ServiceID(service)]
 	if !ok {
 		return nil, fmt.Errorf("неизвестный источник: %s", service)
 	}
-	ctx, cancel := context.WithTimeout(a.ctx, searchSourceTimeout)
+	ctx, cancel := context.WithTimeout(parent, searchSourceTimeout)
 	defer cancel()
 	tracks, err := a.cachedSourceSearch(ctx, svc, query)
 	a.recordSourceResult(domain.ServiceID(service), err)
@@ -760,10 +777,10 @@ func (a *App) searchInSourcesContext(parent context.Context, query string, sourc
 	// Стабильный порядок источников для предсказуемой выдачи.
 	// Spotify исключён из поиска: у него нет прямого аудиопотока.
 	order := []domain.ServiceID{
+		domain.ServiceVK,
 		domain.ServiceYouTube,
 		domain.ServiceSoundCloud,
 		domain.ServiceYandex,
-		domain.ServiceVK,
 		domain.ServiceLocal,
 	}
 	total := 0
@@ -818,9 +835,9 @@ func (a *App) ResolvePlayableTrack(track domain.Track) (domain.Track, error) {
 	}
 
 	sources := []domain.ServiceID{
+		domain.ServiceVK,
 		domain.ServiceSoundCloud,
 		domain.ServiceYandex,
-		domain.ServiceVK,
 		domain.ServiceLocal,
 		domain.ServiceYouTube,
 	}
@@ -896,10 +913,10 @@ func (a *App) resolvePlaybackFallback(track domain.Track, failedService string, 
 		excluded[candidate] = struct{}{}
 	}
 	sources := []domain.ServiceID{
+		domain.ServiceVK,
 		domain.ServiceLocal,
 		domain.ServiceSoundCloud,
 		domain.ServiceYandex,
-		domain.ServiceVK,
 		domain.ServiceYouTube,
 	}
 	ctx := a.ctx
@@ -1013,17 +1030,19 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 	}
 	switch domain.ServiceID(service) {
 	case domain.ServiceVK:
-		service, ok := a.registry[domain.ServiceVK].(*vk.Service)
+		provider, ok := a.registry[domain.ServiceVK].(*vkweb.Service)
 		if !ok {
-			return nil, fmt.Errorf("адаптер ВК Музыки недоступен")
+			return nil, fmt.Errorf("ВК Музыка недоступна")
 		}
-		ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
-		defer cancel()
-		info, err := service.ResolveStream(ctx, trackID)
+		ctx := a.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		target, mime, err := provider.ResolveStream(ctx, trackID)
 		if err != nil {
 			return nil, err
 		}
-		return &audiofetcher.AudioStream{URL: info.URL, Format: info.MimeType, Duration: int64(info.DurationMs / 1000)}, nil
+		return &audiofetcher.AudioStream{URL: target, Format: mime}, nil
 	case domain.ServiceYouTube:
 		// Резолв URL ограничен по времени. a.ctx (контекст запуска Wails или
 		// фоновый на мобиле) не имеет дедлайна, поэтому зависший запрос к
@@ -1498,11 +1517,11 @@ func (a *App) SetSetting(key string, value string) error {
 
 func defaultPlaybackPreferences() identity.Preferences {
 	return identity.Preferences{SourcePriority: map[domain.ServiceID]int{
+		domain.ServiceVK:         0,
 		domain.ServiceLocal:      20,
 		domain.ServiceSoundCloud: 40,
 		domain.ServiceYouTube:    30,
 		domain.ServiceYandex:     0,
-		domain.ServiceVK:         0,
 	}}
 }
 
@@ -1803,6 +1822,12 @@ func (a *App) ClearHistory() error {
 //
 // NOTE: добавлено koda.
 func (a *App) ResetAllData() error {
+	a.vkWebLogin.Lock()
+	if attempt := a.vkWebLogin.current; attempt != nil {
+		attempt.cancel()
+		attempt.State = "cancelled"
+	}
+	a.vkWebLogin.Unlock()
 	if a.store == nil {
 		return fmt.Errorf("хранилище недоступно")
 	}
@@ -1810,8 +1835,8 @@ func (a *App) ResetAllData() error {
 		return err
 	}
 	// Сбрасываем адаптеры в рантайме, чтобы не ждать перезапуска.
-	if service, ok := a.registry[domain.ServiceVK].(*vk.Service); ok {
-		service.SetToken("")
+	if provider, ok := a.registry[domain.ServiceVK].(*vkweb.Service); ok {
+		provider.SetSession(vkweb.Session{})
 	}
 	if ya, ok := a.registry[domain.ServiceYandex].(*yandex.Service); ok {
 		ya.SetToken("")
@@ -1945,7 +1970,7 @@ const (
 //   - "limited" (жёлтый): источник работает частично. Spotify отдаёт только
 //     внешние ссылки (поиск есть, прямого потока нет); Yandex без токена
 //     живёт на веб-поиске; локальная библиотека без папок пуста.
-//   - "off" (красный): источник недоступен или ВК Музыка ещё не подключена.
+//   - "off" (красный): источник недоступен.
 func (a *App) ListSourceStatus() []SourceStatus {
 	a.statusMu.RLock()
 	validationErrors := make(map[domain.ServiceID]string, len(a.validationErrors))
@@ -1972,6 +1997,13 @@ func (a *App) ListSourceStatus() []SourceStatus {
 		if errMsg != "" {
 			level = sourceOff
 		}
+		if id == domain.ServiceVK {
+			if provider, ok := a.registry[id].(*vkweb.Service); ok && provider.HasToken() {
+				if limited := provider.RateLimit(); limited != nil {
+					level, errMsg = sourceLimited, limited.Error()
+				}
+			}
+		}
 		if level == "" {
 			level = sourceOff
 		}
@@ -1995,10 +2027,10 @@ func (a *App) ValidateSource(id string) error {
 	var err error
 	switch domain.ServiceID(id) {
 	case domain.ServiceVK:
-		if service, ok := a.registry[domain.ServiceVK].(*vk.Service); ok {
-			err = service.ValidateToken(ctx)
+		if provider, ok := a.registry[domain.ServiceVK].(*vkweb.Service); ok {
+			err = provider.ValidateToken(ctx)
 		} else {
-			err = fmt.Errorf("VK unavailable")
+			err = fmt.Errorf("ВК Музыка недоступна")
 		}
 	case domain.ServiceYandex:
 		if s, ok := a.registry[domain.ServiceYandex].(*yandex.Service); ok {
@@ -2033,6 +2065,7 @@ func (a *App) ValidateSource(id string) error {
 	}
 	a.statusMu.Lock()
 	delete(a.validationErrors, domain.ServiceID(id))
+	delete(a.runtimeErrors, domain.ServiceID(id))
 	a.statusMu.Unlock()
 	a.emitSourceStatusChanged()
 	return nil
@@ -2041,6 +2074,7 @@ func (a *App) ValidateSource(id string) error {
 func (a *App) clearSourceValidation(id domain.ServiceID) {
 	a.statusMu.Lock()
 	delete(a.validationErrors, id)
+	delete(a.runtimeErrors, id)
 	a.statusMu.Unlock()
 }
 

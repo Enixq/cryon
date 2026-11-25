@@ -13,6 +13,7 @@ export const SOURCES: Record<SourceId, SourceMeta> = {
   soundcloud: { id: "soundcloud", name: "SoundCloud", dot: "#ff7a00", short: "SC" },
   spotify: { id: "spotify", name: "Spotify", dot: "#1db954", short: "SP" },
   yandex: { id: "yandex", name: "Яндекс Музыка", dot: "#ffcc00", short: "ЯМ" },
+  // Kept to display metadata for previously saved VK library items.
   vk: { id: "vk", name: "VK Музыка", dot: "#4a76a8", short: "VK" },
   local: { id: "local", name: "Локальная музыка", dot: "#7c8cff", short: "LOC" },
 };

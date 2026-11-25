@@ -20,6 +20,7 @@ import (
 
 	"Cryon2/internal/logging"
 	"Cryon2/internal/services/audiofetcher"
+	"Cryon2/internal/services/vkweb"
 )
 
 // localAssetHandler отдаёт локальные аудиофайлы фронтенду по HTTP-пути
@@ -34,6 +35,13 @@ type localAssetHandler struct {
 }
 
 func (h *localAssetHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if service, id, ok := parseStreamPath(r.URL.EscapedPath()); ok && service == "vk" {
+		query := r.URL.Query()
+		query.Set("id", id)
+		r.URL.RawQuery = query.Encode()
+		h.app.handleVKWebStream(w, r)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, streamPrefix) {
 		h.serveRemoteStream(w, r)
 		return
@@ -222,7 +230,7 @@ type streamResolveCall struct {
 // resolveStreamURL возвращает ссылку на поток трека, по возможности из кэша.
 // force=true игнорирует кэш (апстрим отверг прежнюю ссылку).
 func (h *localAssetHandler) resolveStreamURL(service, trackID string, force bool) (string, error) {
-	key := service + "\x00" + trackID
+	key := h.streamFileKey(service, trackID)
 
 	if !force {
 		streamURLCache.Lock()
@@ -307,6 +315,16 @@ func invalidateStreamURL(service, trackID string) {
 	streamURLCache.Lock()
 	delete(streamURLCache.m, service+"\x00"+trackID)
 	streamURLCache.Unlock()
+}
+
+func (h *localAssetHandler) streamFileKey(service, trackID string) string {
+	key := service + "\x00" + trackID
+	if service == "vk" {
+		if provider, ok := h.app.registry[domain.ServiceVK].(*vkweb.Service); ok {
+			key += "\x00" + provider.Scope()
+		}
+	}
+	return key
 }
 
 var errNoStreamURL = errors.New("пустая ссылка на поток")
@@ -395,7 +413,13 @@ func (h *localAssetHandler) ensureStreamFile(ctx context.Context, service, track
 		f, err := os.Open(path)
 		return f, item.Mime, err
 	}
-	key := service + "\x00" + trackID
+	if service == "vk" {
+		provider, ok := h.app.registry[domain.ServiceVK].(*vkweb.Service)
+		if !ok || !provider.HasToken() {
+			return nil, "", fmt.Errorf("ВК Музыка не подключена")
+		}
+	}
+	key := h.streamFileKey(service, trackID)
 
 	// Быстрый путь: файл уже в кэше.
 	streamFileCache.Lock()

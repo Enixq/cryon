@@ -30,11 +30,13 @@ func (a *App) APIHandler() http.Handler {
 	mux.HandleFunc("/v1/devices/discover", a.handleAPIDeviceDiscover)
 	mux.HandleFunc("/v1/devices/state", a.handleAPIDeviceState)
 	mux.HandleFunc("/v1/sources", a.handleAPISources)
+	mux.HandleFunc("/v1/accounts/vk/login", a.handleVKWebLogin)
+	mux.HandleFunc("/v1/accounts/vk/session", a.handleVKWebSession)
+	mux.HandleFunc("/v1/vk/stream", a.handleVKWebStream)
 	mux.HandleFunc("/v1/sources/", a.handleAPISourceByID)
 	mux.HandleFunc("/v1/search", a.handleAPISearch)
 	mux.HandleFunc("/v1/catalog/playlists/search", a.handleAPICatalogPlaylistSearch)
 	mux.HandleFunc("/v1/catalog/collection", a.handleAPICatalogCollection)
-	mux.HandleFunc("/v1/accounts/vk/login", a.handleAPIVKLogin)
 	mux.HandleFunc("/v1/library/sync/config", a.handleAPILibrarySyncConfig)
 	mux.HandleFunc(libraryExchangePath, a.handleAPILibraryExchange)
 	mux.HandleFunc("/v1/lyrics", a.handleAPILyrics)
@@ -321,7 +323,7 @@ func (a *App) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		tracks, err = a.SearchAll(query)
 		service = ""
 	} else {
-		tracks, err = a.Search(service, query)
+		tracks, err = a.searchSource(r.Context(), service, query)
 	}
 	if err != nil {
 		writeAPIAppError(w, err)
@@ -854,12 +856,21 @@ func (a *App) handleAPIPlaybackResolve(w http.ResponseWriter, r *http.Request) {
 	}
 	streamURL := apiTrackStreamURL(track)
 	response := apiPlaybackResolveResponse{Track: track, StreamURL: streamURL}
+	if track.Service == domain.ServiceVK {
+		stream, err := a.GetAudioStream("vk", track.ID)
+		if err != nil {
+			writeAPIAppError(w, err)
+			return
+		}
+		response.StreamURL = vkMediaURL(track.ID)
+		response.MimeType = stream.Format
+	}
 	// Native Android playback must validate the provider URL before handing it
 	// to Media3. Previously errors were swallowed and the endpoint returned a
 	// local /stream URL anyway; the UI then reported a generic 502 and could not
 	// start its alternate-source search. Desktop keeps the lightweight proxy URL
 	// path and resolves quality when the desktop engine actually starts.
-	if req.Native {
+	if req.Native && track.Service != domain.ServiceVK {
 		stream, err := a.GetAudioStream(string(track.Service), track.ID)
 		if err != nil {
 			writeAPIAppError(w, err)
@@ -1010,6 +1021,9 @@ func urlPathSegment(value string) string {
 }
 
 func apiTrackStreamURL(track domain.Track) string {
+	if track.Service == domain.ServiceVK {
+		return vkMediaURL(track.ID)
+	}
 	if track.Service == domain.ServiceLocal {
 		return "/local/" + urlPathSegment(track.ID)
 	}

@@ -182,7 +182,7 @@ function LyricsView({
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <LyricsSources
         lyrics={lyrics}
-        hasSource={track?.source === "yandex" || track?.source === "vk"}
+        hasSource={track?.source === "yandex"}
       />
       {lyrics.loading ? (
         <LyricsHint text="Загружаем текст…" />
