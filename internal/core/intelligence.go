@@ -357,6 +357,13 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		}
 		input := intelligence.PlanningInput{Scope: intelligence.Scope{RequestID: djID(), SessionID: session.ID, SessionRevision: session.Revision, TasteRevision: taste.Revision, ConfigRevision: cfg.Revision}, Taste: taste, Session: session, Channels: a.reco.DJChannels(), Recent: recent}
 		input.Directions = []intelligence.Direction{}
+		input.RecentSuggestions = []intelligence.TrackSummary{}
+		for _, track := range a.loadDJCollection(ctx).Tracks {
+			if len(input.RecentSuggestions) == 30 {
+				break
+			}
+			input.RecentSuggestions = append(input.RecentSuggestions, djSummary(track))
+		}
 		if repo, ok := a.store.(intelligence.PlanRepository); ok {
 			input.Directions, _ = repo.DJDirections(ctx, session.ID)
 		}

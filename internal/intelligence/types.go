@@ -70,12 +70,13 @@ type Scope struct {
 }
 
 type PlanningInput struct {
-	Scope      Scope           `json:"scope"`
-	Taste      TasteProfile    `json:"taste"`
-	Session    SessionProfile  `json:"session"`
-	Channels   []ChannelBudget `json:"channels"`
-	Recent     []FeedbackEvent `json:"recent"`
-	Directions []Direction     `json:"previous_directions"`
+	RecentSuggestions []TrackSummary  `json:"recent_suggestions"`
+	Scope             Scope           `json:"scope"`
+	Taste             TasteProfile    `json:"taste"`
+	Session           SessionProfile  `json:"session"`
+	Channels          []ChannelBudget `json:"channels"`
+	Recent            []FeedbackEvent `json:"recent"`
+	Directions        []Direction     `json:"previous_directions"`
 }
 
 type SearchStep struct {

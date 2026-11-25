@@ -123,11 +123,11 @@ func (d *Director) generate(ctx context.Context, input any, output any, schema m
 }
 func (d *Director) PlanSearch(ctx context.Context, in intelligence.PlanningInput) (intelligence.SearchPlan, error) {
 	var out intelligence.SearchPlan
-	err := d.generate(ctx, in, &out, intelligence.PlanSchema(out), "Plan at most 3 searches across provided channels. Each limit <= channel budget; total <=40. Preserve original seed in track radio. Use metadata queries for exploring unknown artists, not popular favorites only. Consider previous_directions and reactions; a skip alone is weak situational feedback, playback_error is not dislike. discovery explores the taste graph; library supplies familiar tracks; catalog_search takes artist/title/genre text; deezer artist_tracks query must be an artist name; similar_tracks uses the seed and ignores query. Strategy values must be in [0,1].")
+	err := d.generate(ctx, in, &out, intelligence.PlanSchema(out), "Plan at most 3 searches across provided channels. Each limit <= channel budget; total <=40. Preserve original seed in track radio. Use metadata queries for exploring unknown artists, not popular favorites only. Avoid repeating recent_suggestions from previous sessions; search for complementary discoveries. Consider previous_directions and reactions; a skip alone is weak situational feedback, playback_error is not dislike. discovery explores the taste graph; library supplies familiar tracks; catalog_search takes artist/title/genre text; deezer artist_tracks query must be an artist name; similar_tracks uses the seed and ignores query. Strategy values must be in [0,1].")
 	return out, err
 }
 func (d *Director) Select(ctx context.Context, in intelligence.SelectionInput) (intelligence.SelectionPlan, error) {
 	var out intelligence.SelectionPlan
-	err := d.generate(ctx, in, &out, intelligence.PlanSchema(out), "Copy pool_id exactly. Rank only provided candidate IDs with scores in [0,1], descending. Avoid contains disjoint IDs, not permanent dislikes. At most 3 directions. Short Russian reasons <=160 characters. Keep original seed's musical intent above global taste in track radio.")
+	err := d.generate(ctx, in, &out, intelligence.PlanSchema(out), "Copy pool_id exactly. Prefer fresh candidates over recent_suggestions when musical relevance is comparable. Rank only provided candidate IDs with scores in [0,1], descending. Avoid contains disjoint IDs, not permanent dislikes. At most 3 directions. Short Russian reasons <=160 characters. Keep original seed's musical intent above global taste in track radio.")
 	return out, err
 }

@@ -1,4 +1,3 @@
-import { djRadio, resetDJSession } from "../shared/api/intelligence";
 import { useRecoFeedback } from "../shared/lib/useRecoFeedback";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -52,13 +51,7 @@ export function TrackDiscovery() {
         ? searchV1(`${track!.primaryArtist || track!.artist} ${track!.title}`, selectedSource).then(
             (found) => found.filter((t) => t.playableKind !== "external_only"),
           )
-        : (async () => {
-            resetDJSession();
-            return (
-              (await djRadio(track!, track!, [track!], 24).catch(() => null)) ??
-              listRelatedTracks(track!, 24, [track!])
-            );
-          })(),
+        : listRelatedTracks(track!, 24, [track!]),
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
