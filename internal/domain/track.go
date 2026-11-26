@@ -112,6 +112,8 @@ const (
 	VersionCover    VersionKind = "cover"
 	VersionRemaster VersionKind = "remaster"
 	VersionClean    VersionKind = "clean"
+	VersionRemix    VersionKind = "remix"
+	VersionExplicit VersionKind = "explicit"
 )
 
 // PlaybackCandidate binds one playable source item to a CanonicalTrack.

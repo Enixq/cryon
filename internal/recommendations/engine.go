@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"Cryon2/internal/domain"
+	"Cryon2/internal/identity"
 	"Cryon2/internal/logging"
 	"Cryon2/internal/services/deezer"
 	"Cryon2/internal/services/lastfm"
@@ -41,6 +43,7 @@ type SearchFunc func(ctx context.Context, query string) ([]domain.Track, error)
 
 // Engine — движок рекомендаций.
 type Engine struct {
+	djPlaybackPreferences func() identity.Preferences
 	djSources             func() []string
 	djSearch              func(context.Context, string, string) ([]domain.Track, error)
 	trackSimilarAvailable func() bool
@@ -410,6 +413,13 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 	// профиль должен отражать все локальные действия и не терять историю. Его
 	// вес (с учётом затухания) заметно ниже избранного, плейлистов и явного лайка,
 	// поэтому случайное прослушивание не способно перехватить рекомендации.
+	for name, delta := range e.djReactionWeights(ctx) {
+		if current := weights[name]; current != nil {
+			current.weight = math.Max(0, current.weight+delta)
+		} else if delta > 0 {
+			add(name, delta, 0, 0, true)
+		}
+	}
 	out := make([]artistWeight, 0, len(weights))
 	for _, w := range weights {
 		if blocked[feedbackArtistKey(w.name)] {

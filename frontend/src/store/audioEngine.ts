@@ -150,6 +150,7 @@ export function useAudioEngine() {
     const load = playbackLoadRef.current;
     if (!load || load.id !== startedTrack.id) return;
     playbackLoadRef.current = null;
+    if (!hasNativeAndroidQueue()) reportDJEvent(startedTrack, "playback_started");
     usePlaybackDiagnosticsStore.getState().record({
       kind: "started", trackId: startedTrack.id, title: startedTrack.title,
       artist: startedTrack.artist, fromSource: startedTrack.source,
@@ -272,7 +273,7 @@ export function useAudioEngine() {
       if (state.state !== "ended" || nativeEndHandledRef.current === current.id) return;
       if (hasNativeAndroidQueue()) return;
       nativeEndHandledRef.current = current.id;
-      if (store.radio) recordRadioSignal(current, "completed");
+      if (store.radio || current.djSessionId) recordRadioSignal(current, "completed");
       void (async () => {
         if (store.repeat === "one") {
           seekNativeAndroidPlayer(0);
@@ -818,9 +819,9 @@ export function useAudioEngine() {
 
     // Обработка конца трека с учётом режима повтора.
     const handleTrackEnd = async (store: ReturnType<typeof usePlayerStore.getState>) => {
-      if (store.radio) recordRadioSignal(track, "completed");
+      if (store.radio || track.djSessionId) recordRadioSignal(track, "completed");
       if (store.repeat === "one") {
-        if (store.radio) reportDJEvent(track, "replay", store.progress * 1000);
+        reportDJEvent(track, "replay", store.progress * 1000);
         // Повтор одного трека: перематываем в начало и играем снова.
         // next() при repeat==="one" не меняет индекс, поэтому эффект
         // загрузки не сработает — перезапускаем воспроизведение вручную.

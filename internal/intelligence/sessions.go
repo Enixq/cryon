@@ -16,8 +16,27 @@ type SessionRepository interface {
 
 func ValidFeedback(kind FeedbackKind) bool {
 	switch kind {
-	case FeedbackShown, FeedbackLike, FeedbackDislike, FeedbackSkip, FeedbackCompleted, FeedbackReplay, FeedbackPlaybackError:
+	case FeedbackCandidate, FeedbackRecommended, FeedbackQueued, FeedbackStarted, FeedbackShown, FeedbackLike, FeedbackDislike, FeedbackSkip, FeedbackCompleted, FeedbackReplay, FeedbackPlaybackError:
 		return true
 	}
 	return false
+}
+
+func EventName(kind FeedbackKind) string {
+	switch kind {
+	case FeedbackShown:
+		return "track_shown"
+	case FeedbackLike:
+		return "track_liked"
+	case FeedbackDislike:
+		return "track_disliked"
+	case FeedbackSkip:
+		return "track_skipped"
+	case FeedbackCompleted:
+		return "playback_completed"
+	case FeedbackReplay:
+		return "track_replayed"
+	default:
+		return string(kind)
+	}
 }

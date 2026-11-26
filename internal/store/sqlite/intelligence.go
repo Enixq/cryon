@@ -32,6 +32,12 @@ func (s *Store) CreateDJSession(ctx context.Context, profile intelligence.Sessio
 	if len(profile.PlayedIDs) != 0 {
 		return errors.New("new session cannot contain plays")
 	}
+	if profile.Intent == "" {
+		profile.Intent = "Explore weighted long-term taste with session context"
+		if profile.Mode == intelligence.RadioTrack {
+			profile.Intent = "Preserve the original seed and explore related music"
+		}
+	}
 	raw, err := json.Marshal(profile)
 	if err != nil {
 		return err
@@ -58,6 +64,7 @@ func (s *Store) RecordDJFeedback(ctx context.Context, event intelligence.Feedbac
 	if event.ID == "" || event.SessionID == "" || event.TrackID == "" || event.At.IsZero() || !intelligence.ValidFeedback(event.Kind) || event.PlayedMS < 0 || event.DurationMS < 0 {
 		return false, errors.New("invalid DJ feedback")
 	}
+	event.Name = intelligence.EventName(event.Kind)
 	raw, err := json.Marshal(event)
 	if err != nil {
 		return false, err
@@ -87,8 +94,23 @@ func (s *Store) RecordDJFeedback(ctx context.Context, event intelligence.Feedbac
 	if err := json.Unmarshal([]byte(profileJSON), &profile); err != nil {
 		return false, err
 	}
-	if event.Kind != intelligence.FeedbackShown && event.Kind != intelligence.FeedbackPlaybackError {
+	if event.Kind == intelligence.FeedbackLike || event.Kind == intelligence.FeedbackDislike || event.Kind == intelligence.FeedbackSkip || event.Kind == intelligence.FeedbackCompleted || event.Kind == intelligence.FeedbackReplay {
 		profile.Revision++
+	}
+	if event.Kind == intelligence.FeedbackRecommended || event.Kind == intelligence.FeedbackQueued || event.Kind == intelligence.FeedbackShown {
+		found := false
+		for _, id := range profile.SuggestedIDs {
+			if id == event.TrackID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			profile.SuggestedIDs = append(profile.SuggestedIDs, event.TrackID)
+			if len(profile.SuggestedIDs) > 200 {
+				profile.SuggestedIDs = profile.SuggestedIDs[len(profile.SuggestedIDs)-200:]
+			}
+		}
 	}
 	// Showing a recommendation or failing to load audio is not a play.
 	if event.Kind == intelligence.FeedbackCompleted || event.Kind == intelligence.FeedbackReplay || event.Kind == intelligence.FeedbackSkip && event.PlayedMS > 0 {

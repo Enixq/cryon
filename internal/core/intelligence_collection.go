@@ -10,6 +10,10 @@ import (
 )
 
 type djCollection struct {
+	ResultID  string         `json:"resultId"`
+	JobID     string         `json:"jobId"`
+	SessionID string         `json:"sessionId"`
+	Job       DJDiagnostic   `json:"job"`
 	Tracks    []domain.Track `json:"tracks"`
 	UpdatedAt string         `json:"updatedAt,omitempty"`
 }
@@ -22,6 +26,10 @@ func (a *App) loadDJCollection(ctx context.Context) djCollection {
 	}
 	if c.Tracks == nil {
 		c.Tracks = []domain.Track{}
+	}
+	if a.store != nil {
+		raw, _, _ := a.store.SettingGet(ctx, "intelligence.private.collectionJob")
+		_ = json.Unmarshal([]byte(raw), &c.Job)
 	}
 	return c
 }
@@ -62,10 +70,34 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 		a.dj.Lock()
 		busy := a.dj.busy
 		cooldown := a.dj.cooldown
+		if busy {
+			cooldown = time.Time{}
+		}
 		a.dj.Unlock()
 		if busy {
-			writeAPIError(w, 409, "AI уже подготавливает музыку. Подборка появится здесь автоматически")
-			return
+			a.dj.Lock()
+			cancel, done := a.dj.cancel, a.dj.done
+			a.dj.Unlock()
+			if cancel != nil {
+				cancel()
+			}
+			if done != nil {
+				select {
+				case <-done:
+				case <-r.Context().Done():
+					return
+				case <-time.After(3 * time.Second):
+					writeAPIError(w, 409, "Предыдущая задача отменяется")
+					return
+				}
+			}
+		}
+		if busy {
+			a.dj.Lock()
+			if !a.dj.busy {
+				a.dj.cooldown = time.Time{}
+			}
+			a.dj.Unlock()
 		}
 		if a.IntelligenceStatus().UsedToday >= cfg.DailySegments {
 			writeAPIError(w, 429, "Достигнут дневной лимит AI-подборок")
@@ -75,7 +107,7 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, 429, "Предыдущая AI-подборка не завершилась. Проверьте модель и ключ; повторить можно через минуту")
 			return
 		}
-		req := djRadioRequest{SessionID: session.ID, Mode: intelligence.RadioInfinite, Limit: 40}
+		req := djRadioRequest{Collection: true, SessionID: session.ID, Mode: intelligence.RadioInfinite, Limit: 40}
 		if err := a.store.SettingSet(r.Context(), "intelligence.private.failedRevision", ""); err != nil {
 			writeAPIAppError(w, err)
 			return
@@ -88,6 +120,14 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 
 	}
 	c := a.loadDJCollection(r.Context())
+	a.dj.Lock()
+	active := a.dj.busy && a.dj.jobID == c.Job.JobID
+	a.dj.Unlock()
+	if c.Job.JobID != "" && !active && (c.Job.Stage == "planning" || c.Job.Stage == "searching" || c.Job.Stage == "ranking" || c.Job.Stage == "saving") {
+		c.Job.Stage = "cancelled"
+		c.Job.Error = "Подготовка прервана. Можно запустить новую; предыдущий результат сохранён"
+		a.saveDJDiagnostic(r.Context(), c.Job)
+	}
 	if a.reco != nil {
 		c.Tracks = a.reco.Allowed(r.Context(), c.Tracks)
 	}

@@ -172,6 +172,7 @@ func NewApp() *App {
 		}
 		return nil, nil
 	})
+	app.reco.SetDJPlaybackPreferences(app.playbackPreferences)
 	app.reco.SetDJSourceSearch(func() []string {
 		out := []string{}
 		for _, status := range app.ListSourceStatus() {

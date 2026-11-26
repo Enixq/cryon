@@ -103,7 +103,7 @@ func ValidateSelection(in SelectionInput, plan SelectionPlan, limits Limits) err
 		}
 		pool[c.ID] = true
 	}
-	if len(plan.Ranked) == 0 || len(plan.Ranked) > len(pool) || len(plan.Avoid) > len(pool) || len(plan.Directions) > limits.MaxDirections {
+	if len(plan.Ranked) > len(pool) || len(plan.Avoid) > len(pool) || len(plan.Directions) > limits.MaxDirections {
 		return fmt.Errorf("invalid selection size")
 	}
 	seen := make(map[string]bool)

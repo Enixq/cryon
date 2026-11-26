@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"Cryon2/internal/domain"
+	"Cryon2/internal/identity"
 	"Cryon2/internal/intelligence"
 )
 
@@ -133,19 +134,43 @@ func balanceDJSources(tracks []domain.Track) []domain.Track {
 	return out
 }
 
+func (e *Engine) SetDJPlaybackPreferences(fn func() identity.Preferences) {
+	e.djPlaybackPreferences = fn
+}
+
 func (e *Engine) FinalizeDJ(ctx context.Context, tracks []domain.Track, exclude []domain.Track, limit int) []domain.Track {
 	seen := map[string]bool{}
 	for _, t := range exclude {
-		seen[trackKey(t)] = true
+		seen[identity.Normalize(strings.Join(t.Artists, " "))+"|"+identity.Normalize(t.Title)] = true
 	}
 	out := []domain.Track{}
-	for _, t := range e.Allowed(ctx, tracks) {
-		key := trackKey(t)
-		if !seen[key] && t.Service != domain.ServiceYouTube && (t.PlayableKind == "" || t.PlayableKind == domain.PlayableStream) {
-			seen[key] = true
+	for _, group := range identity.GroupTracks(e.Allowed(ctx, tracks)) {
+		if len(group.Candidates) == 0 {
+			continue
+		}
+		// Musical order belongs to the model/engine; source choice reuses playback preferences.
+		preferences := identity.Preferences{}
+		if e.djPlaybackPreferences != nil {
+			preferences = e.djPlaybackPreferences()
+		}
+		var picked *domain.Track
+		for _, candidate := range identity.RankCandidates(group.Candidates, preferences) {
+			t := candidate.Track
+			if t.Service != domain.ServiceYouTube && (t.PlayableKind == "" || t.PlayableKind == domain.PlayableStream) {
+				picked = &t
+				break
+			}
+		}
+		if picked == nil {
+			continue
+		}
+		t := *picked
+		key := identity.Normalize(strings.Join(t.Artists, " ")) + "|" + identity.Normalize(t.Title)
+		if !seen[key] {
 			out = append(out, t)
 		}
 	}
+
 	return diversifyTracks(out, nil, limit, artistCap)
 }
 
@@ -208,11 +233,11 @@ func (e *Engine) IntelligenceTaste(ctx context.Context) intelligence.TasteProfil
 	if len(out.Tags) > 15 {
 		out.Tags = out.Tags[:15]
 	}
+	e.enrichDJTaste(ctx, &out)
 	raw, _ := json.Marshal(struct {
-		Artists          []string
-		Tags             []intelligence.WeightedTag
+		Taste            intelligence.TasteProfile
 		FeedbackRevision int
-	}{out.Artists, out.Tags, profile.feedbackRev})
+	}{out, profile.feedbackRev})
 	digest := sha256.Sum256(raw)
 	// Keep revisions exactly representable in JSON/JavaScript and model output.
 	out.Revision = binary.BigEndian.Uint64(digest[:8]) & ((1 << 52) - 1)

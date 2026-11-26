@@ -4,13 +4,27 @@ import type { Track } from "../types";
 import type { domain } from "../../../wailsjs/go/models";
 
 export type DJDiagnostic = {
+  jobId?: string;
+  resultId?: string;
+  sessionId?: string;
+  mode?: string;
+  iteration?: number;
   stage: string;
   error?: string;
   found: number;
   candidates: number;
   selected: number;
   updatedAt?: string;
-  searches: { source: string; query: string; found: number; state: string }[];
+  searches: {
+    iteration?: number;
+    unique?: number;
+    accepted?: number;
+    elapsedMs?: number;
+    source: string;
+    query: string;
+    found: number;
+    state: string;
+  }[];
 };
 export type DJStatus = {
   diagnostic?: DJDiagnostic;
@@ -120,7 +134,16 @@ export async function djRadio(
 }
 export function reportDJEvent(
   track: Track,
-  kind: "shown" | "like" | "dislike" | "skip" | "completed" | "replay" | "playback_error",
+  kind:
+    | "track_queued"
+    | "playback_started"
+    | "shown"
+    | "like"
+    | "dislike"
+    | "skip"
+    | "completed"
+    | "replay"
+    | "playback_error",
   playedMs = 0,
 ): void {
   const session = track.djSessionId || sessions.get(track.id);
@@ -141,6 +164,23 @@ export function reportDJEvent(
   }).catch(() => {});
 }
 
+export type DJCollectionView = {
+  tracks: Track[];
+  job: DJDiagnostic;
+  jobId: string;
+  resultId: string;
+  updatedAt?: string;
+};
+export async function getDJCollectionView(signal?: AbortSignal): Promise<DJCollectionView> {
+  const result = await request<{
+    tracks: domain.Track[];
+    job: DJDiagnostic;
+    jobId: string;
+    resultId: string;
+    updatedAt?: string;
+  }>("/v1/intelligence/collection", { signal });
+  return { ...result, tracks: mapTracks(result.tracks) };
+}
 export async function getDJCollection(): Promise<Track[]> {
   if (!hasApiV1Runtime()) return [];
   const result = await request<{ tracks: domain.Track[] }>("/v1/intelligence/collection");

@@ -106,7 +106,10 @@ export function startRadioAutoplay(): () => void {
               ...latest.queue.slice(prefix.length).filter((track) => !added.has(track.id)),
             ],
           });
-          fresh.forEach((track) => reportDJEvent(track, "shown"));
+          fresh.forEach((track) => {
+            reportDJEvent(track, "shown");
+            reportDJEvent(track, "track_queued");
+          });
           retryAt = Date.now() + RETRY_DELAY_MS;
           return;
         }
@@ -116,7 +119,10 @@ export function startRadioAutoplay(): () => void {
             currentIndex: 100,
           });
         latest.appendToQueue(fresh);
-        fresh.forEach((track) => reportDJEvent(track, "shown"));
+        fresh.forEach((track) => {
+          reportDJEvent(track, "shown");
+          reportDJEvent(track, "track_queued");
+        });
         if (usePlayerStore.getState().radioWaiting) usePlayerStore.getState().next();
       })
       .catch(() => {

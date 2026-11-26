@@ -156,7 +156,11 @@ class CryonPlaybackService : MediaSessionService() {
                                 else -> STATE_IDLE
                             },
                         )
-                        if (playbackState == Player.STATE_ENDED) resumeAfterLatePreload()
+                        if (playbackState == Player.STATE_ENDED) {
+                            val ended=queue.getOrNull(queueIndex)
+                            reportDJ("completed", ended, ((ended?.optDouble("duration", 0.0) ?: 0.0)*1000).toLong())
+                            resumeAfterLatePreload()
+                        }
                     }
 
                     // Media3 advanced to the item the service queued itself. The UI
@@ -552,6 +556,7 @@ class CryonPlaybackService : MediaSessionService() {
         if (historyRecordedId == currentTrackId) return
         val spec = queue.getOrNull(queueIndex)?.takeIf { it.optString("id") == currentTrackId } ?: return
         historyRecordedId = currentTrackId
+        reportDJ("playback_started", spec, 0)
         worker.execute { runCatching { request("/v1/library/history", JSONObject().put("track", backendTrack(spec))) } }
     }
 
@@ -749,13 +754,13 @@ class CryonPlaybackService : MediaSessionService() {
                     val tail = queue.drop(prefix.size).filter { !added.contains(it.optString("id")) }
                     queue.clear(); queue.addAll(prefix); queue.addAll(fresh); queue.addAll(tail)
                     retryRadioAt = System.currentTimeMillis() + 5000
-                    fresh.forEach { reportDJ("shown", it, 0) }
+                    fresh.forEach { reportDJ("shown", it, 0); reportDJ("track_queued", it, 0) }
                     player?.let { publishState(stateFor(it)); maybePreloadNext(it) }
                     return@post
                 }
                 if (queueIndex > 100) { val remove = queueIndex - 100; repeat(remove) { queue.removeAt(0) }; queueIndex = 100 }
                 queue.addAll(fresh)
-                fresh.forEach { reportDJ("shown", it, 0) }
+                fresh.forEach { reportDJ("shown", it, 0); reportDJ("track_queued", it, 0) }
                 player?.let { publishState(stateFor(it)); maybePreloadNext(it) }
             }
         }

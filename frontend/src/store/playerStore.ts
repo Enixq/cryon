@@ -144,7 +144,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     if (queue.length === 0) return;
     const current = queue[currentIndex];
     const duration = get().effectiveDuration();
-    const completed = Boolean(get().radio && current && consumeRadioCompletion(current));
+    const completed = Boolean(
+      current && (get().radio || current.djSessionId) && consumeRadioCompletion(current),
+    );
     if (
       get().radio &&
       current &&
@@ -153,7 +155,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       (duration <= 0 || get().progress / duration < 0.5)
     ) {
       recordRadioSignal(current, "skipped", get().progress * 1000);
-    } else if (get().radio && current && !completed && get().isPlaying) {
+    } else if (current && (get().radio || current.djSessionId) && !completed && get().isPlaying) {
       reportDJEvent(current, "skip", get().progress * 1000);
     }
     if (repeat === "one") {
@@ -206,7 +208,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // Если прошло больше 3 секунд — перемотка в начало трека. Через seek(),
     // иначе движок звука не получает сигнал и трек продолжает играть дальше.
     if (progress > 3) {
-      if (get().radio && queue[currentIndex]) reportDJEvent(queue[currentIndex], "replay", progress * 1000);
+      if (queue[currentIndex]) reportDJEvent(queue[currentIndex], "replay", progress * 1000);
       get().seek(0);
       return;
     }
@@ -278,7 +280,13 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     resetRadioSession();
     set({
       queue: tracks?.length ? tracks : [track],
-      currentIndex: initial && tracks ? Math.max(0, tracks.findIndex((t) => t.id === initial.id)) : 0,
+      currentIndex:
+        initial && tracks
+          ? Math.max(
+              0,
+              tracks.findIndex((t) => t.id === initial.id),
+            )
+          : 0,
       progress: 0,
       engineDuration: 0,
       isPlaying: true,
@@ -297,6 +305,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // прослушивание попадало в SQLite дважды: список истории показывал
     // дубли, а профиль вкусов удваивал вес артиста.
     if (queue && queue.length > 0) {
+      queue.forEach((item) => reportDJEvent(item, "track_queued"));
       const index = Math.max(
         0,
         queue.findIndex((t) => t.id === track.id),

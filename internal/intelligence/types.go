@@ -29,18 +29,36 @@ type WeightedTag struct {
 }
 
 type TasteProfile struct {
-	Revision uint64        `json:"revision"`
-	Artists  []string      `json:"artists"`
-	Tags     []WeightedTag `json:"tags"`
+	Preferences    []ArtistPreference `json:"preferences"`
+	Positive       []TrackSummary     `json:"positive_examples"`
+	Negative       []TrackSummary     `json:"negative_examples"`
+	BlockedArtists []string           `json:"blocked_artists"`
+	Revision       uint64             `json:"revision"`
+	Artists        []string           `json:"artists"`
+	Tags           []WeightedTag      `json:"tags"`
+}
+type ArtistPreference struct {
+	Name         string  `json:"name"`
+	Weight       float64 `json:"weight"`
+	Confidence   float64 `json:"confidence"`
+	LastPlayedMS int64   `json:"last_played_ms"`
+}
+type SearchOutcome struct {
+	Iteration int      `json:"iteration"`
+	Queries   []string `json:"queries"`
+	Found     int      `json:"found"`
+	Accepted  int      `json:"accepted"`
+	Reason    string   `json:"reason"`
 }
 
 type SessionProfile struct {
-	ID        string        `json:"id"`
-	Revision  uint64        `json:"revision"`
-	Mode      RadioMode     `json:"mode"`
-	Seed      *TrackSummary `json:"seed"`
-	Intent    string        `json:"intent"`
-	PlayedIDs []string      `json:"played_ids"`
+	ID           string        `json:"id"`
+	Revision     uint64        `json:"revision"`
+	Mode         RadioMode     `json:"mode"`
+	Seed         *TrackSummary `json:"seed"`
+	Intent       string        `json:"intent"`
+	PlayedIDs    []string      `json:"played_ids"`
+	SuggestedIDs []string      `json:"suggested_ids"`
 }
 
 // Channel identifies metadata capabilities, not a playback service.
@@ -70,6 +88,7 @@ type Scope struct {
 }
 
 type PlanningInput struct {
+	Outcomes          []SearchOutcome `json:"previous_search_outcomes"`
 	RecentSuggestions []TrackSummary  `json:"recent_suggestions"`
 	Scope             Scope           `json:"scope"`
 	Taste             TasteProfile    `json:"taste"`
@@ -92,11 +111,21 @@ type SearchPlan struct {
 }
 
 type Candidate struct {
+	Evidence         Evidence     `json:"evidence"`
 	UnfamiliarArtist bool         `json:"unfamiliar_artist"`
 	ID               string       `json:"candidate_id"`
 	Track            TrackSummary `json:"track"`
 	BaseRank         int          `json:"base_rank"`
 	Channels         []Channel    `json:"channels"`
+}
+type Evidence struct {
+	TasteSimilarity   float64 `json:"taste_similarity"`
+	SeedSimilarity    float64 `json:"seed_similarity"`
+	SeedKnown         bool    `json:"seed_evidence_known"`
+	MetadataQuality   float64 `json:"metadata_quality"`
+	RecentlyPlayed    bool    `json:"recently_played"`
+	RecentlySuggested bool    `json:"recently_suggested"`
+	Version           string  `json:"version"`
 }
 
 type SelectionInput struct {
@@ -128,6 +157,10 @@ type SelectionPlan struct {
 type FeedbackKind string
 
 const (
+	FeedbackCandidate     FeedbackKind = "track_candidate_found"
+	FeedbackRecommended   FeedbackKind = "track_recommended"
+	FeedbackQueued        FeedbackKind = "track_queued"
+	FeedbackStarted       FeedbackKind = "playback_started"
 	FeedbackShown         FeedbackKind = "shown"
 	FeedbackLike          FeedbackKind = "like"
 	FeedbackDislike       FeedbackKind = "dislike"
@@ -138,6 +171,7 @@ const (
 )
 
 type FeedbackEvent struct {
+	Name       string       `json:"name"`
 	ID         string       `json:"id"`
 	SessionID  string       `json:"session_id"`
 	PlanID     string       `json:"plan_id"`

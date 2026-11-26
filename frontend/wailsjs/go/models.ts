@@ -70,6 +70,10 @@ export namespace core {
 	    }
 	}
 	export class DJSearchStatus {
+	    iteration: number;
+	    unique: number;
+	    accepted: number;
+	    elapsedMs: number;
 	    source: string;
 	    query: string;
 	    found: number;
@@ -81,6 +85,10 @@ export namespace core {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.iteration = source["iteration"];
+	        this.unique = source["unique"];
+	        this.accepted = source["accepted"];
+	        this.elapsedMs = source["elapsedMs"];
 	        this.source = source["source"];
 	        this.query = source["query"];
 	        this.found = source["found"];
@@ -88,6 +96,13 @@ export namespace core {
 	    }
 	}
 	export class DJDiagnostic {
+	    tokens: number;
+	    outcomes: intelligence.SearchOutcome[];
+	    jobId: string;
+	    resultId: string;
+	    sessionId: string;
+	    mode: string;
+	    iteration: number;
 	    configRevision: number;
 	    stage: string;
 	    error?: string;
@@ -103,6 +118,13 @@ export namespace core {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tokens = source["tokens"];
+	        this.outcomes = this.convertValues(source["outcomes"], intelligence.SearchOutcome);
+	        this.jobId = source["jobId"];
+	        this.resultId = source["resultId"];
+	        this.sessionId = source["sessionId"];
+	        this.mode = source["mode"];
+	        this.iteration = source["iteration"];
 	        this.configRevision = source["configRevision"];
 	        this.stage = source["stage"];
 	        this.error = source["error"];
@@ -490,6 +512,31 @@ export namespace domain {
 	        this.trackCount = source["trackCount"];
 	        this.createdAtMs = source["createdAtMs"];
 	        this.coverUrls = source["coverUrls"];
+	    }
+	}
+
+}
+
+export namespace intelligence {
+
+	export class SearchOutcome {
+	    iteration: number;
+	    queries: string[];
+	    found: number;
+	    accepted: number;
+	    reason: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SearchOutcome(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.iteration = source["iteration"];
+	        this.queries = source["queries"];
+	        this.found = source["found"];
+	        this.accepted = source["accepted"];
+	        this.reason = source["reason"];
 	    }
 	}
 

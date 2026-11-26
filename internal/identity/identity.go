@@ -104,6 +104,7 @@ func candidateFor(track domain.Track) domain.PlaybackCandidate {
 		Track:              track,
 		IdentityConfidence: 1,
 		Version:            detectVersion(track.Title),
+		Explicit:           detectVersion(track.Title) == domain.VersionExplicit,
 		Availability:       track.PlayableKind != domain.PlayableExternal,
 		Official:           track.Service != domain.ServiceSoundCloud,
 	}
@@ -179,6 +180,10 @@ func detectVersion(title string) domain.VersionKind {
 		return domain.VersionCover
 	case strings.Contains(normalized, "remaster") || strings.Contains(normalized, "remastered"):
 		return domain.VersionRemaster
+	case strings.Contains(normalized, "remix"):
+		return domain.VersionRemix
+	case strings.Contains(normalized, "explicit"):
+		return domain.VersionExplicit
 	case strings.Contains(normalized, "clean"):
 		return domain.VersionClean
 	default:

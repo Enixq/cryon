@@ -69,13 +69,23 @@ func TestDJSessionLifecycle(t *testing.T) {
 	if len(p.PlayedIDs) != 1 {
 		t.Fatal("playback error treated as play")
 	}
+	for _, kind := range []intelligence.FeedbackKind{intelligence.FeedbackCandidate, intelligence.FeedbackRecommended, intelligence.FeedbackQueued, intelligence.FeedbackStarted} {
+		event := intelligence.FeedbackEvent{ID: string(kind), SessionID: p.ID, TrackID: "offered", Kind: kind, At: time.Now().UTC()}
+		if _, err := s.RecordDJFeedback(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p, _, _ = s.DJSession(ctx, p.ID)
+	if p.Revision != 1 || len(p.PlayedIDs) != 1 || len(p.SuggestedIDs) != 1 || p.SuggestedIDs[0] != "offered" || p.Intent == "" {
+		t.Fatal("technical events changed taste or lost session context", p)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if events, err := s.DJFeedback(ctx, p.ID, 20); err != nil || len(events) != 2 {
+	if events, err := s.DJFeedback(ctx, p.ID, 20); err != nil || len(events) != 6 {
 		t.Fatal(events, err)
 	}
 	like := intelligence.FeedbackEvent{ID: "like", SessionID: p.ID, PlanID: "plan", TrackID: "track", Kind: intelligence.FeedbackLike, At: time.Now().UTC()}

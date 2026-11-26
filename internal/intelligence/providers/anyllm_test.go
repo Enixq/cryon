@@ -13,6 +13,20 @@ import (
 	"Cryon2/internal/intelligence"
 )
 
+func TestObservedTokenBudgetStopsNextPaidRequest(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+	defer server.Close()
+	d, err := New("compatible", "mock", "mock", server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.tokens = 12000
+	if _, err = d.PlanSearch(context.Background(), intelligence.PlanningInput{}); err == nil || calls.Load() != 0 {
+		t.Fatal("budget allowed another request", calls.Load(), err)
+	}
+}
+
 func TestProviderFailuresAndDeadline(t *testing.T) {
 	for _, status := range []int{401, 429, 500} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

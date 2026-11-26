@@ -1,4 +1,4 @@
-import { getDJCollection } from "../shared/api/intelligence";
+import { getDJCollection, getDJCollectionView } from "../shared/api/intelligence";
 import { IntelligencePanel } from "../shared/ui/IntelligencePanel";
 import { useEffect, useMemo } from "react";
 import { Play, RefreshCw, Sparkles } from "lucide-react";
@@ -152,7 +152,14 @@ export function CollectionPage() {
 
   const queryKey = useMemo(() => ["collection", kind], [kind]);
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
+  const {
+    data: legacyData,
+    isLoading: legacyLoading,
+    isFetching: legacyFetching,
+    error: legacyError,
+    refetch: legacyRefetch,
+  } = useQuery({
+    enabled: kind !== "cryon-ai",
     queryKey,
     queryFn: async () => {
       if (!kind) return [];
@@ -192,6 +199,19 @@ export function CollectionPage() {
     // Не фэйлим страницу при ошибке — показываем ошибку с кнопкой «Обновить».
     retry: false,
   });
+
+  const djView = useQuery({
+    queryKey: ["djCollection"],
+    queryFn: ({ signal }) => getDJCollectionView(signal),
+    enabled: kind === "cryon-ai",
+    refetchInterval: 2000,
+    retry: false,
+  });
+  const data = kind === "cryon-ai" ? djView.data?.tracks : legacyData;
+  const isLoading = kind === "cryon-ai" ? djView.isLoading : legacyLoading;
+  const isFetching = kind === "cryon-ai" ? djView.isFetching : legacyFetching;
+  const error = kind === "cryon-ai" ? djView.error : legacyError;
+  const refetch = kind === "cryon-ai" ? djView.refetch : legacyRefetch;
 
   const meta = (kind && collectionMeta[kind]) || {
     title: "Коллекция",
