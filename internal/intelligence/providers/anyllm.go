@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -13,18 +14,20 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
 	anyllm "github.com/mozilla-ai/any-llm-go"
-	"github.com/mozilla-ai/any-llm-go/config"
-	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
 
 type Director struct {
 	tokens     int
 	jsonOnly   bool
-	provider   anyllm.Provider
+	client     *http.Client
+	endpoint   string
+	key        string
 	model      string
 	claude     *anthropic.Client
 	lastStatus int
 }
+
+const RequestTimeout = 60 * time.Second
 
 func (d *Director) TokenUsage() int { return d.tokens }
 
@@ -64,25 +67,13 @@ func New(provider, model, key, baseURL string) (*Director, error) {
 			baseURL = "https://api.openai.com/v1"
 		}
 	}
-	d := &Director{model: model}
-	client := &http.Client{Timeout: 35 * time.Second, Transport: capTransport{base: http.DefaultTransport, status: &d.lastStatus}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	opts := []config.Option{config.WithAPIKey(key), config.WithHTTPClient(client), config.WithTimeout(35 * time.Second)}
-	if baseURL != "" {
-		opts = append(opts, config.WithBaseURL(baseURL))
-	}
-	var p anyllm.Provider
-	var err error
+	d := &Director{model: model, endpoint: baseURL, key: key}
+	client := &http.Client{Transport: capTransport{base: http.DefaultTransport, status: &d.lastStatus}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	d.client = client
 	if provider == "anthropic" {
 		sdk := anthropic.NewClient(anthropicoption.WithAPIKey(key), anthropicoption.WithBaseURL(baseURL), anthropicoption.WithHTTPClient(client), anthropicoption.WithMaxRetries(0))
 		d.claude = &sdk
-		return d, nil
-	} else {
-		p, err = openai.New(opts...)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("provider configuration rejected")
-	}
-	d.provider = p
 	d.jsonOnly = provider != "openai" || baseURL != "https://api.openai.com/v1"
 	return d, nil
 }
@@ -90,6 +81,8 @@ func (d *Director) generate(ctx context.Context, input any, output any, schema m
 	if d.tokens >= 12000 {
 		return fmt.Errorf("Достигнут бюджет токенов задачи; дальнейшие запросы остановлены")
 	}
+	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
+	defer cancel()
 	raw, err := json.Marshal(input)
 	if err != nil {
 		return err
@@ -118,23 +111,11 @@ func (d *Director) generate(ctx context.Context, input any, output any, schema m
 		}
 		return intelligence.DecodeStrict([]byte(resp.Content[0].Text), output)
 	}
-	resp, err := d.provider.Completion(ctx, anyllm.CompletionParams{Model: d.model, MaxTokens: &tokens, ResponseFormat: format, Messages: []anyllm.Message{
-		{Role: anyllm.RoleSystem, Content: system},
-		{Role: anyllm.RoleUser, Content: string(raw)},
-	}})
-	if resp != nil && resp.Usage != nil {
-		d.tokens += resp.Usage.TotalTokens
-	}
+	content, err := d.completeOpenAI(ctx, system, raw, format, tokens)
 	if err != nil {
-		return d.requestError(ctx, err)
+		return err
 	}
-	if resp == nil || len(resp.Choices) != 1 || resp.Choices[0].FinishReason != "stop" {
-		return fmt.Errorf("Модель не завершила JSON-ответ: проверьте поддержку формата и лимит ответа")
-	}
-	content, ok := resp.Choices[0].Message.Content.(string)
-	if !ok {
-		return fmt.Errorf("nontext provider response")
-	}
+
 	if err := intelligence.DecodeStrict([]byte(content), output); err != nil {
 		return fmt.Errorf("Модель вернула некорректную структуру JSON: %w", err)
 	}
@@ -166,10 +147,20 @@ func (d *Director) requestError(ctx context.Context, err error) error {
 	if d.lastStatus >= 500 {
 		return fmt.Errorf("Сервер AI-провайдера временно недоступен (HTTP %d)", d.lastStatus)
 	}
-	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return fmt.Errorf("Запрос модели отменён")
+	}
+	var networkError net.Error
+	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
 		return fmt.Errorf("Превышено время ожидания ответа модели")
 	}
-	return fmt.Errorf("Не удалось получить ответ модели; проверьте соединение и поддержку API")
+	if d.lastStatus >= 300 && d.lastStatus < 400 {
+		return fmt.Errorf("API перенаправляет запрос (HTTP %d); укажите конечный endpoint", d.lastStatus)
+	}
+	if d.lastStatus >= 200 && d.lastStatus < 300 {
+		return fmt.Errorf("API вернул HTTP %d, но ответ не совместим с форматом модели", d.lastStatus)
+	}
+	return fmt.Errorf("Соединение с AI API оборвалось до получения ответа; поиск музыки не начат")
 }
 
 const plannerInstruction = `Act as a bounded music research planner, not a playlist generator.

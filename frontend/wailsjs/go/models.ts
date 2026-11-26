@@ -96,6 +96,7 @@ export namespace core {
 	    }
 	}
 	export class DJDiagnostic {
+	    requestDeadlineAt?: string;
 	    tokens: number;
 	    outcomes: intelligence.SearchOutcome[];
 	    jobId: string;
@@ -118,6 +119,7 @@ export namespace core {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.requestDeadlineAt = source["requestDeadlineAt"];
 	        this.tokens = source["tokens"];
 	        this.outcomes = this.convertValues(source["outcomes"], intelligence.SearchOutcome);
 	        this.jobId = source["jobId"];

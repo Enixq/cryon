@@ -18,21 +18,22 @@ type DJSearchStatus struct {
 	State     string `json:"state"`
 }
 type DJDiagnostic struct {
-	Tokens         int                          `json:"tokens"`
-	Outcomes       []intelligence.SearchOutcome `json:"outcomes"`
-	JobID          string                       `json:"jobId"`
-	ResultID       string                       `json:"resultId"`
-	SessionID      string                       `json:"sessionId"`
-	Mode           string                       `json:"mode"`
-	Iteration      int                          `json:"iteration"`
-	ConfigRevision uint64                       `json:"configRevision"`
-	Stage          string                       `json:"stage"`
-	Error          string                       `json:"error,omitempty"`
-	Found          int                          `json:"found"`
-	Candidates     int                          `json:"candidates"`
-	Selected       int                          `json:"selected"`
-	Searches       []DJSearchStatus             `json:"searches"`
-	UpdatedAt      string                       `json:"updatedAt"`
+	RequestDeadlineAt string                       `json:"requestDeadlineAt,omitempty"`
+	Tokens            int                          `json:"tokens"`
+	Outcomes          []intelligence.SearchOutcome `json:"outcomes"`
+	JobID             string                       `json:"jobId"`
+	ResultID          string                       `json:"resultId"`
+	SessionID         string                       `json:"sessionId"`
+	Mode              string                       `json:"mode"`
+	Iteration         int                          `json:"iteration"`
+	ConfigRevision    uint64                       `json:"configRevision"`
+	Stage             string                       `json:"stage"`
+	Error             string                       `json:"error,omitempty"`
+	Found             int                          `json:"found"`
+	Candidates        int                          `json:"candidates"`
+	Selected          int                          `json:"selected"`
+	Searches          []DJSearchStatus             `json:"searches"`
+	UpdatedAt         string                       `json:"updatedAt"`
 }
 
 func (a *App) saveDJDiagnostic(ctx context.Context, d DJDiagnostic) {

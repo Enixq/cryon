@@ -364,6 +364,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		success := false
 
 		defer func() {
+			diagnostic.RequestDeadlineAt = ""
 			if !success && diagnostic.Error == "" {
 				if ctx.Err() != nil {
 					diagnostic.Error = "Подготовка прервана или превышено время ожидания"
@@ -473,6 +474,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			}
 			diagnostic.Iteration = iteration + 1
 			diagnostic.Stage = "planning"
+			diagnostic.RequestDeadlineAt = time.Now().Add(djproviders.RequestTimeout).UTC().Format(time.RFC3339)
 			a.saveDJDiagnostic(ctx, diagnostic)
 			input.Scope.RequestID = djID()
 			limits := intelligence.Limits{MaxSteps: 5, MaxCandidates: 40, MaxDirections: 3, MaxQueryRunes: 120, MaxReasonRunes: 160}
@@ -513,6 +515,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 				queries = append(queries, step.Channel.Provider+"/"+step.Channel.Capability+": "+step.Query)
 			}
 			diagnostic.Stage = "searching"
+			diagnostic.RequestDeadlineAt = ""
 			searchOffset := len(diagnostic.Searches)
 			diagnostic.Searches = append(diagnostic.Searches, make([]DJSearchStatus, len(plan.Steps))...)
 			for i, step := range plan.Steps {
@@ -603,6 +606,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 				break
 			}
 			diagnostic.Stage = "ranking"
+			diagnostic.RequestDeadlineAt = time.Now().Add(djproviders.RequestTimeout).UTC().Format(time.RFC3339)
 			a.saveDJDiagnostic(ctx, diagnostic)
 			candidates = []intelligence.Candidate{}
 			unfamiliar := a.reco.DJUnfamiliarArtists(ctx, pool)
@@ -628,6 +632,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 				return
 			}
 			diagnostic.Stage = "saving"
+			diagnostic.RequestDeadlineAt = ""
 			a.saveDJDiagnostic(ctx, diagnostic)
 			current, exists, err := repo.DJSession(ctx, session.ID)
 			if err != nil || !exists || current.ID != session.ID || ctx.Err() != nil {
@@ -720,6 +725,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		diagnostic.Error = ""
 		diagnostic.Outcomes = input.Outcomes
 		diagnostic.Stage = "saving"
+		diagnostic.RequestDeadlineAt = ""
 		a.saveDJDiagnostic(ctx, diagnostic)
 		diagnostic.ResultID = selection.PoolID
 		latest, _ := json.Marshal(djCollection{JobID: jobID, ResultID: selection.PoolID, SessionID: session.ID, Tracks: ordered, UpdatedAt: time.Now().UTC().Format(time.RFC3339)})

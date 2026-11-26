@@ -1,4 +1,4 @@
-import { getDJCollection, getDJCollectionView } from "../shared/api/intelligence";
+import { getDJCollection, getDJCollectionView, djPollingOptions } from "../shared/api/intelligence";
 import { IntelligencePanel } from "../shared/ui/IntelligencePanel";
 import { useEffect, useMemo } from "react";
 import { Play, RefreshCw, Sparkles } from "lucide-react";
@@ -201,6 +201,7 @@ export function CollectionPage() {
   });
 
   const djView = useQuery({
+    ...djPollingOptions,
     queryKey: ["djCollection"],
     queryFn: ({ signal }) => getDJCollectionView(signal),
     enabled: kind === "cryon-ai",

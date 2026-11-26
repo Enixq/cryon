@@ -1,8 +1,13 @@
 import { pluralWithCount } from "../lib/format";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { getDJStatus, getDJCollectionView, refreshDJCollection } from "../api/intelligence";
+import {
+  getDJStatus,
+  getDJCollectionView,
+  refreshDJCollection,
+  djPollingOptions,
+} from "../api/intelligence";
 import { hasApiV1Runtime } from "../api/v1";
 
 export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
@@ -17,6 +22,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
     refetchInterval: 4000,
   });
   const { data: view, error: viewError } = useQuery({
+    ...djPollingOptions,
     queryKey: ["djCollection"],
     queryFn: ({ signal }) => getDJCollectionView(signal),
     enabled: hasApiV1Runtime(),
@@ -26,6 +32,16 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
   const preparingStages = ["planning", "searching", "ranking", "saving"];
   const active = status?.enabled && status.configured;
   const preparing = preparingStages.includes(job?.stage ?? "");
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!preparing) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [preparing]);
+  const remaining = job?.requestDeadlineAt
+    ? Math.max(0, Math.ceil((Date.parse(job.requestDeadlineAt) - now) / 1000))
+    : undefined;
   const diagnostic = job;
   const stages: Record<string, string> = {
     planning: "AI планирует поиск музыки…",
@@ -52,7 +68,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
     setMessage("");
     try {
       await refreshDJCollection();
-      setMessage("Поиск запущен. Треки появятся автоматически.");
+      setMessage("Задача запущена. Здесь появится результат или причина ошибки.");
       await Promise.all([
         client.invalidateQueries({ queryKey: ["intelligenceStatus"] }),
         client.invalidateQueries({ queryKey: ["djCollection"] }),
@@ -66,6 +82,16 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
   return (
     <section className="rounded-2xl border border-purple-400/20 bg-purple-500/5 p-4 text-sm">
       <div className="font-semibold text-white">Cryon DJ · {label}</div>
+      {preparing && remaining !== undefined && Number.isFinite(remaining) && (
+        <p role="status" className="mt-1 text-slate-400">
+          {remaining > 0
+            ? `Ожидаем ответ модели · осталось до ${remaining} с`
+            : "Время ожидания модели истекло. Обновляем статус задачи…"}
+          {job?.stage === "planning" && remaining > 0
+            ? ". Поиск по музыкальным источникам ещё не начат."
+            : ""}
+        </p>
+      )}
       {view?.updatedAt && (
         <p className="mt-1 text-slate-400">
           {job?.jobId && job.jobId !== view.jobId ? "Предыдущая подборка" : "Cryon DJ"} ·{" "}
@@ -124,7 +150,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
       </div>
       {message &&
         !(
-          message.startsWith("Поиск запущен") &&
+          message.startsWith("Задача запущена") &&
           ["ready", "failed", "cancelled"].includes(diagnostic?.stage ?? "")
         ) && (
           <p role="status" className="mt-2 text-slate-300">

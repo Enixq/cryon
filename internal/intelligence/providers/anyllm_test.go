@@ -13,6 +13,28 @@ import (
 	"Cryon2/internal/intelligence"
 )
 
+type deadlineTransport struct{ calls atomic.Int32 }
+
+func (t *deadlineTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	t.calls.Add(1)
+	return nil, context.DeadlineExceeded
+}
+
+func TestTransportDeadlineIsNotHiddenBySDKRetry(t *testing.T) {
+	previous := http.DefaultTransport
+	transport := &deadlineTransport{}
+	http.DefaultTransport = transport
+	defer func() { http.DefaultTransport = previous }()
+	d, err := New("compatible", "mock", "mock", "https://example.invalid/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.PlanSearch(context.Background(), intelligence.PlanningInput{})
+	if err == nil || !strings.Contains(err.Error(), "время") || transport.calls.Load() != 1 {
+		t.Fatal("timeout cause lost", err, transport.calls.Load())
+	}
+}
+
 func TestObservedTokenBudgetStopsNextPaidRequest(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))

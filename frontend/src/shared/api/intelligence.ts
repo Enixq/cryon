@@ -3,7 +3,16 @@ import { toBackendTrack, mapTracks } from "./mappers";
 import type { Track } from "../types";
 import type { domain } from "../../../wailsjs/go/models";
 
+export const djPollingOptions = {
+  staleTime: 0,
+  refetchInterval: 2000,
+  refetchIntervalInBackground: true,
+  refetchOnWindowFocus: "always" as const,
+  refetchOnReconnect: "always" as const,
+};
+
 export type DJDiagnostic = {
+  requestDeadlineAt?: string;
   jobId?: string;
   resultId?: string;
   sessionId?: string;
