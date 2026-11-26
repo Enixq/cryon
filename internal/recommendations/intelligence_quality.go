@@ -127,7 +127,7 @@ func (e *Engine) SelectDJ(ctx context.Context, pool []domain.Track, candidates [
 				score -= .12
 			}
 			track := pool[i]
-			track.RecommendationReason = "Cryon DJ · оценка модели: " + decision.Reason
+			track.RecommendationReason = "Cryon DJ · " + decision.Reason
 			accepted = append(accepted, ranked{track, score})
 		}
 	}

@@ -44,15 +44,15 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
     : undefined;
   const diagnostic = job;
   const stages: Record<string, string> = {
-    planning: "AI планирует поиск музыки…",
-    searching: "Ищем треки по плану AI…",
+    planning: "Строим персональный план по вашему вкусу…",
+    searching: "Ищем музыку через Discovery и музыкальные связи…",
     ranking: "AI оценивает найденные треки…",
     saving: "Сохраняем подборку…",
   };
   const label = !status
     ? "Проверяем подключение AI DJ…"
     : !active
-      ? "AI DJ выключен — работают обычные рекомендации"
+      ? "Персональные рекомендации Cryon · без AI API"
       : viewError
         ? "Не удалось обновить подборку. Проверяем соединение…"
         : preparing
@@ -61,7 +61,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
             ? diagnostic?.error ||
               "Предыдущая попытка не завершилась. Запустите поиск для подробной диагностики"
             : view?.updatedAt
-              ? "AI-подборка готова"
+              ? (job?.engine === "personal" ? "Персональная подборка готова · без AI-корректировки" : "AI-подборка готова")
               : "AI подключён. Запустите подборку или радио";
   const start = async () => {
     setStarting(true);
@@ -92,6 +92,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
             : ""}
         </p>
       )}
+      {job?.warning && <p className="mt-2 text-slate-400">{job.warning}</p>}
       {view?.updatedAt && (
         <p className="mt-1 text-slate-400">
           {job?.jobId && job.jobId !== view.jobId ? "Предыдущая подборка" : "Cryon DJ"} ·{" "}
@@ -129,7 +130,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
         </div>
       )}
       <div className="mt-3 flex flex-wrap gap-3">
-        {active ? (
+        {status ? (
           <button
             disabled={starting}
             onClick={() => void start()}

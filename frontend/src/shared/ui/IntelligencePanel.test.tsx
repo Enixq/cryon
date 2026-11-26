@@ -74,7 +74,7 @@ it("updates the result and status from the same collection snapshot, retaining o
   );
   await screen.findByText("Cryon DJ · AI-подборка готова");
   fireEvent.click(screen.getByText("Подобрать музыку"));
-  await screen.findByText("Cryon DJ · Ищем треки по плану AI…");
+  await screen.findByText("Cryon DJ · Ищем музыку через Discovery и музыкальные связи…");
   expect(screen.getByTestId("tracks")).toHaveTextContent("old-result");
   expect(screen.getByText(/Предыдущая подборка/)).toBeInTheDocument();
   view = {
@@ -135,7 +135,7 @@ it("refreshes an unfinished DJ job on focus despite the application's disabled f
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  await screen.findByText("Cryon DJ · AI планирует поиск музыки…");
+  await screen.findByText("Cryon DJ · Строим персональный план по вашему вкусу…");
   expect(screen.getByText(/Поиск по музыкальным источникам ещё не начат/)).toBeInTheDocument();
   act(() => focusManager.setFocused(false));
   view = {

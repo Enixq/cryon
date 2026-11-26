@@ -40,10 +40,7 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost {
 		cfg := a.djConfig(r.Context())
-		if !cfg.Enabled || cfg.APIKey == "" {
-			writeAPIError(w, 400, "Включите AI DJ и укажите модель и ключ в настройках")
-			return
-		}
+
 		repo, ok := a.store.(intelligence.SessionRepository)
 		if !ok || a.reco == nil {
 			writeAPIError(w, 503, "движок недоступен")
@@ -99,7 +96,7 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 			}
 			a.dj.Unlock()
 		}
-		if a.IntelligenceStatus().UsedToday >= cfg.DailySegments {
+		if cfg.Enabled && cfg.APIKey != "" && a.IntelligenceStatus().UsedToday >= cfg.DailySegments {
 			writeAPIError(w, 429, "Достигнут дневной лимит AI-подборок")
 			return
 		}

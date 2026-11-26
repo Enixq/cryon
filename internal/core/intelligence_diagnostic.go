@@ -18,6 +18,8 @@ type DJSearchStatus struct {
 	State     string `json:"state"`
 }
 type DJDiagnostic struct {
+	Engine            string                       `json:"engine,omitempty"`
+	Warning           string                       `json:"warning,omitempty"`
 	RequestDeadlineAt string                       `json:"requestDeadlineAt,omitempty"`
 	Tokens            int                          `json:"tokens"`
 	Outcomes          []intelligence.SearchOutcome `json:"outcomes"`

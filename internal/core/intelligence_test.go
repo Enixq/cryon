@@ -129,14 +129,7 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 		if _, ok := input["pool_id"]; ok {
 			var selection intelligence.SelectionInput
 			_ = json.Unmarshal([]byte(request.Messages[1].Content), &selection)
-			if len(selection.Context.Outcomes) == 0 {
-				output = intelligence.SelectionPlan{Scope: selection.Context.Scope, PoolID: selection.PoolID, Ranked: []intelligence.CandidateDecision{}, Avoid: []string{}, Directions: []intelligence.Direction{}}
-			} else {
-				if selection.Context.Outcomes[0].Accepted != 0 {
-					t.Error("failed search outcome missing")
-				}
-				output = intelligence.SelectionPlan{Scope: selection.Context.Scope, PoolID: selection.PoolID, Ranked: []intelligence.CandidateDecision{{ID: selection.Candidates[0].ID, Score: .9, Reason: "Подходит текущей сессии"}}, Avoid: []string{}, Directions: []intelligence.Direction{}}
-			}
+			output = intelligence.SelectionPlan{Scope: selection.Context.Scope, PoolID: selection.PoolID, Ranked: []intelligence.CandidateDecision{{ID: selection.Candidates[0].ID, Score: .9, Reason: "Подходит текущей сессии"}}, Avoid: []string{}, Directions: []intelligence.Direction{}}
 		} else {
 			var planning intelligence.PlanningInput
 			_ = json.Unmarshal([]byte(request.Messages[1].Content), &planning)
@@ -149,6 +142,9 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 	defer server.Close()
 	a.reco = recommendations.New(st, lastfm.New(""), nil, func(context.Context, string) ([]domain.Track, error) {
 		return []domain.Track{{ID: "new", Service: domain.ServiceSoundCloud, Title: "New", Artists: []string{"Unknown artist"}, PlayableKind: domain.PlayableStream}}, context.DeadlineExceeded
+	})
+	a.reco.SetTrackSimilarity(func(context.Context, domain.Track) ([]domain.Track, error) {
+		return []domain.Track{{ID: "new", Service: domain.ServiceSoundCloud, Title: "New", Artists: []string{"Unknown artist"}, DurationMs: 180000}}, context.DeadlineExceeded
 	})
 	cfg := DJConfig{Enabled: true, Provider: "compatible", Model: "test", APIKey: "test", BaseURL: server.URL, Revision: 1, DailySegments: 10}
 	raw, _ := json.Marshal(cfg)
@@ -180,19 +176,19 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 		t.Fatal("planner/selector pipeline failed")
 	}
 	diagnostic := a.IntelligenceStatus().Diagnostic
-	if diagnostic.Stage != "ready" || diagnostic.Found != 2 || diagnostic.Selected != 1 || len(diagnostic.Searches) != 2 || diagnostic.Searches[0].State != "error" {
+	if diagnostic.Stage != "ready" || diagnostic.Found != 1 || diagnostic.Selected != 1 || len(diagnostic.Searches) != 2 || diagnostic.Searches[0].State != "error" {
 		t.Fatal("partial source results or diagnostics lost", diagnostic)
 	}
 	collection := a.loadDJCollection(ctx)
-	if collection.JobID == "" || collection.ResultID == "" || collection.Job.JobID != collection.JobID || collection.Job.ResultID != collection.ResultID || len(diagnostic.Outcomes) != 2 {
+	if collection.JobID == "" || collection.ResultID == "" || collection.Job.JobID != collection.JobID || collection.Job.ResultID != collection.ResultID || len(diagnostic.Outcomes) != 1 {
 		t.Fatal("job/result mismatch", collection, diagnostic)
 	}
 	// An independent radio job must never replace the manual collection.
-	radioSession := intelligence.SessionProfile{ID: "isolated-radio", Mode: intelligence.RadioInfinite}
+	radioSession := intelligence.SessionProfile{ID: "isolated-radio", Mode: intelligence.RadioTrack, Seed: session.Seed}
 	if err := st.CreateDJSession(ctx, radioSession); err != nil {
 		t.Fatal(err)
 	}
-	a.prepareDJ(cfg, radioSession, a.reco.IntelligenceTaste(ctx), djRadioRequest{SessionID: radioSession.ID, Mode: intelligence.RadioInfinite, Limit: 2}, nil)
+	a.prepareDJ(cfg, radioSession, a.reco.IntelligenceTaste(ctx), djRadioRequest{SessionID: radioSession.ID, Mode: intelligence.RadioTrack, Track: req.Track, Limit: 2}, nil)
 	a.dj.Lock()
 	radioDone := a.dj.done
 	a.dj.Unlock()
@@ -204,8 +200,8 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 	if current := a.loadDJCollection(ctx); current.ResultID != collection.ResultID || current.Job.JobID != collection.JobID {
 		t.Fatal("radio overwrote collection", current)
 	}
-	if raw, ok, _ := st.SettingGet(ctx, "intelligence.private.radioResult."+radioSession.ID); !ok || !strings.Contains(raw, "djPlanId") {
-		t.Fatal("radio result absent", raw)
+	if raw, ok, _ := st.SettingGet(ctx, "intelligence.private.radioResult."+radioSession.ID); ok || raw != "" {
+		t.Fatal("recently suggested track recommended again", raw)
 	}
 	// A reaction after preparation must not discard otherwise usable AI work.
 	_, err = st.RecordDJFeedback(ctx, intelligence.FeedbackEvent{ID: "reaction", SessionID: session.ID, TrackID: "soundcloud:other", Kind: intelligence.FeedbackCompleted, At: time.Now(), PlayedMS: 10000, DurationMS: 10000})

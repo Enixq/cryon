@@ -60,10 +60,20 @@ func TestDJManualRestartCancelsWorkerWithoutCooldownOrOldResultLoss(t *testing.T
 	defer server.Close()
 	defer close(release)
 	a := &App{ctx: ctx, store: st, reco: recommendations.New(st, nil, nil, nil)}
+	a.reco.SetTrackSimilarity(func(ctx context.Context, _ domain.Track) ([]domain.Track, error) {
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		}
+		return nil, nil
+	})
 	cfg := DJConfig{Enabled: true, Provider: "compatible", Model: "mock", APIKey: "mock", BaseURL: server.URL, Revision: 1, DailySegments: 10}
 	raw, _ := json.Marshal(cfg)
 	_ = st.SettingSet(ctx, djConfigKey, string(raw))
-	session := intelligence.SessionProfile{ID: "manual", Mode: intelligence.RadioInfinite}
+	session := intelligence.SessionProfile{ID: "manual", Mode: intelligence.RadioTrack, Seed: &intelligence.TrackSummary{ID: "seed"}}
 	if err := st.CreateDJSession(ctx, session); err != nil {
 		t.Fatal(err)
 	}

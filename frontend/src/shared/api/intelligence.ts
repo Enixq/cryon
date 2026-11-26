@@ -13,6 +13,8 @@ export const djPollingOptions = {
 
 export type DJDiagnostic = {
   requestDeadlineAt?: string;
+  engine?: string;
+  warning?: string;
   jobId?: string;
   resultId?: string;
   sessionId?: string;

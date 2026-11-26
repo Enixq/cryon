@@ -300,7 +300,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		}
 	}
 	currentConfig := a.djConfig(context.Background())
-	if !currentConfig.Enabled || currentConfig.APIKey == "" || currentConfig.Revision != cfg.Revision {
+	if currentConfig.Revision != cfg.Revision || (!req.Collection && (!currentConfig.Enabled || currentConfig.APIKey == "")) {
 		a.dj.Unlock()
 		return
 	}
@@ -325,7 +325,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			}
 		}
 	}
-	if a.dj.busy || time.Now().Before(a.dj.cooldown) || a.dj.used >= cfg.DailySegments {
+	if a.dj.busy || time.Now().Before(a.dj.cooldown) || (cfg.Enabled && cfg.APIKey != "" && a.dj.used >= cfg.DailySegments) {
 		a.dj.Unlock()
 		return
 	}
@@ -338,7 +338,9 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 	a.dj.done = make(chan struct{})
 	done := a.dj.done
 	a.dj.cancel = cancel
-	a.dj.used++
+	if cfg.Enabled && cfg.APIKey != "" {
+		a.dj.used++
+	}
 	usage, _ := json.Marshal(djUsage{day, a.dj.used, a.dj.tokens})
 	if err := a.store.SettingSet(ctx, "intelligence.private.usage", string(usage)); err != nil {
 		a.dj.busy = false
@@ -412,7 +414,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		recent = reactions
 		input := intelligence.PlanningInput{Scope: intelligence.Scope{RequestID: djID(), SessionID: session.ID, SessionRevision: session.Revision, TasteRevision: taste.Revision, ConfigRevision: cfg.Revision}, Taste: taste, Session: session, Channels: a.reco.DJChannels(), Recent: recent}
 		// Similar-track channels require a real seed. A standalone collection has none.
-		if req.Track.ID == "" {
+		if req.Track.ID == "" && session.Seed == nil {
 			channels := input.Channels[:0]
 			for _, c := range input.Channels {
 				if c.Channel.Capability != "similar_tracks" {
@@ -447,13 +449,16 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		if base == "" && cfg.Provider == "deepseek" {
 			base = "https://api.deepseek.com"
 		}
-		director, err := djproviders.New(cfg.Provider, cfg.Model, cfg.APIKey, base)
-		if err != nil {
-			return
+		var director *djproviders.Director
+		if cfg.Enabled && cfg.APIKey != "" {
+			director, _ = djproviders.New(cfg.Provider, cfg.Model, cfg.APIKey, base)
 		}
 		defer func() {
 			a.dj.Lock()
 			defer a.dj.Unlock()
+			if director == nil {
+				return
+			}
 			diagnostic.Tokens = director.TokenUsage()
 			a.dj.tokens += director.TokenUsage()
 			raw, _ := json.Marshal(djUsage{a.dj.day, a.dj.used, a.dj.tokens})
@@ -465,20 +470,21 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		var pool, bestPool, ordered, bestTracks []domain.Track
 		var candidates, bestCandidates []intelligence.Candidate
 		visited := map[string]bool{}
-		for iteration := 0; iteration < 2; iteration++ {
+		for iteration := 0; iteration < 1; iteration++ {
 			if ctx.Err() != nil {
 				return
 			}
-			if iteration > 0 && director.TokenUsage() >= 12000 {
+			if iteration > 0 && director != nil && director.TokenUsage() >= 12000 {
 				break
 			}
 			diagnostic.Iteration = iteration + 1
 			diagnostic.Stage = "planning"
-			diagnostic.RequestDeadlineAt = time.Now().Add(djproviders.RequestTimeout).UTC().Format(time.RFC3339)
+			diagnostic.RequestDeadlineAt = ""
 			a.saveDJDiagnostic(ctx, diagnostic)
 			input.Scope.RequestID = djID()
 			limits := intelligence.Limits{MaxSteps: 5, MaxCandidates: 40, MaxDirections: 3, MaxQueryRunes: 120, MaxReasonRunes: 160}
-			plan, err = director.PlanSearch(ctx, input)
+			plan = intelligence.PersonalSearch(input)
+			err = nil
 			if err != nil {
 				diagnostic.Error = err.Error()
 				if iteration > 0 {
@@ -493,7 +499,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 				}
 				return
 			}
-			plan = intelligence.EnsureCatalogCoverage(input, plan, limits)
+			// Graph discovery resolves through existing catalogs; no arbitrary name probes.
 			steps := plan.Steps[:0]
 			for _, step := range plan.Steps {
 				key := step.Channel.Provider + "/" + step.Channel.Capability + ":" + strings.ToLower(strings.TrimSpace(step.Query))
@@ -533,7 +539,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 				go func(index int, step intelligence.SearchStep) {
 					defer wg.Done()
 					defer a.recoverGoroutine("intelligence channel")
-					stepCtx, stop := context.WithTimeout(ctx, 12*time.Second)
+					stepCtx, stop := context.WithTimeout(ctx, 45*time.Second)
 					defer stop()
 					started := time.Now()
 					tracks, e := a.reco.ExecuteDJStep(stepCtx, step, req.Track)
@@ -616,21 +622,32 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			}
 			input.Scope.RequestID = djID()
 			selection = intelligence.SelectionInput{Strategy: plan.Strategy, Context: input, PoolID: djID(), Candidates: candidates}
-			ranked, err = director.Select(ctx, selection)
-			if err != nil {
-				diagnostic.Error = err.Error()
-				if iteration > 0 {
-					break
+			ranked = intelligence.PersonalSelection(selection)
+			diagnostic.Engine = "personal"
+			if director != nil && len(ranked.Ranked) > 0 {
+				proposed, modelErr := director.Select(ctx, selection)
+				if modelErr == nil {
+					modelErr = intelligence.ValidateSelection(selection, proposed, limits)
 				}
-				return
-			}
-			if err = intelligence.ValidateSelection(selection, ranked, limits); err != nil {
-				diagnostic.Error = "Ранжирование модели отклонено: " + err.Error()
-				if iteration > 0 {
-					break
+				if modelErr == nil {
+					admitted := map[string]bool{}
+					for _, decision := range ranked.Ranked {
+						admitted[decision.ID] = true
+					}
+					filtered := proposed.Ranked[:0]
+					for _, decision := range proposed.Ranked {
+						if admitted[decision.ID] {
+							filtered = append(filtered, decision)
+						}
+					}
+					proposed.Ranked = filtered
+					ranked = proposed
+					diagnostic.Engine = "ai"
+				} else {
+					diagnostic.Warning = "AI-корректировка не применена: " + modelErr.Error() + "; использована персональная оценка Cryon"
 				}
-				return
 			}
+
 			diagnostic.Stage = "saving"
 			diagnostic.RequestDeadlineAt = ""
 			a.saveDJDiagnostic(ctx, diagnostic)
