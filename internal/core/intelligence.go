@@ -540,6 +540,10 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 					defer wg.Done()
 					defer a.recoverGoroutine("intelligence channel")
 					stepCtx, stop := context.WithTimeout(ctx, 45*time.Second)
+					if step.Channel.Capability == "discovery" || step.Channel.Capability == "taste_neighbors" {
+						stop()
+						stepCtx, stop = context.WithTimeout(ctx, 8*time.Second)
+					}
 					defer stop()
 					started := time.Now()
 					tracks, e := a.reco.ExecuteDJStep(stepCtx, step, req.Track)
@@ -604,6 +608,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			pool = a.reco.FinalizeDJ(ctx, pool, exclude, 40)
 			diagnostic.Candidates = len(pool)
 			if len(pool) == 0 {
+				diagnostic.Error = "Источники не вернули доступные треки; оценка качества и AI не запускались"
 				input.Outcomes = append(input.Outcomes, intelligence.SearchOutcome{Iteration: iteration + 1, Queries: queries, Reason: "No usable candidates; change direction or provider"})
 				if iteration == 0 {
 					continue
@@ -623,6 +628,8 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			input.Scope.RequestID = djID()
 			selection = intelligence.SelectionInput{Strategy: plan.Strategy, Context: input, PoolID: djID(), Candidates: candidates}
 			ranked = intelligence.PersonalSelection(selection)
+			diagnostic.LocalAdmitted = len(ranked.Ranked)
+			diagnostic.AISelected = 0
 			diagnostic.Engine = "personal"
 			if director != nil && len(ranked.Ranked) > 0 {
 				proposed, modelErr := director.Select(ctx, selection)
@@ -641,6 +648,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 						}
 					}
 					proposed.Ranked = filtered
+					diagnostic.AISelected = len(filtered)
 					ranked = proposed
 					diagnostic.Engine = "ai"
 				} else {
@@ -721,7 +729,9 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		ordered, pool, candidates, plan, ranked, selection = bestTracks, bestPool, bestCandidates, bestPlan, bestRanked, bestSelection
 		if len(ordered) == 0 {
 			diagnostic.Outcomes = input.Outcomes
-			diagnostic.Error = "Кандидаты не прошли пороги качества. Старый результат сохранён"
+			if diagnostic.Error == "" {
+				diagnostic.Error = "Кандидаты не прошли отбор. Предыдущая подборка не обновлена"
+			}
 			return
 		}
 

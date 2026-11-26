@@ -109,7 +109,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
       {diagnostic && diagnostic.stage && (
         <div className="mt-2 text-slate-400">
           Итерация: {diagnostic.iteration ?? 1} · найдено: {diagnostic.found} · допущено к оценке:{" "}
-          {diagnostic.candidates} · в результате: {diagnostic.selected}
+          {diagnostic.candidates} · отбор Cryon: {diagnostic.localAdmitted ?? "—"} · отбор AI: {diagnostic.engine === "ai" ? diagnostic.aiSelected ?? 0 : "не применён"} · в результате: {diagnostic.selected}
           {(diagnostic.searches ?? []).length > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer">Как DJ искал музыку</summary>

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"Cryon2/internal/domain"
 	"Cryon2/internal/identity"
@@ -20,6 +22,9 @@ func (e *Engine) SetDJSourceSearch(sources func() []string, search func(context.
 
 func (e *Engine) DJChannels() []intelligence.ChannelBudget {
 	out := []intelligence.ChannelBudget{{Channel: intelligence.Channel{Provider: "cryon", Capability: "discovery"}, MaxCandidates: 40}}
+	if e.trackSimilar != nil && e.favFn != nil {
+		out = append(out, intelligence.ChannelBudget{Channel: intelligence.Channel{Provider: "cryon", Capability: "taste_neighbors"}, MaxCandidates: 20})
+	}
 	if e.favFn != nil || e.histFn != nil {
 		out = append(out, intelligence.ChannelBudget{Channel: intelligence.Channel{Provider: "cryon", Capability: "library"}, MaxCandidates: 20})
 	}
@@ -67,7 +72,11 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 				}
 			}
 		case (intelligence.Channel{Provider: "cryon", Capability: "discovery"}):
-			tracks, err = e.AutoMix(ctx, MixWeekly, step.Limit)
+			// Only graph-derived candidates belong to this channel. AutoMix's
+			// fallback searches favorite names and cannot supply graph evidence.
+			tracks = e.discoveryMix(ctx, step.Limit)
+		case (intelligence.Channel{Provider: "cryon", Capability: "taste_neighbors"}):
+			tracks = e.tasteNeighbors(ctx, step.Limit)
 		case (intelligence.Channel{Provider: "cryon", Capability: "catalog_search"}):
 			if strings.Contains(step.Query, "://") {
 				return nil, nil
@@ -111,6 +120,38 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 		filtered = filtered[:step.Limit]
 	}
 	return filtered, err
+}
+
+// Independent bounded requests: slow graph expansion cannot starve playable
+// neighbors of actual favorites. Never use generic catalog text search here.
+func (e *Engine) tasteNeighbors(ctx context.Context, limit int) []domain.Track {
+	if e.favFn == nil || e.trackSimilar == nil {
+		return nil
+	}
+	seeds, err := e.favFn(ctx)
+	if err != nil {
+		return nil
+	}
+	if len(seeds) > 3 {
+		seeds = seeds[:3]
+	}
+	rows := make([][]domain.Track, len(seeds))
+	var wg sync.WaitGroup
+	for i, seed := range seeds {
+		wg.Add(1)
+		go func(i int, seed domain.Track) {
+			defer wg.Done()
+			child, cancel := context.WithTimeout(ctx, 8*time.Second)
+			defer cancel()
+			rows[i], _ = e.trackSimilar(child, seed)
+		}(i, seed)
+	}
+	wg.Wait()
+	out := []domain.Track{}
+	for _, row := range rows {
+		out = append(out, row...)
+	}
+	return e.FinalizeDJ(ctx, filterUnseen(out, e.buildTaste(ctx)), seeds, limit)
 }
 
 // Prevent the first catalog in aggregated search from consuming the whole budget.

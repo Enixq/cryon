@@ -10,6 +10,15 @@ import (
 func PersonalSearch(in PlanningInput) SearchPlan {
 	p := SearchPlan{Scope: in.Scope, Strategy: Strategy{Exploration: .7, Diversity: .7, SeedAdherence: .8}, Steps: []SearchStep{}}
 	remaining := 40
+	if in.Session.Mode == RadioInfinite {
+		for _, c := range in.Channels {
+			if c.Channel.Capability == "taste_neighbors" {
+				n := min(20, c.MaxCandidates)
+				p.Steps = append(p.Steps, SearchStep{Channel: c.Channel, Query: "favorite track neighbors", Limit: n})
+				remaining -= n
+			}
+		}
+	}
 	for _, c := range in.Channels {
 		if in.Session.Mode == RadioTrack && c.Channel.Capability == "similar_tracks" && remaining > 12 && len(p.Steps) < 4 {
 			n := min(12, c.MaxCandidates)
@@ -51,7 +60,7 @@ func PersonalSelection(in SelectionInput) SelectionPlan {
 		}
 		graph := false
 		for _, ch := range c.Channels {
-			if ch.Capability == "discovery" || ch.Capability == "similar_tracks" {
+			if ch.Capability == "discovery" || ch.Capability == "similar_tracks" || ch.Capability == "taste_neighbors" {
 				graph = true
 			}
 		}

@@ -33,6 +33,8 @@ type DJDiagnostic struct {
 	Error             string                       `json:"error,omitempty"`
 	Found             int                          `json:"found"`
 	Candidates        int                          `json:"candidates"`
+	LocalAdmitted     int                          `json:"localAdmitted"`
+	AISelected        int                          `json:"aiSelected"`
 	Selected          int                          `json:"selected"`
 	Searches          []DJSearchStatus             `json:"searches"`
 	UpdatedAt         string                       `json:"updatedAt"`
