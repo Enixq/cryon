@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +31,9 @@ func TestProviderFailuresAndDeadline(t *testing.T) {
 			defer cancel()
 			if _, err = d.PlanSearch(ctx, intelligence.PlanningInput{}); err == nil {
 				t.Fatal("error accepted")
+			}
+			if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "test-key") || !strings.Contains(err.Error(), map[int]string{401: "ключ", 429: "лимит", 500: "недоступен"}[status]) {
+				t.Fatal("unsafe or unhelpful diagnostic", err)
 			}
 			if calls.Load() != 1 {
 				t.Fatal("retried HTTP request", calls.Load())
@@ -57,6 +61,16 @@ func TestProviderStrictOutput(t *testing.T) {
 			plan := intelligence.SearchPlan{Scope: intelligence.Scope{RequestID: "request"}, Steps: []intelligence.SearchStep{}}
 			raw, _ := json.Marshal(plan)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if provider != "anthropic" {
+					var body struct {
+						ResponseFormat struct {
+							Type string `json:"type"`
+						} `json:"response_format"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ResponseFormat.Type != "json_object" {
+						t.Error("custom endpoint must use portable JSON mode", err, body)
+					}
+				}
 				w.Header().Set("Content-Type", "application/json")
 				if provider == "anthropic" {
 					_ = json.NewEncoder(w).Encode(map[string]any{"id": "msg", "type": "message", "role": "assistant", "model": "model", "stop_reason": "end_turn", "content": []map[string]any{{"type": "text", "text": string(raw)}}, "usage": map[string]int{"input_tokens": 1, "output_tokens": 1}})

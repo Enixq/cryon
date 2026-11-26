@@ -134,7 +134,7 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 	}))
 	defer server.Close()
 	a.reco = recommendations.New(st, lastfm.New(""), nil, func(context.Context, string) ([]domain.Track, error) {
-		return []domain.Track{{ID: "new", Service: domain.ServiceSoundCloud, Title: "New", Artists: []string{"Unknown artist"}, PlayableKind: domain.PlayableStream}}, nil
+		return []domain.Track{{ID: "new", Service: domain.ServiceSoundCloud, Title: "New", Artists: []string{"Unknown artist"}, PlayableKind: domain.PlayableStream}}, context.DeadlineExceeded
 	})
 	cfg := DJConfig{Enabled: true, Provider: "compatible", Model: "test", APIKey: "test", BaseURL: server.URL, Revision: 1, DailySegments: 10}
 	raw, _ := json.Marshal(cfg)
@@ -165,6 +165,10 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 	if prepared != 1 {
 		t.Fatal("planner/selector pipeline failed")
 	}
+	diagnostic := a.IntelligenceStatus().Diagnostic
+	if diagnostic.Stage != "ready" || diagnostic.Found != 1 || diagnostic.Selected != 1 || len(diagnostic.Searches) != 1 || diagnostic.Searches[0].State != "error" {
+		t.Fatal("partial source results or diagnostics lost", diagnostic)
+	}
 	// A reaction after preparation must not discard otherwise usable AI work.
 	_, err = st.RecordDJFeedback(ctx, intelligence.FeedbackEvent{ID: "reaction", SessionID: session.ID, TrackID: "soundcloud:other", Kind: intelligence.FeedbackCompleted, At: time.Now(), PlayedMS: 10000, DurationMS: 10000})
 	if err != nil {
@@ -178,8 +182,9 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 	if restarted := (&App{ctx: ctx, store: st}).loadDJCollection(ctx); len(restarted.Tracks) != 1 || restarted.UpdatedAt == "" {
 		t.Fatal("AI collection lost after restart", restarted)
 	}
+	req.PreparedOnly = true
 	out, err := a.djRadio(ctx, req)
-	if err != nil || len(out.Tracks) != 1 || out.Tracks[0].DJPlanID == "" || !strings.Contains(out.Tracks[0].RecommendationReason, "Cryon AI") {
+	if err != nil || len(out.Tracks) != 1 || out.Tracks[0].DJPlanID == "" || !strings.Contains(out.Tracks[0].RecommendationReason, "Cryon DJ") {
 		t.Fatal(out, err)
 	}
 }

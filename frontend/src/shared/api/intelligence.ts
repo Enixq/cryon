@@ -3,7 +3,17 @@ import { toBackendTrack, mapTracks } from "./mappers";
 import type { Track } from "../types";
 import type { domain } from "../../../wailsjs/go/models";
 
+export type DJDiagnostic = {
+  stage: string;
+  error?: string;
+  found: number;
+  candidates: number;
+  selected: number;
+  updatedAt?: string;
+  searches: { source: string; query: string; found: number; state: string }[];
+};
 export type DJStatus = {
+  diagnostic?: DJDiagnostic;
   usedToday: number;
   tokensToday: number;
   events: Record<string, number>;
@@ -65,6 +75,7 @@ export async function djRadio(
   anchor: Track,
   exclude: Track[],
   limit: number,
+  preparedOnly = false,
 ): Promise<Track[] | null> {
   if (!hasApiV1Runtime()) return null;
   if (!enabled) {
@@ -87,6 +98,7 @@ export async function djRadio(
         track: toBackendTrack(seed ?? anchor),
         exclude: exclude.slice(-200).map(toBackendTrack),
         limit,
+        preparedOnly,
       }),
     },
   );

@@ -49,7 +49,14 @@ export function startRadioAutoplay(): () => void {
     }
     if (inflight || Date.now() < retryAt || hasNativeAndroidQueue()) return;
     if (!state.radio || !state.playbackOnThisDevice || state.queue.length === 0) return;
-    if (state.queue.length - 1 - state.currentIndex > TAIL_TARGET) return;
+    const preparedOnly = state.queue.length - 1 - state.currentIndex > TAIL_TARGET;
+    if (
+      preparedOnly &&
+      (!hasApiV1Runtime() ||
+        state.queue.slice(state.currentIndex + 1).some((track) => track.djPlanId))
+    )
+      return;
+    const excluded = preparedOnly ? state.queue.slice(0, state.currentIndex + 2) : state.queue;
     const anchor =
       state.radioSeed ||
       state.queue[
@@ -61,9 +68,12 @@ export function startRadioAutoplay(): () => void {
     // listRelatedTracks сам глотает сетевые ошибки и отдаёт пустой список,
     // поэтому здесь достаточно обработать «рекомендаций нет».
     const relatedRequest = hasApiV1Runtime()
-      ? djRadio(state.radioSeed, anchor, state.queue, BATCH_SIZE)
+      ? djRadio(state.radioSeed, anchor, excluded, BATCH_SIZE, preparedOnly)
           .catch(() => null)
-          .then((tracks) => tracks ?? listRelatedTracks(anchor, BATCH_SIZE, state.queue))
+          .then(
+            (tracks) =>
+              tracks ?? (preparedOnly ? [] : listRelatedTracks(anchor, BATCH_SIZE, state.queue)),
+          )
       : listRelatedTracks(anchor, BATCH_SIZE, state.queue);
     void relatedRequest
       .then((related) => {
@@ -76,16 +86,30 @@ export function startRadioAutoplay(): () => void {
           !latest.queue.some((track) => track.id === originalCurrent.id)
         )
           return;
-        const known = new Set(latest.queue.map((track) => track.id));
+        const prefix = latest.queue.slice(0, latest.currentIndex + 2);
+        const known = new Set((preparedOnly ? prefix : latest.queue).map((track) => track.id));
         const fresh = (related.some((t) => t.djPlanId) ? related : rankRadioTracks(related))
           .filter((track) => !known.has(track.id))
           .slice(0, 12);
         if (fresh.length === 0) {
           retryAt = Date.now() + RETRY_DELAY_MS;
-          anchorOffset++;
+          if (!preparedOnly) anchorOffset++;
           return;
         }
         anchorOffset = 0;
+        if (preparedOnly) {
+          const added = new Set(fresh.map((track) => track.id));
+          usePlayerStore.setState({
+            queue: [
+              ...prefix,
+              ...fresh,
+              ...latest.queue.slice(prefix.length).filter((track) => !added.has(track.id)),
+            ],
+          });
+          fresh.forEach((track) => reportDJEvent(track, "shown"));
+          retryAt = Date.now() + RETRY_DELAY_MS;
+          return;
+        }
         if (latest.currentIndex > 100)
           usePlayerStore.setState({
             queue: latest.queue.slice(latest.currentIndex - 100),

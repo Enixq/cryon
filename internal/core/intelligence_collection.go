@@ -76,14 +76,12 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req := djRadioRequest{SessionID: session.ID, Mode: intelligence.RadioInfinite, Limit: 40}
-		go func() {
-			defer a.recoverGoroutine("intelligence collection")
-			ctx := a.ctx
-			if ctx == nil {
-				ctx = context.Background()
-			}
-			a.prepareDJ(cfg, session, a.reco.IntelligenceTaste(ctx), req, nil)
-		}()
+		ctx := a.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		a.prepareDJ(cfg, session, a.reco.IntelligenceTaste(ctx), req, nil)
+
 	}
 	c := a.loadDJCollection(r.Context())
 	if a.reco != nil {

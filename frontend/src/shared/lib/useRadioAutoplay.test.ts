@@ -3,6 +3,17 @@ import { usePlayerStore } from "../../store/playerStore";
 import { startRadioAutoplay } from "./useRadioAutoplay";
 import { listRelatedTracks } from "../api/client";
 import type { Track } from "../types";
+import { hasApiV1Runtime } from "../api/v1";
+import { djRadio } from "../api/intelligence";
+
+vi.mock("../api/v1", async (original) => ({
+  ...(await original<typeof import("../api/v1")>()),
+  hasApiV1Runtime: vi.fn(() => false),
+}));
+vi.mock("../api/intelligence", async (original) => ({
+  ...(await original<typeof import("../api/intelligence")>()),
+  djRadio: vi.fn(),
+}));
 
 vi.mock("../api/client", async (original) => ({
   ...(await original<typeof import("../api/client")>()),
@@ -20,6 +31,8 @@ let stop: (() => void) | undefined;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.mocked(listRelatedTracks).mockReset();
+  vi.mocked(hasApiV1Runtime).mockReturnValue(false);
+  vi.mocked(djRadio).mockReset();
   usePlayerStore.setState({
     queue: [track("seed")],
     currentIndex: 0,
@@ -38,6 +51,46 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("radio prefetch", () => {
+  it("starts DJ with a full queue and promotes its result after the preloaded next track", async () => {
+    vi.mocked(hasApiV1Runtime).mockReturnValue(true);
+    const queue = Array.from({ length: 10 }, (_, i) => track(`base${i}`));
+    const selected = { ...track("base7"), djPlanId: "plan" };
+    usePlayerStore.setState({ queue, radioSeed: queue[0] });
+    vi.mocked(djRadio)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([selected, { ...track("discovery"), djPlanId: "plan" }]);
+    stop = startRadioAutoplay();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(djRadio).toHaveBeenCalledWith(queue[0], queue[0], queue.slice(0, 2), 24, true);
+    expect(listRelatedTracks).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(usePlayerStore.getState().queue.map((t) => t.id)).toEqual([
+      "base0",
+      "base1",
+      "base7",
+      "discovery",
+      "base2",
+      "base3",
+      "base4",
+      "base5",
+      "base6",
+      "base8",
+      "base9",
+    ]);
+    expect(usePlayerStore.getState().currentIndex).toBe(0);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(djRadio).toHaveBeenCalledTimes(2);
+  });
+  it("keeps a full ordinary queue unchanged when DJ is disabled", async () => {
+    vi.mocked(hasApiV1Runtime).mockReturnValue(true);
+    vi.mocked(djRadio).mockResolvedValue(null);
+    const queue = Array.from({ length: 10 }, (_, i) => track(`base${i}`));
+    usePlayerStore.setState({ queue });
+    stop = startRadioAutoplay();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(usePlayerStore.getState().queue).toEqual(queue);
+    expect(listRelatedTracks).not.toHaveBeenCalled();
+  });
   it("keeps track radio anchored to its seed and excludes the existing queue", async () => {
     const seed = track("original");
     usePlayerStore.getState().startTrackRadio(seed);

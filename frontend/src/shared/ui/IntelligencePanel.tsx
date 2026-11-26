@@ -18,14 +18,22 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
   });
   const active = status?.enabled && status.configured;
   const preparing = status?.state === "preparing";
+  const diagnostic = status?.diagnostic;
+  const stages: Record<string, string> = {
+    planning: "AI планирует поиск музыки…",
+    searching: "Ищем треки по плану AI…",
+    ranking: "AI оценивает найденные треки…",
+    saving: "Сохраняем подборку…",
+  };
   const label = !status
     ? "Проверяем подключение AI DJ…"
     : !active
       ? "AI DJ выключен — работают обычные рекомендации"
       : preparing
-        ? "AI ищет музыку и оценивает кандидатов…"
+        ? stages[diagnostic?.stage ?? ""] || "AI подготавливает музыку…"
         : status.state === "fallback"
-          ? "AI не завершил подборку. Пока работает обычное радио; проверьте модель, ключ и лимит"
+          ? diagnostic?.error ||
+            "Предыдущая попытка не завершилась. Запустите поиск для подробной диагностики"
           : status.updatedAt
             ? "AI-подборка готова"
             : "AI подключён. Запустите подборку или радио";
@@ -44,18 +52,39 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
   };
   return (
     <section className="rounded-2xl border border-purple-400/20 bg-purple-500/5 p-4 text-sm">
-      <div className="font-semibold text-white">Cryon AI DJ · {label}</div>
+      <div className="font-semibold text-white">Cryon DJ · {label}</div>
       {status?.updatedAt && (
         <p className="mt-1 text-slate-400">
-          Подобрал AI Cryon · {pluralWithCount(status.trackCount, "трек", "трека", "треков")} ·{" "}
+          Cryon DJ · {pluralWithCount(status.trackCount, "трек", "трека", "треков")} ·{" "}
           {new Date(status.updatedAt).toLocaleString()}
         </p>
       )}
       {active && (
         <p className="mt-1 text-slate-400">
-          {status.model} · сегодня {status.usedToday}/{status.dailySegments} подготовок ·{" "}
+          {status.model} · сегодня {status.usedToday}/{status.dailySegments} попыток ·{" "}
           {status.tokensToday} токенов
         </p>
+      )}
+      {diagnostic && diagnostic.stage && (
+        <div className="mt-2 text-slate-400">
+          Найдено: {diagnostic.found} · допущено к оценке: {diagnostic.candidates} · в результате:{" "}
+          {diagnostic.selected}
+          {(diagnostic.searches ?? []).length > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer">Как DJ искал музыку</summary>
+              {diagnostic.searches.map((search, index) => (
+                <p key={index} className="mt-1 break-words">
+                  {search.source.split("/")[0]} · «{search.query}» · {search.found} треков
+                  {search.state === "timeout"
+                    ? " · источник не уложился во время"
+                    : search.state === "error"
+                      ? " · источник недоступен"
+                      : ""}
+                </p>
+              ))}
+            </details>
+          )}
+        </div>
       )}
       <div className="mt-3 flex flex-wrap gap-3">
         {active ? (
@@ -77,11 +106,15 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
           </button>
         )}
       </div>
-      {message && (
-        <p role="status" className="mt-2 text-slate-300">
-          {message}
-        </p>
-      )}
+      {message &&
+        !(
+          message.startsWith("Поиск запущен") &&
+          ["ready", "failed"].includes(diagnostic?.stage ?? "")
+        ) && (
+          <p role="status" className="mt-2 text-slate-300">
+            {message}
+          </p>
+        )}
     </section>
   );
 }

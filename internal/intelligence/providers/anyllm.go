@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,17 +18,21 @@ import (
 )
 
 type Director struct {
-	tokens   int
-	jsonOnly bool
-	provider anyllm.Provider
-	model    string
-	claude   *anthropic.Client
+	tokens     int
+	jsonOnly   bool
+	provider   anyllm.Provider
+	model      string
+	claude     *anthropic.Client
+	lastStatus int
 }
 
 func (d *Director) TokenUsage() int { return d.tokens }
 
 // capTransport bounds response bodies even when an upstream ignores token limits.
-type capTransport struct{ base http.RoundTripper }
+type capTransport struct {
+	base   http.RoundTripper
+	status *int
+}
 type cappedBody struct {
 	io.Reader
 	io.Closer
@@ -38,6 +43,9 @@ func (t capTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("automatic retries disabled")
 	}
 	resp, e := t.base.RoundTrip(r)
+	if resp != nil && t.status != nil {
+		*t.status = resp.StatusCode
+	}
 	if e == nil {
 		resp.Body = cappedBody{io.LimitReader(resp.Body, 256*1024), resp.Body}
 	}
@@ -56,8 +64,9 @@ func New(provider, model, key, baseURL string) (*Director, error) {
 			baseURL = "https://api.openai.com/v1"
 		}
 	}
-	client := &http.Client{Timeout: 20 * time.Second, Transport: capTransport{http.DefaultTransport}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	opts := []config.Option{config.WithAPIKey(key), config.WithHTTPClient(client), config.WithTimeout(20 * time.Second)}
+	d := &Director{model: model}
+	client := &http.Client{Timeout: 35 * time.Second, Transport: capTransport{base: http.DefaultTransport, status: &d.lastStatus}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	opts := []config.Option{config.WithAPIKey(key), config.WithHTTPClient(client), config.WithTimeout(35 * time.Second)}
 	if baseURL != "" {
 		opts = append(opts, config.WithBaseURL(baseURL))
 	}
@@ -65,14 +74,17 @@ func New(provider, model, key, baseURL string) (*Director, error) {
 	var err error
 	if provider == "anthropic" {
 		sdk := anthropic.NewClient(anthropicoption.WithAPIKey(key), anthropicoption.WithBaseURL(baseURL), anthropicoption.WithHTTPClient(client), anthropicoption.WithMaxRetries(0))
-		return &Director{model: model, claude: &sdk}, nil
+		d.claude = &sdk
+		return d, nil
 	} else {
 		p, err = openai.New(opts...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("provider configuration rejected")
 	}
-	return &Director{provider: p, model: model, jsonOnly: provider != "openai"}, nil
+	d.provider = p
+	d.jsonOnly = provider != "openai" || baseURL != "https://api.openai.com/v1"
+	return d, nil
 }
 func (d *Director) generate(ctx context.Context, input any, output any, schema map[string]any, instruction string) error {
 	raw, err := json.Marshal(input)
@@ -83,7 +95,8 @@ func (d *Director) generate(ctx context.Context, input any, output any, schema m
 		return fmt.Errorf("music context exceeds input budget")
 	}
 	shape, _ := json.Marshal(schema)
-	tokens := 2500
+	tokens := 5000
+	d.lastStatus = 0
 	strict := true
 	format := &anyllm.ResponseFormat{Type: "json_schema", JSONSchema: &anyllm.JSONSchema{Name: "cryon_dj_plan", Schema: schema, Strict: &strict}}
 	if d.jsonOnly {
@@ -98,7 +111,7 @@ func (d *Director) generate(ctx context.Context, input any, output any, schema m
 			d.tokens += int(resp.Usage.InputTokens + resp.Usage.OutputTokens)
 		}
 		if err != nil || resp == nil || resp.StopReason != "end_turn" || len(resp.Content) != 1 || resp.Content[0].Type != "text" {
-			return fmt.Errorf("provider response unavailable")
+			return d.requestError(ctx, err)
 		}
 		return intelligence.DecodeStrict([]byte(resp.Content[0].Text), output)
 	}
@@ -110,16 +123,19 @@ func (d *Director) generate(ctx context.Context, input any, output any, schema m
 		d.tokens += resp.Usage.TotalTokens
 	}
 	if err != nil {
-		return fmt.Errorf("provider request failed")
+		return d.requestError(ctx, err)
 	}
 	if resp == nil || len(resp.Choices) != 1 || resp.Choices[0].FinishReason != "stop" {
-		return fmt.Errorf("incomplete provider response")
+		return fmt.Errorf("Модель не завершила JSON-ответ: проверьте поддержку формата и лимит ответа")
 	}
 	content, ok := resp.Choices[0].Message.Content.(string)
 	if !ok {
 		return fmt.Errorf("nontext provider response")
 	}
-	return intelligence.DecodeStrict([]byte(content), output)
+	if err := intelligence.DecodeStrict([]byte(content), output); err != nil {
+		return fmt.Errorf("Модель вернула некорректную структуру JSON: %w", err)
+	}
+	return nil
 }
 func (d *Director) PlanSearch(ctx context.Context, in intelligence.PlanningInput) (intelligence.SearchPlan, error) {
 	var out intelligence.SearchPlan
@@ -130,4 +146,25 @@ func (d *Director) Select(ctx context.Context, in intelligence.SelectionInput) (
 	var out intelligence.SelectionPlan
 	err := d.generate(ctx, in, &out, intelligence.PlanSchema(out), "Copy pool_id exactly. Prefer fresh candidates over recent_suggestions when musical relevance is comparable. Rank only provided candidate IDs with scores in [0,1], descending. Avoid contains disjoint IDs, not permanent dislikes. At most 3 directions. Short Russian reasons <=160 characters. Keep original seed's musical intent above global taste in track radio.")
 	return out, err
+}
+
+// Never expose SDK errors: their bodies and URLs can contain credentials.
+func (d *Director) requestError(ctx context.Context, err error) error {
+	switch d.lastStatus {
+	case 400, 422:
+		return fmt.Errorf("API отклонил параметры запроса или формат JSON; проверьте совместимость модели")
+	case 401, 403:
+		return fmt.Errorf("API отклонил сохранённый ключ или доступ к модели")
+	case 404:
+		return fmt.Errorf("API endpoint или модель не найдены")
+	case 429:
+		return fmt.Errorf("Провайдер ограничил запросы: проверьте баланс и лимиты API")
+	}
+	if d.lastStatus >= 500 {
+		return fmt.Errorf("Сервер AI-провайдера временно недоступен (HTTP %d)", d.lastStatus)
+	}
+	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("Превышено время ожидания ответа модели")
+	}
+	return fmt.Errorf("Не удалось получить ответ модели; проверьте соединение и поддержку API")
 }

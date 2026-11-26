@@ -23,7 +23,7 @@ export function HomePage() {
     return [...unique.values()].slice(0, 8);
   }, [favorites, history]);
   const mixes: [string, string, string, AccentColor][] = [
-    ["cryon-ai", "Подобрал AI Cryon", "Поиск новых направлений и выбор вашего AI DJ", "violet"],
+    ["cryon-ai", "Cryon DJ", "Поиск новых направлений и выбор вашего AI DJ", "violet"],
     ["m1", "Мой микс", "Любимое и близкое к вашему вкусу", "violet"],
     ["m2", "Радар новинок", "Релизы ваших и похожих артистов за 7 дней", "emerald"],
     ["for-you", "Специально для вас", "Новые песни по вашим предпочтениям", "cyan"],

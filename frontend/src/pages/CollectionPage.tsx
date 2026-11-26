@@ -66,7 +66,7 @@ const newReleasesMeta: CollectionMeta = {
 
 const collectionMeta: Record<string, CollectionMeta> = {
   "cryon-ai": {
-    title: "Подобрал AI Cryon",
+    title: "Cryon DJ",
     subtitle: "Музыка, найденная и оценённая вашим AI DJ",
     emptyHint:
       "Нажмите «Подобрать музыку». Результат появится автоматически после поиска и оценки кандидатов.",

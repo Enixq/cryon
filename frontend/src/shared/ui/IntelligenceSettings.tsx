@@ -24,7 +24,11 @@ export function IntelligenceSettings() {
       .catch(() => {});
   }, []);
   useEffect(() => {
-    const timer = window.setInterval(() => { void getDJStatus().then(setStatus).catch(() => {}); },4000);
+    const timer = window.setInterval(() => {
+      void getDJStatus()
+        .then(setStatus)
+        .catch(() => {});
+    }, 4000);
     return () => window.clearInterval(timer);
   }, []);
   const save = async () => {
@@ -59,7 +63,7 @@ export function IntelligenceSettings() {
   };
   return (
     <section className="mb-5 rounded-2xl border border-white/10 bg-white/[.025] p-5">
-      <h2 className="text-lg font-semibold text-white">Cryon Intelligence · AI DJ</h2>
+      <h2 className="text-lg font-semibold text-white">Cryon DJ</h2>
       <p className="mt-2 text-sm text-slate-400">
         AI DJ координирует поиск музыки, открывает направления и оценивает кандидатов. Без
         подключения продолжает работать обычное радио Cryon.
@@ -116,7 +120,7 @@ export function IntelligenceSettings() {
             onChange={(e) => setKey(e.target.value)}
             placeholder={
               status?.configured
-                ? "Ключ сохранён; пустое поле сохраняет его для прежнего endpoint"
+                ? "Ключ сохранён (скрыт)"
                 : "Введите свой API-ключ"
             }
           />
@@ -133,6 +137,11 @@ export function IntelligenceSettings() {
           />
         </label>
       </div>
+      <p className="mt-2 text-sm text-slate-300" role="status">
+        {status?.configured
+          ? "Ключ сохранён на устройстве. Его значение скрыто; пустое поле оставляет сохранённый ключ для прежнего провайдера и endpoint."
+          : "Ключ пока не сохранён. Введите его и нажмите «Сохранить»."}
+      </p>
       <p className="mt-3 text-xs text-slate-400">
         Ключ хранится на устройстве. Выбранному провайдеру передаются названия музыки, краткий
         профиль и реакции; запросы могут оплачиваться с вашего API-баланса. При смене провайдера или
@@ -151,9 +160,12 @@ export function IntelligenceSettings() {
             ? `AI DJ: ${stateLabel[status.state] || status.state} · подготовлено ${status.prepared}`
             : "AI DJ выключен")}
       </p>
+      {status?.diagnostic?.error && status.state === "fallback" && (
+        <p className="mt-2 text-sm text-rose-300">{status.diagnostic.error}</p>
+      )}
       {status?.enabled && (
         <p className="mt-2 text-xs text-slate-400">
-          Сегодня: {status.usedToday ?? 0} / {status.dailySegments} сегментов ·{" "}
+          Сегодня: {status.usedToday ?? 0} / {status.dailySegments} попыток ·{" "}
           {status.tokensToday ?? 0} токенов по ответам API. Две AI-фазы на сегмент. Стоимость
           зависит от модели.
         </p>

@@ -714,18 +714,23 @@ class CryonPlaybackService : MediaSessionService() {
 
     private var djSessionId = ""
     private fun maybeRefillRadio() {
-        if (!radioEnabled || radioLoading || serverBaseUrl.isBlank() || queue.isEmpty() || queue.size - queueIndex - 1 > 6 || System.currentTimeMillis() < retryRadioAt) return
+        if (!radioEnabled || radioLoading || serverBaseUrl.isBlank() || queue.isEmpty() || System.currentTimeMillis() < retryRadioAt) return
+        val preparedOnly = queue.size - queueIndex - 1 > 6
+        if (preparedOnly && queue.drop(queueIndex + 1).any { it.optString("djPlanId").isNotBlank() }) return
         val anchor = radioSeed ?: queue[(queue.lastIndex - radioAnchorOffset % minOf(queue.size, 6)).coerceAtLeast(0)]
         val token = radioEpoch
+        val excluded = (if (preparedOnly) queue.take(queueIndex + 2) else queue.toList()).takeLast(200)
+        val body = JSONObject().put("track", backendTrack(anchor)).put("limit", 24).put("preparedOnly", preparedOnly).put("exclude", JSONArray(excluded.map { backendTrack(it) }))
+        val requestSession = djSessionId
+        val mode = if (radioSeed != null) "track" else "infinite"
         radioLoading = true
         radioWorker.execute {
-            val body = JSONObject().put("track", backendTrack(anchor)).put("limit", 24).put("exclude", JSONArray(queue.takeLast(200).map { backendTrack(it) }))
             val result = runCatching {
                 runCatching {
-                    request("/v1/intelligence/radio", JSONObject(body.toString()).put("sessionId", djSessionId).put("mode", if (radioSeed != null) "track" else "infinite"))
+                    request("/v1/intelligence/radio", JSONObject(body.toString()).put("sessionId", requestSession).put("mode", mode))
                         .also { check(it.optJSONArray("tracks") != null) { "Intelligence route unavailable" } }
                 }
-                    .getOrElse { request("/v1/recommendations/related", body) }
+                    .getOrElse { if (preparedOnly) JSONObject().put("tracks", JSONArray()) else request("/v1/recommendations/related", body) }
             }
             progressHandler.post {
                 if (token != radioEpoch) return@post
@@ -733,11 +738,21 @@ class CryonPlaybackService : MediaSessionService() {
                 if (!radioEnabled) return@post
                 result.getOrNull()?.optString("sessionId")?.takeIf { it.isNotBlank() }?.let { djSessionId = it }
                 val candidates = result.getOrNull()?.optJSONArray("tracks") ?: JSONArray()
-                val known = queue.map { it.optString("id") }.toMutableSet()
+                val prefix = queue.take(queueIndex + 2)
+                val known = (if (preparedOnly) prefix else queue).map { it.optString("id") }.toMutableSet()
                 val fresh = (0 until candidates.length()).map { frontendTrack(candidates.getJSONObject(it)) }
                     .filter { !rejectedTracks.contains(feedbackKey(it)) && !recentIds.contains(it.optString("id")) && known.add(it.optString("id")) }.take(12)
-                if (fresh.isEmpty()) { radioAnchorOffset++; retryRadioAt = System.currentTimeMillis() + 5000; return@post }
+                if (fresh.isEmpty()) { if (!preparedOnly) radioAnchorOffset++; retryRadioAt = System.currentTimeMillis() + 5000; return@post }
                 radioAnchorOffset = 0
+                if (preparedOnly) {
+                    val added = fresh.map { it.optString("id") }.toSet()
+                    val tail = queue.drop(prefix.size).filter { !added.contains(it.optString("id")) }
+                    queue.clear(); queue.addAll(prefix); queue.addAll(fresh); queue.addAll(tail)
+                    retryRadioAt = System.currentTimeMillis() + 5000
+                    fresh.forEach { reportDJ("shown", it, 0) }
+                    player?.let { publishState(stateFor(it)); maybePreloadNext(it) }
+                    return@post
+                }
                 if (queueIndex > 100) { val remove = queueIndex - 100; repeat(remove) { queue.removeAt(0) }; queueIndex = 100 }
                 queue.addAll(fresh)
                 fresh.forEach { reportDJ("shown", it, 0) }

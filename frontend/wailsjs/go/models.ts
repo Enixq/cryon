@@ -1,15 +1,15 @@
 export namespace audiofetcher {
-	
+
 	export class AudioStream {
 	    url: string;
 	    format: string;
 	    quality: string;
 	    duration: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AudioStream(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.url = source["url"];
@@ -22,7 +22,7 @@ export namespace audiofetcher {
 }
 
 export namespace core {
-	
+
 	export class AccountConnectionStatus {
 	    service: string;
 	    name: string;
@@ -30,11 +30,11 @@ export namespace core {
 	    accountConnected: boolean;
 	    canImportLibrary: boolean;
 	    setupHint: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AccountConnectionStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.service = source["service"];
@@ -69,7 +69,71 @@ export namespace core {
 	        this.dailySegments = source["dailySegments"];
 	    }
 	}
+	export class DJSearchStatus {
+	    source: string;
+	    query: string;
+	    found: number;
+	    state: string;
+
+	    static createFrom(source: any = {}) {
+	        return new DJSearchStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.query = source["query"];
+	        this.found = source["found"];
+	        this.state = source["state"];
+	    }
+	}
+	export class DJDiagnostic {
+	    configRevision: number;
+	    stage: string;
+	    error?: string;
+	    found: number;
+	    candidates: number;
+	    selected: number;
+	    searches: DJSearchStatus[];
+	    updatedAt: string;
+
+	    static createFrom(source: any = {}) {
+	        return new DJDiagnostic(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.configRevision = source["configRevision"];
+	        this.stage = source["stage"];
+	        this.error = source["error"];
+	        this.found = source["found"];
+	        this.candidates = source["candidates"];
+	        this.selected = source["selected"];
+	        this.searches = this.convertValues(source["searches"], DJSearchStatus);
+	        this.updatedAt = source["updatedAt"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
 	export class DJStatus {
+	    diagnostic: DJDiagnostic;
 	    tokensToday: number;
 	    usedToday: number;
 	    events: Record<string, number>;
@@ -91,6 +155,7 @@ export namespace core {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.diagnostic = this.convertValues(source["diagnostic"], DJDiagnostic);
 	        this.tokensToday = source["tokensToday"];
 	        this.usedToday = source["usedToday"];
 	        this.events = source["events"];
@@ -106,17 +171,35 @@ export namespace core {
 	        this.updatedAt = source["updatedAt"];
 	        this.trackCount = source["trackCount"];
 	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class FavoritesImportResult {
 	    source: string;
 	    found: number;
 	    imported: number;
 	    skipped: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FavoritesImportResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.source = source["source"];
@@ -128,17 +211,17 @@ export namespace core {
 	export class HistoryItem {
 	    track: domain.Track;
 	    playedAtMs: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new HistoryItem(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.track = this.convertValues(source["track"], domain.Track);
 	        this.playedAtMs = source["playedAtMs"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -162,11 +245,11 @@ export namespace core {
 	    preferExplicit: boolean;
 	    officialOnly: boolean;
 	    sourcePriority: Record<string, number>;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PlaybackPreferences(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.preferLocal = source["preferLocal"];
@@ -180,11 +263,11 @@ export namespace core {
 	    connected: boolean;
 	    level: string;
 	    error?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SourceStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -197,7 +280,7 @@ export namespace core {
 }
 
 export namespace domain {
-	
+
 	export class Album {
 	    id: string;
 	    service: string;
@@ -247,11 +330,11 @@ export namespace domain {
 	    artworkUrl?: string;
 	    externalUrl?: string;
 	    playableKind: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Track(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.djSessionId = source["djSessionId"];
@@ -282,11 +365,11 @@ export namespace domain {
 	    albums: Album[];
 	    singles: Album[];
 	    appearsOn: Album[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ArtistInfo(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -297,7 +380,7 @@ export namespace domain {
 	        this.singles = this.convertValues(source["singles"], Album);
 	        this.appearsOn = this.convertValues(source["appearsOn"], Album);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -327,11 +410,11 @@ export namespace domain {
 	    availability: boolean;
 	    sourcePriority: number;
 	    selectionReason?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PlaybackCandidate(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -345,7 +428,7 @@ export namespace domain {
 	        this.sourcePriority = source["sourcePriority"];
 	        this.selectionReason = source["selectionReason"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -386,7 +469,7 @@ export namespace domain {
 	        this.externalUrl = source["externalUrl"];
 	    }
 	}
-	
+
 	export class UserPlaylist {
 	    id: string;
 	    title: string;
@@ -394,11 +477,11 @@ export namespace domain {
 	    trackCount: number;
 	    createdAtMs?: number;
 	    coverUrls?: string[];
-	
+
 	    static createFrom(source: any = {}) {
 	        return new UserPlaylist(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -413,18 +496,18 @@ export namespace domain {
 }
 
 export namespace lyrics {
-	
+
 	export class Result {
 	    synced: string;
 	    plain: string;
 	    instrumental: boolean;
 	    found: boolean;
 	    provider?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Result(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.synced = source["synced"];
@@ -438,7 +521,7 @@ export namespace lyrics {
 }
 
 export namespace playback {
-	
+
 	export class Status {
 	    backend: string;
 	    available: boolean;
@@ -449,11 +532,11 @@ export namespace playback {
 	    volume: number;
 	    eof: boolean;
 	    message?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Status(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.backend = source["backend"];
@@ -471,17 +554,17 @@ export namespace playback {
 }
 
 export namespace store {
-	
+
 	export class Account {
 	    id: string;
 	    login: string;
 	    email: string;
 	    isGuest: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Account(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -506,11 +589,11 @@ export namespace store {
 	    updatedAtMs: number;
 	    startedAtMs?: number;
 	    finishedAtMs?: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Job(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -537,11 +620,11 @@ export namespace store {
 	    message: string;
 	    createdAtMs: number;
 	    read: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new NotificationRow(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -555,11 +638,11 @@ export namespace store {
 	export class PlaylistTrackKey {
 	    service: string;
 	    trackId: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PlaylistTrackKey(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.service = source["service"];
