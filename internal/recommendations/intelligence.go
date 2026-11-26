@@ -13,6 +13,10 @@ import (
 )
 
 // DJChannels reports only capabilities backed by this instance.
+func (e *Engine) SetDJSourceSearch(sources func() []string, search func(context.Context, string, string) ([]domain.Track, error)) {
+	e.djSources, e.djSearch = sources, search
+}
+
 func (e *Engine) DJChannels() []intelligence.ChannelBudget {
 	out := []intelligence.ChannelBudget{{Channel: intelligence.Channel{Provider: "cryon", Capability: "discovery"}, MaxCandidates: 40}}
 	if e.favFn != nil || e.histFn != nil {
@@ -20,6 +24,11 @@ func (e *Engine) DJChannels() []intelligence.ChannelBudget {
 	}
 	if e.search != nil {
 		out = append(out, intelligence.ChannelBudget{Channel: intelligence.Channel{Provider: "cryon", Capability: "catalog_search"}, MaxCandidates: 20})
+	}
+	if e.djSources != nil && e.djSearch != nil {
+		for _, source := range e.djSources() {
+			out = append(out, intelligence.ChannelBudget{Channel: intelligence.Channel{Provider: source, Capability: "catalog_search"}, MaxCandidates: 20})
+		}
 	}
 	if e.lastfm.Available() {
 		out = append(out, intelligence.ChannelBudget{Channel: intelligence.Channel{Provider: "lastfm", Capability: "similar_tracks"}, MaxCandidates: 20})
@@ -38,54 +47,61 @@ func (e *Engine) DJChannels() []intelligence.ChannelBudget {
 func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep, seed domain.Track) ([]domain.Track, error) {
 	var tracks []domain.Track
 	var err error
-	switch step.Channel {
-	case (intelligence.Channel{Provider: "cryon", Capability: "library"}):
-		if e.favFn != nil {
-			tracks, err = e.favFn(ctx)
-		}
-		if e.histFn != nil {
-			if rows, fetchErr := e.histFn(ctx, 100); fetchErr == nil {
-				for _, row := range rows {
-					tracks = append(tracks, row.Track)
-				}
-			}
-		}
-	case (intelligence.Channel{Provider: "cryon", Capability: "discovery"}):
-		tracks, err = e.AutoMix(ctx, MixWeekly, step.Limit)
-	case (intelligence.Channel{Provider: "cryon", Capability: "catalog_search"}):
+	if step.Channel.Provider != "cryon" && step.Channel.Capability == "catalog_search" && e.djSearch != nil {
 		if strings.Contains(step.Query, "://") {
 			return nil, nil
 		}
-		tracks, err = e.search(ctx, step.Query)
-	case (intelligence.Channel{Provider: "lastfm", Capability: "similar_tracks"}):
-		artist := ""
-		if len(seed.Artists) > 0 {
-			artist = seed.Artists[0]
-		}
-		metadata, fetchErr := e.lastfm.SimilarTracks(ctx, artist, seed.Title, step.Limit)
-		err = fetchErr
-		candidates := []scoredCand{}
-		for _, t := range metadata {
-			candidates = append(candidates, scoredCand{artist: t.Artist, title: t.Name, score: 1})
-		}
-		tracks = e.resolveCandidates(ctx, candidates, e.buildTaste(ctx), step.Limit)
-	case (intelligence.Channel{Provider: "deezer", Capability: "artist_tracks"}):
-		got, fetchErr := e.deezer.TopArtistTracks(ctx, step.Query, step.Limit)
-		err = fetchErr
-		metadata := deezerTracksToLastfm(got)
-		candidates := []scoredCand{}
-		for _, t := range metadata {
-			candidates = append(candidates, scoredCand{artist: t.Artist, title: t.Name, score: 1})
-		}
-		tracks = e.resolveCandidates(ctx, candidates, e.buildTaste(ctx), step.Limit)
-	case (intelligence.Channel{Provider: "yandex", Capability: "similar_tracks"}):
-		if e.trackSimilar != nil {
-			tracks, err = e.trackSimilar(ctx, seed)
+		tracks, err = e.djSearch(ctx, step.Channel.Provider, step.Query)
+	} else {
+		switch step.Channel {
+		case (intelligence.Channel{Provider: "cryon", Capability: "library"}):
+			if e.favFn != nil {
+				tracks, err = e.favFn(ctx)
+			}
+			if e.histFn != nil {
+				if rows, fetchErr := e.histFn(ctx, 100); fetchErr == nil {
+					for _, row := range rows {
+						tracks = append(tracks, row.Track)
+					}
+				}
+			}
+		case (intelligence.Channel{Provider: "cryon", Capability: "discovery"}):
+			tracks, err = e.AutoMix(ctx, MixWeekly, step.Limit)
+		case (intelligence.Channel{Provider: "cryon", Capability: "catalog_search"}):
+			if strings.Contains(step.Query, "://") {
+				return nil, nil
+			}
+			tracks, err = e.search(ctx, step.Query)
+		case (intelligence.Channel{Provider: "lastfm", Capability: "similar_tracks"}):
+			artist := ""
+			if len(seed.Artists) > 0 {
+				artist = seed.Artists[0]
+			}
+			metadata, fetchErr := e.lastfm.SimilarTracks(ctx, artist, seed.Title, step.Limit)
+			err = fetchErr
+			candidates := []scoredCand{}
+			for _, t := range metadata {
+				candidates = append(candidates, scoredCand{artist: t.Artist, title: t.Name, score: 1})
+			}
+			tracks = e.resolveCandidates(ctx, candidates, e.buildTaste(ctx), step.Limit)
+		case (intelligence.Channel{Provider: "deezer", Capability: "artist_tracks"}):
+			got, fetchErr := e.deezer.TopArtistTracks(ctx, step.Query, step.Limit)
+			err = fetchErr
+			metadata := deezerTracksToLastfm(got)
+			candidates := []scoredCand{}
+			for _, t := range metadata {
+				candidates = append(candidates, scoredCand{artist: t.Artist, title: t.Name, score: 1})
+			}
+			tracks = e.resolveCandidates(ctx, candidates, e.buildTaste(ctx), step.Limit)
+		case (intelligence.Channel{Provider: "yandex", Capability: "similar_tracks"}):
+			if e.trackSimilar != nil {
+				tracks, err = e.trackSimilar(ctx, seed)
+			}
 		}
 	}
 	tracks = e.Allowed(ctx, tracks)
 	filtered := []domain.Track{}
-	for _, t := range e.orderCandidates(tracks) {
+	for _, t := range balanceDJSources(e.orderCandidates(tracks)) {
 		if t.PlayableKind == "" || t.PlayableKind == domain.PlayableStream {
 			filtered = append(filtered, t)
 		}
@@ -94,6 +110,27 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 		filtered = filtered[:step.Limit]
 	}
 	return filtered, err
+}
+
+// Prevent the first catalog in aggregated search from consuming the whole budget.
+func balanceDJSources(tracks []domain.Track) []domain.Track {
+	groups := map[domain.ServiceID][]domain.Track{}
+	order := []domain.ServiceID{}
+	for _, track := range tracks {
+		if _, exists := groups[track.Service]; !exists {
+			order = append(order, track.Service)
+		}
+		groups[track.Service] = append(groups[track.Service], track)
+	}
+	out := make([]domain.Track, 0, len(tracks))
+	for index := 0; len(out) < len(tracks); index++ {
+		for _, source := range order {
+			if index < len(groups[source]) {
+				out = append(out, groups[source][index])
+			}
+		}
+	}
+	return out
 }
 
 func (e *Engine) FinalizeDJ(ctx context.Context, tracks []domain.Track, exclude []domain.Track, limit int) []domain.Track {

@@ -172,6 +172,18 @@ func NewApp() *App {
 		}
 		return nil, nil
 	})
+	app.reco.SetDJSourceSearch(func() []string {
+		out := []string{}
+		for _, status := range app.ListSourceStatus() {
+			if status.Level == sourceOK && status.ID != "youtube" && status.ID != "spotify" {
+				out = append(out, status.ID)
+			}
+		}
+		sort.Strings(out)
+		return out
+	}, func(ctx context.Context, source, query string) ([]domain.Track, error) {
+		return app.searchInSourcesContext(ctx, query, []string{source})
+	})
 	app.reco.SetTrackSimilarityAvailability(func() bool {
 		service, ok := app.registry[domain.ServiceYandex].(*yandex.Service)
 		return ok && service.HasToken()

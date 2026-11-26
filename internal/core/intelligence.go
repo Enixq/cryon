@@ -288,6 +288,13 @@ func djSummary(t domain.Track) intelligence.TrackSummary {
 
 func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste intelligence.TasteProfile, req djRadioRequest, issued []domain.Track) {
 	a.dj.Lock()
+	if a.store != nil {
+		raw, _, _ := a.store.SettingGet(context.Background(), "intelligence.private.failedRevision")
+		if raw == fmt.Sprint(cfg.Revision) {
+			a.dj.Unlock()
+			return
+		}
+	}
 	currentConfig := a.djConfig(context.Background())
 	if !currentConfig.Enabled || currentConfig.APIKey == "" || currentConfig.Revision != cfg.Revision {
 		a.dj.Unlock()
@@ -356,6 +363,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 				diagnostic.Stage = "ready"
 			} else {
 				diagnostic.Stage = "failed"
+				_ = a.store.SettingSet(context.WithoutCancel(ctx), "intelligence.private.failedRevision", fmt.Sprint(cfg.Revision))
 			}
 			a.saveDJDiagnostic(ctx, diagnostic)
 			cancel()

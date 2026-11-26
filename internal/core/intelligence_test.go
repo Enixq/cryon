@@ -64,6 +64,12 @@ func TestDJSubmissionHonorsConfigurationAndPersistedBudget(t *testing.T) {
 		t.Fatal(status)
 	}
 	st.settings["intelligence.private.usage"] = "{}"
+	st.settings["intelligence.private.failedRevision"] = "2"
+	a.prepareDJ(cfg, intelligence.SessionProfile{ID: "another-session"}, intelligence.TasteProfile{}, djRadioRequest{}, nil)
+	if a.dj.done != nil {
+		t.Fatal("failed configuration retried automatically")
+	}
+	delete(st.settings, "intelligence.private.failedRevision")
 	a.dj.day = ""
 	old := cfg
 	old.Revision--

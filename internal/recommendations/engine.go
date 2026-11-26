@@ -41,6 +41,8 @@ type SearchFunc func(ctx context.Context, query string) ([]domain.Track, error)
 
 // Engine — движок рекомендаций.
 type Engine struct {
+	djSources             func() []string
+	djSearch              func(context.Context, string, string) ([]domain.Track, error)
 	trackSimilarAvailable func() bool
 	trackSimilar          func(context.Context, domain.Track) ([]domain.Track, error)
 	feedbackMu            sync.Mutex

@@ -76,6 +76,10 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req := djRadioRequest{SessionID: session.ID, Mode: intelligence.RadioInfinite, Limit: 40}
+		if err := a.store.SettingSet(r.Context(), "intelligence.private.failedRevision", ""); err != nil {
+			writeAPIAppError(w, err)
+			return
+		}
 		ctx := a.ctx
 		if ctx == nil {
 			ctx = context.Background()

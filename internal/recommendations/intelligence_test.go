@@ -8,6 +8,30 @@ import (
 	"testing"
 )
 
+func TestDJCatalogSourcesShareBudget(t *testing.T) {
+	e := New(nil, lastfm.New(""), nil, func(context.Context, string) ([]domain.Track, error) {
+		out := []domain.Track{}
+		for i := 0; i < 25; i++ {
+			out = append(out, domain.Track{ID: "vk", Service: domain.ServiceVK})
+		}
+		return append(out, domain.Track{ID: "ym", Service: domain.ServiceYandex}), nil
+	})
+	got, err := e.ExecuteDJStep(context.Background(), intelligence.SearchStep{Channel: intelligence.Channel{Provider: "cryon", Capability: "catalog_search"}, Query: "artist", Limit: 2}, domain.Track{})
+	if err != nil || len(got) != 2 || got[1].Service != domain.ServiceYandex {
+		t.Fatal("first source exhausted budget", got, err)
+	}
+	e.SetDJSourceSearch(func() []string { return []string{"yandex"} }, func(_ context.Context, source, query string) ([]domain.Track, error) {
+		if source != "yandex" || query != "artist" {
+			t.Fatal(source, query)
+		}
+		return []domain.Track{{ID: "direct", Service: domain.ServiceYandex}}, nil
+	})
+	got, err = e.ExecuteDJStep(context.Background(), intelligence.SearchStep{Channel: intelligence.Channel{Provider: "yandex", Capability: "catalog_search"}, Query: "artist", Limit: 2}, domain.Track{})
+	if err != nil || len(got) != 1 || got[0].ID != "direct" {
+		t.Fatal(got, err)
+	}
+}
+
 func TestDJFinalizationAndCapabilityAvailability(t *testing.T) {
 	e := New(nil, lastfm.New(""), nil, nil)
 	e.SetTrackSimilarity(func(context.Context, domain.Track) ([]domain.Track, error) { return nil, nil })
