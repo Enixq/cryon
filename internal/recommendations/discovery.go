@@ -88,6 +88,10 @@ func (e *Engine) discoveryMix(ctx context.Context, limit int) []domain.Track {
 // discoveryCandidates выполняет собственно обход графа и возвращает взвешенные
 // названия (артист + трек) для последующего поиска в источниках.
 func (e *Engine) discoveryCandidates(ctx context.Context, t taste, seeds []artistWeight) []scoredCand {
+	return e.discoveryCandidatesFor(ctx, t, seeds, false)
+}
+
+func (e *Engine) discoveryCandidatesFor(ctx context.Context, t taste, seeds []artistWeight, broad bool) []scoredCand {
 	// Знакомые артисты (весь профиль, не только затравки) — не «открытия».
 	familiar := make(map[string]bool, len(t.artists))
 	for _, a := range t.artists {
@@ -100,7 +104,7 @@ func (e *Engine) discoveryCandidates(ctx context.Context, t taste, seeds []artis
 	names := map[string]string{}
 	record := func(name string, score float64) {
 		key := strings.ToLower(strings.TrimSpace(name))
-		if key == "" || familiar[key] || t.blockedArtists[key] || score <= 0 {
+		if key == "" || (!broad && familiar[key]) || t.blockedArtists[key] || score <= 0 {
 			return
 		}
 		scores[key] += score

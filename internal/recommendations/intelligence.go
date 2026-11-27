@@ -74,7 +74,7 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 		case (intelligence.Channel{Provider: "cryon", Capability: "discovery"}):
 			// Only graph-derived candidates belong to this channel. AutoMix's
 			// fallback searches favorite names and cannot supply graph evidence.
-			tracks = e.discoveryMix(ctx, step.Limit)
+			tracks = e.discoveryDJPool(ctx, step.Limit)
 		case (intelligence.Channel{Provider: "cryon", Capability: "taste_neighbors"}):
 			tracks = e.tasteNeighbors(ctx, step.Limit)
 		case (intelligence.Channel{Provider: "cryon", Capability: "catalog_search"}):
@@ -93,7 +93,7 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 			for _, t := range metadata {
 				candidates = append(candidates, scoredCand{artist: t.Artist, title: t.Name, score: 1})
 			}
-			tracks = e.resolveCandidates(ctx, candidates, e.buildTaste(ctx), step.Limit)
+			tracks = e.resolveDJMetadata(ctx, candidates, step.Limit)
 		case (intelligence.Channel{Provider: "deezer", Capability: "artist_tracks"}):
 			got, fetchErr := e.deezer.TopArtistTracks(ctx, step.Query, step.Limit)
 			err = fetchErr
@@ -102,7 +102,7 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 			for _, t := range metadata {
 				candidates = append(candidates, scoredCand{artist: t.Artist, title: t.Name, score: 1})
 			}
-			tracks = e.resolveCandidates(ctx, candidates, e.buildTaste(ctx), step.Limit)
+			tracks = e.resolveDJMetadata(ctx, candidates, step.Limit)
 		case (intelligence.Channel{Provider: "yandex", Capability: "similar_tracks"}):
 			if e.trackSimilar != nil {
 				tracks, err = e.trackSimilar(ctx, seed)
@@ -151,7 +151,7 @@ func (e *Engine) tasteNeighbors(ctx context.Context, limit int) []domain.Track {
 	for _, row := range rows {
 		out = append(out, row...)
 	}
-	return e.FinalizeDJ(ctx, filterUnseen(out, e.buildTaste(ctx)), seeds, limit)
+	return e.PrepareDJPool(ctx, out, nil, limit)
 }
 
 // Prevent the first catalog in aggregated search from consuming the whole budget.

@@ -102,7 +102,7 @@ func (e *Engine) SelectDJ(ctx context.Context, pool []domain.Track, candidates [
 				continue
 			}
 			ev := c.Evidence
-			if ev.MetadataQuality < .65 || ev.RecentlyPlayed {
+			if ev.MetadataQuality < .65 || ev.RecentlyPlayed || ev.RecentlySuggested {
 				continue
 			}
 			if mode == intelligence.RadioTrack && ((ev.SeedKnown && ev.SeedSimilarity < .08 && strategy.SeedAdherence >= .5) || (!ev.SeedKnown && decision.Score < .85)) {

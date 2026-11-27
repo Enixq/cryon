@@ -44,8 +44,8 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
     : undefined;
   const diagnostic = job;
   const stages: Record<string, string> = {
-    planning: "Строим персональный план по вашему вкусу…",
-    searching: "Ищем музыку через Discovery и музыкальные связи…",
+    planning: active ? "DJ определяет стратегию поиска…" : "Строим персональный план…",
+    searching: "Инструменты DJ собирают кандидатов…",
     ranking: "AI оценивает найденные треки…",
     saving: "Сохраняем подборку…",
   };

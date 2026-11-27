@@ -262,15 +262,8 @@ func (a *App) djRadio(ctx context.Context, req djRadioRequest) (djRadioResult, e
 			a.prepareDJ(cfg, session, a.reco.IntelligenceTaste(context.WithoutCancel(ctx)), req, nil)
 		}()
 	}
-	if len(result.Tracks) == 0 && !req.PreparedOnly {
-		result.Tracks, err = fallback()
-		a.dj.Lock()
-		a.dj.fallbacks++
-		a.dj.Unlock()
-		if err != nil {
-			return result, err
-		}
-	}
+	// Enabled DJ never substitutes ordinary radio for its unfinished result.
+
 	// Return the baseline now; only the next, unissued segment is prepared by AI.
 	if hit {
 		issued := append([]domain.Track{}, result.Tracks...)
@@ -470,7 +463,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		var pool, bestPool, ordered, bestTracks []domain.Track
 		var candidates, bestCandidates []intelligence.Candidate
 		visited := map[string]bool{}
-		for iteration := 0; iteration < 1; iteration++ {
+		for iteration := 0; iteration < 2; iteration++ {
 			if ctx.Err() != nil {
 				return
 			}
@@ -484,7 +477,13 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			input.Scope.RequestID = djID()
 			limits := intelligence.Limits{MaxSteps: 5, MaxCandidates: 40, MaxDirections: 3, MaxQueryRunes: 120, MaxReasonRunes: 160}
 			plan = intelligence.PersonalSearch(input)
-			err = nil
+			if director != nil {
+				diagnostic.RequestDeadlineAt = time.Now().Add(djproviders.RequestTimeout).UTC().Format(time.RFC3339)
+				a.saveDJDiagnostic(ctx, diagnostic)
+				plan, err = director.PlanSearch(ctx, input)
+			} else {
+				err = nil
+			}
 			if err != nil {
 				diagnostic.Error = err.Error()
 				if iteration > 0 {
@@ -605,7 +604,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 					origins[djTrackID(c.Track)] = mergedOrigins
 				}
 			}
-			pool = a.reco.FinalizeDJ(ctx, pool, exclude, 40)
+			pool = a.reco.PrepareDJPool(ctx, pool, exclude, 40)
 			diagnostic.Candidates = len(pool)
 			if len(pool) == 0 {
 				diagnostic.Error = "Источники не вернули доступные треки; оценка качества и AI не запускались"
@@ -631,24 +630,14 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			diagnostic.LocalAdmitted = len(ranked.Ranked)
 			diagnostic.AISelected = 0
 			diagnostic.Engine = "personal"
-			if director != nil && len(ranked.Ranked) > 0 {
+			if director != nil {
 				proposed, modelErr := director.Select(ctx, selection)
 				if modelErr == nil {
 					modelErr = intelligence.ValidateSelection(selection, proposed, limits)
 				}
 				if modelErr == nil {
-					admitted := map[string]bool{}
-					for _, decision := range ranked.Ranked {
-						admitted[decision.ID] = true
-					}
-					filtered := proposed.Ranked[:0]
-					for _, decision := range proposed.Ranked {
-						if admitted[decision.ID] {
-							filtered = append(filtered, decision)
-						}
-					}
-					proposed.Ranked = filtered
-					diagnostic.AISelected = len(filtered)
+
+					diagnostic.AISelected = len(proposed.Ranked)
 					ranked = proposed
 					diagnostic.Engine = "ai"
 				} else {

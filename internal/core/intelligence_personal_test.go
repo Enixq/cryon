@@ -61,6 +61,12 @@ func TestPersonalCollectionSurvivesMissingOrInvalidAI(t *testing.T) {
 				t.Fatal("worker did not finish")
 			}
 			result := a.loadDJCollection(ctx)
+			if enabled {
+				if result.Job.Stage != "failed" || calls.Load() != 1 || result.Job.Tokens != 23 || len(result.Tracks) != 0 {
+					t.Fatal("invalid planner must not execute sources", result.Job, calls.Load())
+				}
+				return
+			}
 			if result.Job.Stage != "ready" || len(result.Tracks) != 1 || result.Job.Engine != "personal" {
 				t.Fatal(result)
 			}

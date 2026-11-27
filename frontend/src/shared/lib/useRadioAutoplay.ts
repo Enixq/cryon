@@ -69,7 +69,7 @@ export function startRadioAutoplay(): () => void {
     // поэтому здесь достаточно обработать «рекомендаций нет».
     const relatedRequest = hasApiV1Runtime()
       ? djRadio(state.radioSeed, anchor, excluded, BATCH_SIZE, preparedOnly)
-          .catch(() => null)
+          .catch(() => [])
           .then(
             (tracks) =>
               tracks ?? (preparedOnly ? [] : listRelatedTracks(anchor, BATCH_SIZE, state.queue)),

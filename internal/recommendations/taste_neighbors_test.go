@@ -22,9 +22,10 @@ func TestFavoriteNeighborsUseSimilarityWithoutCatalogSearch(t *testing.T) {
 		return []domain.Track{seed, {ID: "new", Title: "Linked track", Artists: []string{"New artist"}, Service: domain.ServiceYandex, DurationMs: 180000}}, nil
 	})
 	rows, err := e.ExecuteDJStep(context.Background(), intelligence.SearchStep{Channel: intelligence.Channel{Provider: "cryon", Capability: "taste_neighbors"}, Limit: 20}, domain.Track{})
-	if err != nil || len(rows) != 1 || rows[0].ID != "new" {
+	if err != nil || len(rows) != 2 || rows[1].ID != "new" {
 		t.Fatal(rows, err)
 	}
+	rows = rows[1:]
 	evidence := e.DJEvidence(context.Background(), rows, domain.Track{}, e.IntelligenceTaste(context.Background()), nil)
 	in := intelligence.SelectionInput{Context: intelligence.PlanningInput{Session: intelligence.SessionProfile{Mode: intelligence.RadioInfinite}}, Candidates: []intelligence.Candidate{{ID: "c0", Track: intelligence.TrackSummary{ID: "new"}, Evidence: evidence[0], Channels: []intelligence.Channel{{Provider: "cryon", Capability: "taste_neighbors"}}}}}
 	plan := intelligence.PersonalSelection(in)

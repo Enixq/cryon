@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -113,6 +114,7 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 		}
 		st.Close()
 	}()
+	var planned atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Messages []struct {
@@ -131,6 +133,7 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 			_ = json.Unmarshal([]byte(request.Messages[1].Content), &selection)
 			output = intelligence.SelectionPlan{Scope: selection.Context.Scope, PoolID: selection.PoolID, Ranked: []intelligence.CandidateDecision{{ID: selection.Candidates[0].ID, Score: .9, Reason: "Подходит текущей сессии"}}, Avoid: []string{}, Directions: []intelligence.Direction{}}
 		} else {
+			planned.Store(true)
 			var planning intelligence.PlanningInput
 			_ = json.Unmarshal([]byte(request.Messages[1].Content), &planning)
 			output = intelligence.SearchPlan{Scope: planning.Scope, Strategy: intelligence.Strategy{Exploration: .3, SeedAdherence: .9, Diversity: .5}, Steps: []intelligence.SearchStep{{Channel: intelligence.Channel{Provider: "cryon", Capability: "catalog_search"}, Query: fmt.Sprintf("rock direction %d", len(planning.Outcomes)), Limit: 2}}}
@@ -141,6 +144,9 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 	}))
 	defer server.Close()
 	a.reco = recommendations.New(st, lastfm.New(""), nil, func(context.Context, string) ([]domain.Track, error) {
+		if !planned.Load() {
+			t.Error("source called before DJ strategy")
+		}
 		return []domain.Track{{ID: "new", Service: domain.ServiceSoundCloud, Title: "New", Artists: []string{"Unknown artist"}, PlayableKind: domain.PlayableStream}}, context.DeadlineExceeded
 	})
 	a.reco.SetTrackSimilarity(func(context.Context, domain.Track) ([]domain.Track, error) {
@@ -176,11 +182,14 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 		t.Fatal("planner/selector pipeline failed")
 	}
 	diagnostic := a.IntelligenceStatus().Diagnostic
-	if diagnostic.Stage != "ready" || diagnostic.Found != 1 || diagnostic.Selected != 1 || len(diagnostic.Searches) != 2 || diagnostic.Searches[0].State != "error" {
+	if diagnostic.LocalAdmitted != 0 || diagnostic.AISelected != 1 {
+		t.Fatal("AI must evaluate pool even when local recommendation admits none", diagnostic)
+	}
+	if diagnostic.Stage != "ready" || diagnostic.Found != 2 || diagnostic.Selected != 1 || len(diagnostic.Searches) != 2 || diagnostic.Searches[0].State != "error" {
 		t.Fatal("partial source results or diagnostics lost", diagnostic)
 	}
 	collection := a.loadDJCollection(ctx)
-	if collection.JobID == "" || collection.ResultID == "" || collection.Job.JobID != collection.JobID || collection.Job.ResultID != collection.ResultID || len(diagnostic.Outcomes) != 1 {
+	if collection.JobID == "" || collection.ResultID == "" || collection.Job.JobID != collection.JobID || collection.Job.ResultID != collection.ResultID || len(diagnostic.Outcomes) != 2 {
 		t.Fatal("job/result mismatch", collection, diagnostic)
 	}
 	// An independent radio job must never replace the manual collection.
