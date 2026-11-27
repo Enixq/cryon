@@ -124,7 +124,15 @@ func typeSchema(t reflect.Type) map[string]any {
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
 			key := strings.Split(f.Tag.Get("json"), ",")[0]
-			properties[key] = typeSchema(f.Type)
+			child := typeSchema(f.Type)
+			if key == "query" {
+				child["maxLength"] = 120
+			}
+			if key == "reason" {
+				child["minLength"] = 1
+				child["maxLength"] = 160
+			}
+			properties[key] = child
 			required = append(required, key)
 		}
 		return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}

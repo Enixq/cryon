@@ -491,6 +491,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 				}
 				return
 			}
+			plan = intelligence.CanonicalSearch(plan)
 			if err = intelligence.ValidateSearch(input, plan, limits); err != nil {
 				diagnostic.Error = "План поиска модели отклонён: " + err.Error()
 				if iteration > 0 {

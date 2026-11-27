@@ -25,6 +25,25 @@ func bounded(s string, n int) bool {
 	return utf8.ValidString(s) && strings.TrimSpace(s) != "" && utf8.RuneCountInString(s) <= n
 }
 
+// These tools consume the supplied seed/profile, not query text. Requiring an
+// invented text query for them rejects otherwise executable model plans.
+func UsesContextQuery(ch Channel) bool {
+	return (ch.Capability == "similar_tracks" && (ch.Provider == "lastfm" || ch.Provider == "yandex")) ||
+		(ch.Provider == "cryon" && (ch.Capability == "discovery" || ch.Capability == "taste_neighbors" || ch.Capability == "library"))
+}
+
+// CanonicalSearch preserves the selected tools, limits and strategy. It only
+// replaces text ignored by contextual tools, avoiding misleading diagnostics.
+func CanonicalSearch(plan SearchPlan) SearchPlan {
+	plan.Steps = append([]SearchStep{}, plan.Steps...)
+	for i := range plan.Steps {
+		if UsesContextQuery(plan.Steps[i].Channel) {
+			plan.Steps[i].Query = "context"
+		}
+	}
+	return plan
+}
+
 func validateContext(in PlanningInput) error {
 	if in.Scope.RequestID == "" || in.Scope.SessionID == "" || in.Scope.SessionID != in.Session.ID || in.Scope.SessionRevision != in.Session.Revision || in.Scope.TasteRevision != in.Taste.Revision {
 		return fmt.Errorf("inconsistent planning scope")
@@ -67,13 +86,13 @@ func ValidateSearch(in PlanningInput, plan SearchPlan, limits Limits) error {
 		available[c.Channel] = c.MaxCandidates
 	}
 	total := 0
-	for _, step := range plan.Steps {
+	for i, step := range plan.Steps {
 		remaining, ok := available[step.Channel]
 		if !ok || step.Limit <= 0 || step.Limit > remaining || step.Limit > limits.MaxCandidates-total {
 			return fmt.Errorf("unavailable channel or exceeded search budget")
 		}
-		if !bounded(step.Query, limits.MaxQueryRunes) {
-			return fmt.Errorf("invalid search query")
+		if !UsesContextQuery(step.Channel) && !bounded(step.Query, limits.MaxQueryRunes) {
+			return fmt.Errorf("шаг %d (%s/%s): запрос пуст или длиннее %d символов (получено %d)", i+1, step.Channel.Provider, step.Channel.Capability, limits.MaxQueryRunes, utf8.RuneCountInString(step.Query))
 		}
 		available[step.Channel] -= step.Limit
 		total += step.Limit
