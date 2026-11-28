@@ -2,11 +2,22 @@ package recommendations
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"sync"
 
 	"Cryon2/internal/domain"
 	"Cryon2/internal/identity"
 )
+
+type djVersionResolutionKey struct{}
+
+// WithDJVersionResolution keeps graph metadata independent of playback search.
+// Only a coordinator with a subsequent version resolver may use this context;
+// ordinary radio continues to resolve graph results through its existing path.
+func WithDJVersionResolution(ctx context.Context) context.Context {
+	return context.WithValue(ctx, djVersionResolutionKey{}, true)
+}
 
 // PrepareDJPool enforces identity, blocks and playback shape only. Musical
 // preference, recent history and artist diversity belong to the final selector.
@@ -23,7 +34,7 @@ func (e *Engine) PrepareDJPool(ctx context.Context, tracks, exclude []domain.Tra
 		}
 		for _, c := range identity.RankCandidates(group.Candidates, prefs) {
 			t := c.Track
-			if excluded[trackKey(t)] || t.Service == domain.ServiceYouTube || (t.PlayableKind != "" && t.PlayableKind != domain.PlayableStream) {
+			if excluded[trackKey(t)] || (t.PlayableKind != "" && t.PlayableKind != domain.PlayableStream) {
 				continue
 			}
 			out = append(out, t)
@@ -40,6 +51,20 @@ func (e *Engine) PrepareDJPool(ctx context.Context, tracks, exclude []domain.Tra
 // familiar artists, played tracks and multiple tracks by the same artist so DJ
 // can evaluate them with the complete current context.
 func (e *Engine) resolveDJMetadata(ctx context.Context, metadata []scoredCand, limit int) []domain.Track {
+	if deferred, _ := ctx.Value(djVersionResolutionKey{}).(bool); deferred {
+		out := []domain.Track{}
+		for _, c := range metadata {
+			if c.artist == "" || c.title == "" {
+				continue
+			}
+			hash := sha256.Sum256([]byte(identity.Normalize(c.artist) + "|" + identity.Normalize(c.title)))
+			out = append(out, domain.Track{ID: fmt.Sprintf("metadata:%x", hash[:12]), Title: c.title, Artists: []string{c.artist}, PlayableKind: domain.PlayableStream})
+			if len(out) >= limit {
+				break
+			}
+		}
+		return e.PrepareDJPool(ctx, out, nil, limit)
+	}
 	if e.search == nil {
 		return nil
 	}

@@ -32,6 +32,23 @@ func TestDJCatalogSourcesShareBudget(t *testing.T) {
 	}
 }
 
+func TestDJGraphMetadataDefersCatalogSearchUntilAfterRanking(t *testing.T) {
+	calls := 0
+	e := New(nil, nil, nil, func(context.Context, string) ([]domain.Track, error) {
+		calls++
+		return []domain.Track{{ID: "id", Service: domain.ServiceYouTube, Title: "Song", Artists: []string{"Artist"}}}, nil
+	})
+	metadata := []scoredCand{{artist: "Artist", title: "Song"}}
+	got := e.resolveDJMetadata(WithDJVersionResolution(context.Background()), metadata, 5)
+	if calls != 0 || len(got) != 1 || got[0].Service != "" || got[0].ID == "" {
+		t.Fatal("premature catalog resolution", calls, got)
+	}
+	got = e.resolveDJMetadata(context.Background(), metadata, 5)
+	if calls != 1 || len(got) != 1 || got[0].Service != domain.ServiceYouTube {
+		t.Fatal("legacy caller changed", calls, got)
+	}
+}
+
 func TestDJFinalizationAndCapabilityAvailability(t *testing.T) {
 	e := New(nil, lastfm.New(""), nil, nil)
 	e.SetTrackSimilarity(func(context.Context, domain.Track) ([]domain.Track, error) { return nil, nil })
@@ -49,7 +66,7 @@ func TestDJFinalizationAndCapabilityAvailability(t *testing.T) {
 	youtube := domain.Track{ID: "youtube", Service: domain.ServiceYouTube, Title: "Video", Artists: []string{"Video"}}
 	embedded := domain.Track{ID: "embedded", Service: domain.ServiceSpotify, Title: "Embed", Artists: []string{"Embedded"}, PlayableKind: domain.PlayableEmbeddedWeb}
 	out := e.FinalizeDJ(context.Background(), []domain.Track{seed, newTrack, duplicate, external, youtube, embedded}, []domain.Track{seed}, 40)
-	if len(out) != 1 || out[0].DJPlanID != "plan" || out[0].RecommendationReason != "Рекомендовано Cryon AI" {
+	if len(out) != 2 || out[1].Service != domain.ServiceYouTube || out[0].DJPlanID != "plan" || out[0].RecommendationReason != "Рекомендовано Cryon AI" {
 		t.Fatal(out)
 	}
 	// Metadata capabilities are independent from the audio service.

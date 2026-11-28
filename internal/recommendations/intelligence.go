@@ -126,7 +126,7 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 	}
 	tracks = e.Allowed(ctx, tracks)
 	filtered := []domain.Track{}
-	for _, t := range balanceDJSources(e.orderCandidates(tracks)) {
+	for _, t := range balanceDJSources(tracks) {
 		if t.PlayableKind == "" || t.PlayableKind == domain.PlayableStream {
 			filtered = append(filtered, t)
 		}
@@ -213,7 +213,7 @@ func (e *Engine) FinalizeDJ(ctx context.Context, tracks []domain.Track, exclude 
 		var picked *domain.Track
 		for _, candidate := range identity.RankCandidates(group.Candidates, preferences) {
 			t := candidate.Track
-			if t.Service != domain.ServiceYouTube && (t.PlayableKind == "" || t.PlayableKind == domain.PlayableStream) {
+			if t.PlayableKind == "" || t.PlayableKind == domain.PlayableStream {
 				picked = &t
 				break
 			}

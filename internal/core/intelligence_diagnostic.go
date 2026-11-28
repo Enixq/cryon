@@ -18,6 +18,7 @@ type DJSearchStatus struct {
 	State     string `json:"state"`
 }
 type DJDiagnostic struct {
+	Sources           []DJSourceDiagnostic         `json:"sources,omitempty"`
 	StrategySource    string                       `json:"strategySource"`
 	LLMCalls          int                          `json:"llmCalls"`
 	PlanFromCache     bool                         `json:"planFromCache"`
@@ -107,7 +108,13 @@ func (a *App) saveDJReaction(ctx context.Context, event intelligence.FeedbackEve
 		return
 	}
 	for _, candidate := range candidates {
-		if candidate.Track.ID != event.TrackID {
+		matches := candidate.Track.ID == event.TrackID
+		for _, version := range candidate.PlaybackCandidates {
+			if version.ID == event.TrackID {
+				matches = true
+			}
+		}
+		if !matches {
 			continue
 		}
 		a.appendDJReaction(ctx, djReaction{event, candidate.Track})

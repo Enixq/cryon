@@ -14,6 +14,7 @@ import (
 	"Cryon2/internal/identity"
 	"Cryon2/internal/intelligence"
 	djproviders "Cryon2/internal/intelligence/providers"
+	"Cryon2/internal/recommendations"
 )
 
 type djOutput struct {
@@ -246,6 +247,9 @@ func (a *App) djTools(ctx context.Context, plan intelligence.SearchPlan, seed do
 }
 
 func (a *App) coordinateDJ(ctx context.Context, cfg DJConfig, in intelligence.PlanningInput, req djRadioRequest, issued []domain.Track, director *djproviders.Director, d *DJDiagnostic) djOutput {
+	if a.registry != nil {
+		ctx = recommendations.WithDJVersionResolution(ctx)
+	}
 	ctx = a.reco.AcquisitionContext(ctx, in.Scope.RequestID)
 	plan := a.djStrategy(ctx, cfg, in, director, d)
 	output := djOutput{}

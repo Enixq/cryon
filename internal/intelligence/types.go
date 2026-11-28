@@ -3,6 +3,7 @@
 package intelligence
 
 import (
+	"Cryon2/internal/domain"
 	"context"
 	"time"
 )
@@ -111,14 +112,15 @@ type SearchPlan struct {
 }
 
 type Candidate struct {
-	CanonicalID      string            `json:"canonical_id,omitempty"`
-	Origins          []CandidateOrigin `json:"origins"`
-	Evidence         Evidence          `json:"evidence"`
-	UnfamiliarArtist bool              `json:"unfamiliar_artist"`
-	ID               string            `json:"candidate_id"`
-	Track            TrackSummary      `json:"track"`
-	BaseRank         int               `json:"base_rank"`
-	Channels         []Channel         `json:"channels"`
+	PlaybackCandidates []domain.PlaybackCandidate `json:"playback_candidates,omitempty"`
+	CanonicalID        string                     `json:"canonical_id,omitempty"`
+	Origins            []CandidateOrigin          `json:"origins"`
+	Evidence           Evidence                   `json:"evidence"`
+	UnfamiliarArtist   bool                       `json:"unfamiliar_artist"`
+	ID                 string                     `json:"candidate_id"`
+	Track              TrackSummary               `json:"track"`
+	BaseRank           int                        `json:"base_rank"`
+	Channels           []Channel                  `json:"channels"`
 }
 type CandidateOrigin struct {
 	Channel       Channel  `json:"channel"`

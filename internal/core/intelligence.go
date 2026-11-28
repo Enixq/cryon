@@ -62,21 +62,22 @@ type djPending struct {
 }
 type djState struct {
 	sync.Mutex
-	jobID     string
-	sessionID string
-	busy      bool
-	cancel    context.CancelFunc
-	ready     map[string]djReady
-	cooldown  time.Time
-	day       string
-	used      int
-	tokens    int
-	state     string
-	prepared  uint64
-	fallbacks uint64
-	pending   map[string]djPending
-	done      chan struct{}
-	toolSlots chan struct{}
+	jobID        string
+	sessionID    string
+	busy         bool
+	cancel       context.CancelFunc
+	ready        map[string]djReady
+	cooldown     time.Time
+	day          string
+	used         int
+	tokens       int
+	state        string
+	prepared     uint64
+	fallbacks    uint64
+	pending      map[string]djPending
+	done         chan struct{}
+	toolSlots    chan struct{}
+	versionSlots chan struct{}
 }
 
 func djID() string { var b [16]byte; _, _ = rand.Read(b[:]); return hex.EncodeToString(b[:]) }
@@ -445,6 +446,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		}()
 		output := a.coordinateDJ(ctx, cfg, input, req, issued, director, &diagnostic)
 		ordered, candidates, plan, ranked, selection := output.tracks, output.candidates, output.plan, output.ranked, output.selection
+		ordered, candidates = a.resolveDJVersions(ctx, ordered, candidates, &diagnostic)
 		for i := range ordered {
 			ordered[i].DJSessionID = session.ID
 			ordered[i].DJPlanID = selection.PoolID
@@ -514,6 +516,8 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 
 func (a *App) handleIntelligence(w http.ResponseWriter, r *http.Request) {
 	switch strings.TrimPrefix(r.URL.Path, "/v1/intelligence/") {
+	case "sources":
+		a.handleDJSources(w, r)
 	case "tuning":
 		a.handleDJTuning(w, r)
 	case "profile":

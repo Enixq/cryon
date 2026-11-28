@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 import { getDJStatus, saveDJConfig, rebuildDJProfile, type DJStatus } from "../api/intelligence";
+import {
+  getDJSources,
+  saveDJSources,
+  djSourceNames,
+  djSourceStates,
+  type DJSourcePolicy,
+} from "../api/intelligence";
 
 export function IntelligenceSettings() {
   const [status, setStatus] = useState<DJStatus>();
@@ -11,6 +18,13 @@ export function IntelligenceSettings() {
   const [budget, setBudget] = useState(100);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [sources, setSources] = useState<DJSourcePolicy>();
+  const [sourceBusy, setSourceBusy] = useState(false);
+  useEffect(() => {
+    void getDJSources()
+      .then(setSources)
+      .catch(() => {});
+  }, []);
   useEffect(() => {
     void getDJStatus()
       .then((s) => {
@@ -183,6 +197,93 @@ export function IntelligenceSettings() {
       >
         Пересчитать профиль из библиотеки и истории
       </button>
+      {sources && (
+        <div className="mt-5 border-t border-white/10 pt-4">
+          <h3 className="font-medium text-white">Источники Cryon DJ</h3>
+          <p className="mt-1 text-xs text-slate-400">
+            Ищем версии выбранной музыки во всех включённых источниках. Порядок задаёт предпочтение
+            воспроизведения; при ошибке пробуем следующий. Без своего порядка DJ учитывает
+            совпадение записи и разнообразие источников.
+          </p>
+          <div className="mt-3 grid gap-2">
+            {[
+              ...sources.priority,
+              ...sources.sources
+                .map((s) => s.source)
+                .filter((id) => !sources.priority.includes(id)),
+            ].map((id, index, order) => (
+              <div key={id} className="flex flex-wrap items-center gap-2 text-sm text-slate-300">
+                <label className="flex min-w-0 flex-1 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={sources.enabled[id] ?? true}
+                    onChange={(e) =>
+                      setSources({
+                        ...sources,
+                        enabled: { ...sources.enabled, [id]: e.target.checked },
+                      })
+                    }
+                  />
+                  {djSourceNames[id] ?? id}
+                </label>
+                <span className="text-xs text-slate-400">
+                  {djSourceStates[sources.sources.find((s) => s.source === id)?.state ?? "ready"]}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Выше: ${djSourceNames[id]}`}
+                  disabled={index === 0}
+                  className="rounded border border-white/10 px-2 disabled:opacity-30"
+                  onClick={() => {
+                    const next = [...order];
+                    [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                    setSources({ ...sources, priority: next });
+                  }}
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Ниже: ${djSourceNames[id]}`}
+                  disabled={index === order.length - 1}
+                  className="rounded border border-white/10 px-2 disabled:opacity-30"
+                  onClick={() => {
+                    const next = [...order];
+                    [next[index + 1], next[index]] = [next[index], next[index + 1]];
+                    setSources({ ...sources, priority: next });
+                  }}
+                >
+                  ↓
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-3 text-sm">
+            <button
+              disabled={sourceBusy}
+              className="rounded-lg bg-purple-500/20 px-3 py-2 text-purple-200 disabled:opacity-40"
+              onClick={() => {
+                setSourceBusy(true);
+                void saveDJSources(sources)
+                  .then((s) => {
+                    setSources(s);
+                    setMessage("Источники сохранены. Новая подборка учтёт изменения.");
+                  })
+                  .catch((e) => setMessage((e as Error).message))
+                  .finally(() => setSourceBusy(false));
+              }}
+            >
+              Сохранить источники
+            </button>
+            <button
+              className="text-slate-400 underline"
+              onClick={() => setSources({ ...sources, priority: [] })}
+            >
+              Автоматический порядок
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

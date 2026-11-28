@@ -113,11 +113,16 @@ const (
 	VersionRemaster VersionKind = "remaster"
 	VersionClean    VersionKind = "clean"
 	VersionRemix    VersionKind = "remix"
+	VersionAcoustic VersionKind = "acoustic"
 	VersionExplicit VersionKind = "explicit"
 )
 
 // PlaybackCandidate binds one playable source item to a CanonicalTrack.
 type PlaybackCandidate struct {
+	CheckedAt          string      `json:"checkedAt,omitempty"`
+	CheckElapsedMS     int64       `json:"checkElapsedMs,omitempty"`
+	AvailabilityState  string      `json:"availabilityState,omitempty"`
+	RejectionReason    string      `json:"rejectionReason,omitempty"`
 	ID                 string      `json:"id"`
 	CanonicalTrackID   string      `json:"canonicalTrackId"`
 	Track              Track       `json:"track"`

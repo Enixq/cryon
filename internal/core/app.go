@@ -95,6 +95,7 @@ var notifCounter uint64
 // через Wails-биндинги.
 type App struct {
 	dj                  djState
+	djVersionProbe      func(context.Context, domain.Track) error
 	vkWebLogin          vkWebLogin
 	librarySyncMu       sync.Mutex
 	librarySyncConfigMu sync.Mutex
@@ -176,7 +177,7 @@ func NewApp() *App {
 	app.reco.SetDJSourceSearch(func() []string {
 		out := []string{}
 		for _, status := range app.ListSourceStatus() {
-			if status.Level == sourceOK && status.ID != "youtube" && status.ID != "spotify" {
+			if status.Level == sourceOK && status.ID != "spotify" {
 				out = append(out, status.ID)
 			}
 		}
@@ -929,6 +930,9 @@ func (a *App) ResolvePlaybackFallback(track domain.Track, failedService string) 
 }
 
 func (a *App) resolvePlaybackFallback(track domain.Track, failedService string, excludedCandidates []string) (domain.PlaybackCandidate, bool) {
+	if track.DJSessionID != "" && track.DJPlanID != "" && !track.ForcedSource {
+		return a.djPlaybackFallback(track, failedService, excludedCandidates)
+	}
 	if track.ForcedSource {
 		return domain.PlaybackCandidate{}, false
 	}
@@ -1055,6 +1059,13 @@ func normalizeTrackText(value string) string {
 
 // GetAudioStream возвращает прямой аудиопоток трека, если источник его поддерживает.
 func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.AudioStream, error) {
+	return a.getAudioStream(a.ctx, service, trackID)
+}
+
+func (a *App) getAudioStream(ctx context.Context, service string, trackID string) (*audiofetcher.AudioStream, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if item, path, ok := a.offlineDownload(domain.ServiceID(service), trackID); ok {
 		return &audiofetcher.AudioStream{URL: path, Format: item.Mime, Duration: int64(item.Track.DurationMs / 1000)}, nil
 	}
@@ -1063,10 +1074,6 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 		provider, ok := a.registry[domain.ServiceVK].(*vkweb.Service)
 		if !ok {
 			return nil, fmt.Errorf("ВК Музыка недоступна")
-		}
-		ctx := a.ctx
-		if ctx == nil {
-			ctx = context.Background()
 		}
 		target, mime, err := provider.ResolveStream(ctx, trackID)
 		if err != nil {
@@ -1081,7 +1088,7 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 		// завершится успехом или ошибкой, и фронтенд получит onerror вместо
 		// вечной тишины. Сам аудиопоток качается отдельным запросом в
 		// localserver и этим дедлайном НЕ ограничен (URL уже строка).
-		ctx, cancel := context.WithTimeout(a.ctx, 40*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 		defer cancel()
 		return audiofetcher.GetYouTubeAudioStream(ctx, trackID)
 	case domain.ServiceSoundCloud:
@@ -1089,7 +1096,7 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 		if !ok {
 			return nil, fmt.Errorf("адаптер SoundCloud недоступен")
 		}
-		info, err := sc.ResolveStream(a.ctx, trackID)
+		info, err := sc.ResolveStream(ctx, trackID)
 		if err != nil {
 			return nil, err
 		}
@@ -1108,7 +1115,7 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 		if !ok {
 			return nil, fmt.Errorf("адаптер Yandex Music недоступен")
 		}
-		info, err := ya.ResolveStream(a.ctx, trackID)
+		info, err := ya.ResolveStream(ctx, trackID)
 		if err != nil {
 			return nil, err
 		}
@@ -1119,6 +1126,9 @@ func (a *App) GetAudioStream(service string, trackID string) (*audiofetcher.Audi
 			Duration: int64(info.DurationMs / 1000),
 		}, nil
 	case domain.ServiceLocal:
+		if a.local == nil {
+			return nil, fmt.Errorf("local library unavailable")
+		}
 		path, ok := a.local.FilePath(trackID)
 		if !ok {
 			return nil, fmt.Errorf("локальный трек не найден: %s", trackID)

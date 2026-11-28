@@ -117,7 +117,7 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 	a.dj.Lock()
 	active := a.dj.busy && a.dj.jobID == c.Job.JobID
 	a.dj.Unlock()
-	if c.Job.JobID != "" && !active && (c.Job.Stage == "planning" || c.Job.Stage == "searching" || c.Job.Stage == "ranking" || c.Job.Stage == "saving") {
+	if c.Job.JobID != "" && !active && (c.Job.Stage == "planning" || c.Job.Stage == "searching" || c.Job.Stage == "ranking" || c.Job.Stage == "resolving" || c.Job.Stage == "saving") {
 		c.Job.Stage = "cancelled"
 		c.Job.Error = "Подготовка прервана. Можно запустить новую; предыдущий результат сохранён"
 		a.saveDJDiagnostic(r.Context(), c.Job)

@@ -7,6 +7,9 @@ import {
   getDJCollectionView,
   refreshDJCollection,
   djPollingOptions,
+  djSourceNames,
+  djSourceStates,
+  djSourceReasons,
 } from "../api/intelligence";
 import { hasApiV1Runtime } from "../api/v1";
 
@@ -29,7 +32,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
     refetchInterval: 2000,
   });
   const job = view?.job;
-  const preparingStages = ["planning", "searching", "ranking", "saving"];
+  const preparingStages = ["planning", "searching", "ranking", "resolving", "saving"];
   const active = status?.enabled;
   const preparing = preparingStages.includes(job?.stage ?? "");
   const [now, setNow] = useState(Date.now);
@@ -47,6 +50,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
     planning: active ? "DJ определяет стратегию поиска…" : "Строим персональный план…",
     searching: "Инструменты DJ собирают кандидатов…",
     ranking: "Cryon оценивает кандидатов локально…",
+    resolving: "Проверяем версии и потоки в музыкальных источниках…",
     saving: "Сохраняем подборку…",
   };
   const label = !status
@@ -124,6 +128,53 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
           Итерация: {diagnostic.iteration ?? 1} · найдено: {diagnostic.found} · допущено к оценке:{" "}
           {diagnostic.candidates} · отбор Cryon: {diagnostic.localAdmitted ?? "—"} · отбор AI: не
           используется · в результате: {diagnostic.selected}
+          {!!diagnostic.sources?.length && (
+            <details className="mt-2">
+              <summary className="cursor-pointer">Источники воспроизведения</summary>
+              <p className="mt-1 text-xs">
+                Проверяем поток выбранной версии; остальные совпадения сохраняем для переключения
+                при ошибке. Время — сумма операций источника.
+              </p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {diagnostic.sources.map((source) => (
+                  <div
+                    key={source.source}
+                    className="min-w-0 rounded-lg border border-white/10 p-2 text-xs"
+                  >
+                    <p className="font-medium text-slate-200">
+                      {djSourceNames[source.source] ?? source.source} ·{" "}
+                      {djSourceStates[source.state] ?? source.state}
+                    </p>
+                    <p>
+                      Включён: {source.enabled ? "да" : "нет"} · вход:{" "}
+                      {source.auth === "missing" || source.auth === "expired"
+                        ? "нужен"
+                        : source.auth === "session_present"
+                          ? "сессия сохранена"
+                          : source.auth === "verified"
+                            ? "проверен"
+                            : "не требуется"}
+                    </p>
+                    <p>
+                      Поиск: {source.searchAttempted ? "запущен" : "не запускался"} · запросов:{" "}
+                      {source.queries} · из кэша: {source.cached ?? 0} · найдено: {source.found} ·
+                      совпало: {source.matched}
+                    </p>
+                    <p>
+                      Поток проверен: {source.playable} · без проверки: {source.unchecked ?? 0} · в
+                      очереди: {source.chosen} · отклонено: {source.rejected} · {source.elapsedMs}{" "}
+                      мс
+                    </p>
+                    {Object.entries(source.reasons ?? {}).map(([reason, count]) => (
+                      <p key={reason}>
+                        {djSourceReasons[reason] ?? reason}: {count}
+                      </p>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
           {(diagnostic.searches ?? []).length > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer">Как DJ искал музыку</summary>

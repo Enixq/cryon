@@ -12,6 +12,7 @@ export const djPollingOptions = {
 };
 
 export type DJDiagnostic = {
+  sources?: DJSourceDiagnostic[];
   requestDeadlineAt?: string;
   strategySource?: string;
   planFromCache?: boolean;
@@ -42,6 +43,74 @@ export type DJDiagnostic = {
     state: string;
   }[];
 };
+export type DJSourceDiagnostic = {
+  source: string;
+  enabled: boolean;
+  auth: string;
+  searchAttempted: boolean;
+  queries: number;
+  cached?: number;
+  found: number;
+  matched: number;
+  playable: number;
+  unchecked?: number;
+  chosen: number;
+  rejected: number;
+  reasons: Record<string, number>;
+  elapsedMs: number;
+  state: string;
+};
+export type DJSourcePolicy = {
+  enabled: Record<string, boolean>;
+  priority: string[];
+  sources: DJSourceDiagnostic[];
+};
+export const djSourceNames: Record<string, string> = {
+  yandex: "Яндекс Музыка",
+  vk: "VK Музыка",
+  soundcloud: "SoundCloud",
+  youtube: "YouTube",
+  local: "Локальная библиотека",
+};
+export const djSourceStates: Record<string, string> = {
+  ready: "готов к проверке",
+  disabled: "выключен",
+  unsupported: "адаптер недоступен",
+  no_auth: "требуется вход",
+  selected: "используется в очереди",
+  playable: "поток проверен",
+  search_error: "ошибка поиска",
+  empty: "совпадений нет",
+  identity_rejected: "другая композиция или запись",
+  unplayable: "поток недоступен",
+  matched_unchecked: "найдено; поток ещё не проверен",
+};
+export const djSourceReasons: Record<string, string> = {
+  probe_budget_expired: "не проверено в пределах бюджета потоков",
+  search_timeout: "истёк срок запроса",
+  rate_limited: "источник ограничил запросы",
+  search_error: "ошибка поиска",
+  search_budget_expired: "истёк бюджет поиска",
+  stream_unavailable: "поток не прошёл проверку",
+  no_direct_stream: "нет прямого потока",
+  artist_mismatch: "другой исполнитель",
+  title_mismatch: "другое название",
+  recording_variant: "другая версия записи",
+  duration_mismatch: "другая длительность",
+  invalid_source_id: "некорректный ID",
+};
+export function getDJSources(): Promise<DJSourcePolicy> {
+  return request("/v1/intelligence/sources");
+}
+export function saveDJSources(
+  value: Pick<DJSourcePolicy, "enabled" | "priority">,
+): Promise<DJSourcePolicy> {
+  return request("/v1/intelligence/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(value),
+  });
+}
 export type DJStatus = {
   diagnostic?: DJDiagnostic;
   usedToday: number;

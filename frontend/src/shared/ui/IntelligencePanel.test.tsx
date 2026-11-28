@@ -75,6 +75,54 @@ it("updates the result and status from the same collection snapshot, retaining o
   await screen.findByText("Cryon DJ · Персональная подборка готова");
   fireEvent.click(screen.getByText("Подобрать музыку"));
   await screen.findByText("Cryon DJ · Инструменты DJ собирают кандидатов…");
+  view = {
+    ...view,
+    job: {
+      ...view.job,
+      stage: "resolving",
+      sources: [
+        {
+          source: "youtube",
+          enabled: true,
+          auth: "not_required",
+          searchAttempted: true,
+          queries: 2,
+          found: 8,
+          matched: 1,
+          playable: 1,
+          chosen: 1,
+          rejected: 7,
+          reasons: { artist_mismatch: 7 },
+          elapsedMs: 400,
+          state: "selected",
+        },
+        {
+          source: "vk",
+          enabled: true,
+          auth: "missing",
+          searchAttempted: false,
+          queries: 0,
+          found: 0,
+          matched: 0,
+          playable: 0,
+          chosen: 0,
+          rejected: 0,
+          reasons: {},
+          elapsedMs: 0,
+          state: "no_auth",
+        },
+      ],
+    },
+  };
+  await act(async () => {
+    await client.invalidateQueries({ queryKey: ["djCollection"] });
+  });
+  expect(
+    await screen.findByText("Cryon DJ · Проверяем версии и потоки в музыкальных источниках…"),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/YouTube · используется в очереди/)).toBeInTheDocument();
+  expect(screen.getByText(/VK Музыка · требуется вход/)).toBeInTheDocument();
+  expect(screen.getByText(/другой исполнитель: 7/)).toBeInTheDocument();
   expect(screen.getByTestId("tracks")).toHaveTextContent("old-result");
   expect(screen.getByText(/Предыдущая подборка/)).toBeInTheDocument();
   view = {

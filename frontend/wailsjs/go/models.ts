@@ -95,7 +95,53 @@ export namespace core {
 	        this.state = source["state"];
 	    }
 	}
+	export class DJSourceDiagnostic {
+	    source: string;
+	    enabled: boolean;
+	    auth: string;
+	    searchAttempted: boolean;
+	    cached: number;
+	    queries: number;
+	    found: number;
+	    matched: number;
+	    playable: number;
+	    unchecked: number;
+	    chosen: number;
+	    rejected: number;
+	    reasons: Record<string, number>;
+	    elapsedMs: number;
+	    state: string;
+
+	    static createFrom(source: any = {}) {
+	        return new DJSourceDiagnostic(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.source = source["source"];
+	        this.enabled = source["enabled"];
+	        this.auth = source["auth"];
+	        this.searchAttempted = source["searchAttempted"];
+	        this.cached = source["cached"];
+	        this.queries = source["queries"];
+	        this.found = source["found"];
+	        this.matched = source["matched"];
+	        this.playable = source["playable"];
+	        this.unchecked = source["unchecked"];
+	        this.chosen = source["chosen"];
+	        this.rejected = source["rejected"];
+	        this.reasons = source["reasons"];
+	        this.elapsedMs = source["elapsedMs"];
+	        this.state = source["state"];
+	    }
+	}
 	export class DJDiagnostic {
+	    sources?: DJSourceDiagnostic[];
+	    strategySource: string;
+	    llmCalls: number;
+	    planFromCache: boolean;
+	    engine?: string;
+	    warning?: string;
 	    requestDeadlineAt?: string;
 	    tokens: number;
 	    outcomes: intelligence.SearchOutcome[];
@@ -109,6 +155,8 @@ export namespace core {
 	    error?: string;
 	    found: number;
 	    candidates: number;
+	    localAdmitted: number;
+	    aiSelected: number;
 	    selected: number;
 	    searches: DJSearchStatus[];
 	    updatedAt: string;
@@ -119,6 +167,12 @@ export namespace core {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sources = this.convertValues(source["sources"], DJSourceDiagnostic);
+	        this.strategySource = source["strategySource"];
+	        this.llmCalls = source["llmCalls"];
+	        this.planFromCache = source["planFromCache"];
+	        this.engine = source["engine"];
+	        this.warning = source["warning"];
 	        this.requestDeadlineAt = source["requestDeadlineAt"];
 	        this.tokens = source["tokens"];
 	        this.outcomes = this.convertValues(source["outcomes"], intelligence.SearchOutcome);
@@ -132,6 +186,8 @@ export namespace core {
 	        this.error = source["error"];
 	        this.found = source["found"];
 	        this.candidates = source["candidates"];
+	        this.localAdmitted = source["localAdmitted"];
+	        this.aiSelected = source["aiSelected"];
 	        this.selected = source["selected"];
 	        this.searches = this.convertValues(source["searches"], DJSearchStatus);
 	        this.updatedAt = source["updatedAt"];
@@ -155,6 +211,7 @@ export namespace core {
 		    return a;
 		}
 	}
+
 
 	export class DJStatus {
 	    diagnostic: DJDiagnostic;
@@ -424,6 +481,10 @@ export namespace domain {
 		}
 	}
 	export class PlaybackCandidate {
+	    checkedAt?: string;
+	    checkElapsedMs?: number;
+	    availabilityState?: string;
+	    rejectionReason?: string;
 	    id: string;
 	    canonicalTrackId: string;
 	    track: Track;
@@ -441,6 +502,10 @@ export namespace domain {
 
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.checkedAt = source["checkedAt"];
+	        this.checkElapsedMs = source["checkElapsedMs"];
+	        this.availabilityState = source["availabilityState"];
+	        this.rejectionReason = source["rejectionReason"];
 	        this.id = source["id"];
 	        this.canonicalTrackId = source["canonicalTrackId"];
 	        this.track = this.convertValues(source["track"], Track);
