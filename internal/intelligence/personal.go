@@ -12,8 +12,8 @@ func PersonalSearch(in PlanningInput) SearchPlan {
 	remaining := 40
 	if in.Session.Mode == RadioInfinite {
 		for _, c := range in.Channels {
-			if c.Channel.Capability == "taste_neighbors" {
-				n := min(20, c.MaxCandidates)
+			if (c.Channel.Capability == "taste_neighbors" || c.Channel.Capability == "history_neighbors") && remaining > 16 {
+				n := min(12, c.MaxCandidates)
 				p.Steps = append(p.Steps, SearchStep{Channel: c.Channel, Query: "favorite track neighbors", Limit: n})
 				remaining -= n
 			}

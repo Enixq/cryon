@@ -71,17 +71,64 @@ func (e *Engine) resolveDJMetadata(ctx context.Context, metadata []scoredCand, l
 	return e.PrepareDJPool(ctx, out, nil, limit)
 }
 
+// DJ graph expansion yields each resolved artist immediately instead of waiting
+// for both graph hops, all tag lookups and every top-track request.
 func (e *Engine) discoveryDJPool(ctx context.Context, limit int) []domain.Track {
-	if !e.OnlineAvailable() {
+	if !e.OnlineAvailable() || limit <= 0 {
 		return nil
 	}
-	profile := e.buildTaste(ctx)
-	seeds := profile.artists
-	if len(seeds) > discoverySeedCap {
-		seeds = seeds[:discoverySeedCap]
+	seeds := e.buildTasteWindow(ctx, 10000, 730).artists
+	if len(seeds) > 3 {
+		seeds = seeds[:3]
 	}
-	if len(seeds) == 0 {
-		return nil
+	results := make(chan []domain.Track, len(seeds)*2)
+	done := make(chan struct{})
+	var workers sync.WaitGroup
+	for _, seed := range seeds {
+		workers.Add(1)
+		go func(seed artistWeight) {
+			defer workers.Done()
+			artists := e.similarArtistsCached(ctx, seed.name, 2)
+			if len(artists) > 2 {
+				artists = artists[:2]
+			}
+			for _, artist := range artists {
+				if ctx.Err() != nil {
+					return
+				}
+				tracks := e.topTracksCached(ctx, artist.Name, 2)
+				metadata := []scoredCand{}
+				for i, t := range tracks {
+					if i >= 2 {
+						break
+					}
+					metadata = append(metadata, scoredCand{artist: t.Artist, title: t.Name, score: 1})
+				}
+				resolved := e.resolveDJMetadata(ctx, metadata, 2)
+				for _, track := range resolved {
+					recordAnchorOrigin(ctx, track, "artist:"+seed.name+" -> "+artist.Name, seed.name)
+				}
+				results <- resolved
+			}
+		}(seed)
 	}
-	return e.resolveDJMetadata(ctx, e.discoveryCandidatesFor(ctx, profile, seeds, true), limit)
+	go func() { workers.Wait(); close(done) }()
+	out := []domain.Track{}
+	for {
+		select {
+		case rows := <-results:
+			out = append(out, rows...)
+		case <-done:
+			for {
+				select {
+				case rows := <-results:
+					out = append(out, rows...)
+				default:
+					return e.PrepareDJPool(ctx, out, nil, limit)
+				}
+			}
+		case <-ctx.Done():
+			return e.PrepareDJPool(ctx, out, nil, limit)
+		}
+	}
 }

@@ -5,6 +5,7 @@ import { initialQueue } from "../mocks/data";
 import { isWailsRuntime, addFavorite, removeFavorite } from "../shared/api/client";
 import { notify } from "./notificationStore";
 import { reportDJEvent } from "../shared/api/intelligence";
+import { observeListening } from "./listeningTime";
 import {
   consumeRadioCompletion,
   isRadioArtistBlocked,
@@ -237,6 +238,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   // Позиция, пришедшая от реального движка воспроизведения.
   setEnginePosition: (seconds) => {
+    const current = get().currentTrack();
+    if (current) observeListening(current.id, seconds, get().isPlaying);
     const max = get().effectiveDuration();
     set({ progress: clamp(seconds, 0, max || seconds) });
   },

@@ -230,7 +230,9 @@ type taste struct {
 // больше истории, треки из своих плейлистов — между ними, свежие прослушивания
 // получают надбавку за свежесть. Явные оценки («нравится»/«не нравится» на
 // карточке рекомендации) усиливают или ослабляют исполнителя.
-func (e *Engine) buildTaste(ctx context.Context) taste {
+func (e *Engine) buildTaste(ctx context.Context) taste { return e.buildTasteWindow(ctx, 120, 90) }
+
+func (e *Engine) buildTasteWindow(ctx context.Context, historyLimit int, historyDays float64) taste {
 	weights := map[string]*artistWeight{}
 	seenTrackKeys := map[string]bool{}
 	blockedTracks := map[string]bool{}
@@ -301,7 +303,7 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 
 	// История — частота прослушивания + свежесть.
 	if e.histFn != nil {
-		if rows, err := e.histFn(ctx, 120); err == nil {
+		if rows, err := e.histFn(ctx, historyLimit); err == nil {
 			now := time.Now().UnixMilli()
 			for i, r := range rows {
 				seenTrackKeys[trackKey(r.Track)] = true
@@ -316,7 +318,7 @@ func (e *Engine) buildTaste(ctx context.Context) taste {
 					continue
 				}
 				ageDays := float64(now-r.PlayedAtMs) / float64(24*3600*1000)
-				if ageDays > 90 {
+				if ageDays > historyDays {
 					continue
 				}
 				recency := 1.0

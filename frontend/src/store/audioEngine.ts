@@ -273,7 +273,7 @@ export function useAudioEngine() {
       if (state.state !== "ended" || nativeEndHandledRef.current === current.id) return;
       if (hasNativeAndroidQueue()) return;
       nativeEndHandledRef.current = current.id;
-      if (store.radio || current.djSessionId) recordRadioSignal(current, "completed");
+      recordRadioSignal(current, "completed");
       void (async () => {
         if (store.repeat === "one") {
           seekNativeAndroidPlayer(0);
@@ -819,7 +819,7 @@ export function useAudioEngine() {
 
     // Обработка конца трека с учётом режима повтора.
     const handleTrackEnd = async (store: ReturnType<typeof usePlayerStore.getState>) => {
-      if (store.radio || track.djSessionId) recordRadioSignal(track, "completed");
+      recordRadioSignal(track, "completed");
       if (store.repeat === "one") {
         reportDJEvent(track, "replay", store.progress * 1000);
         // Повтор одного трека: перематываем в начало и играем снова.

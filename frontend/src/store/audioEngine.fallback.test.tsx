@@ -7,6 +7,7 @@ import { apiV1BaseUrl, resolvePlaybackFallbackV1, resolvePlaybackV1 } from "../s
 import { getAudioStreamInfo, getPlaybackUrlForHtml5, playerBackendAvailable, playerPlay, playerSetEqualizer, playerSetNormalize, playerStatus, playerStop, playerResume, resolvePlayableTrack, addHistory } from "../shared/api/client";
 
 vi.mock("../shared/api/v1", () => ({
+  hasApiV1Runtime: vi.fn().mockReturnValue(false),
   apiV1BaseUrl: vi.fn().mockReturnValue("http://localhost:1234"),
   resolvePlaybackV1: vi.fn(),
   resolvePlaybackFallbackV1: vi.fn(),

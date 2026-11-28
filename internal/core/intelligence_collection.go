@@ -96,10 +96,7 @@ func (a *App) handleDJCollection(w http.ResponseWriter, r *http.Request) {
 			}
 			a.dj.Unlock()
 		}
-		if cfg.Enabled && cfg.APIKey != "" && a.IntelligenceStatus().UsedToday >= cfg.DailySegments {
-			writeAPIError(w, 429, "Достигнут дневной лимит AI-подборок")
-			return
-		}
+
 		if time.Now().Before(cooldown) {
 			writeAPIError(w, 429, "Предыдущая AI-подборка не завершилась. Проверьте модель и ключ; повторить можно через минуту")
 			return

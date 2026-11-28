@@ -18,6 +18,9 @@ type DJSearchStatus struct {
 	State     string `json:"state"`
 }
 type DJDiagnostic struct {
+	StrategySource    string                       `json:"strategySource"`
+	LLMCalls          int                          `json:"llmCalls"`
+	PlanFromCache     bool                         `json:"planFromCache"`
 	Engine            string                       `json:"engine,omitempty"`
 	Warning           string                       `json:"warning,omitempty"`
 	RequestDeadlineAt string                       `json:"requestDeadlineAt,omitempty"`
@@ -107,17 +110,7 @@ func (a *App) saveDJReaction(ctx context.Context, event intelligence.FeedbackEve
 		if candidate.Track.ID != event.TrackID {
 			continue
 		}
-		a.dj.Lock()
-		defer a.dj.Unlock()
-		raw, _, _ := a.store.SettingGet(ctx, "intelligence.private.reactions")
-		rows := []djReaction{}
-		_ = json.Unmarshal([]byte(raw), &rows)
-		rows = append(rows, djReaction{event, candidate.Track})
-		if len(rows) > 120 {
-			rows = rows[len(rows)-120:]
-		}
-		data, _ := json.Marshal(rows)
-		_ = a.store.SettingSet(ctx, "intelligence.private.reactions", string(data))
+		a.appendDJReaction(ctx, djReaction{event, candidate.Track})
 		return
 	}
 }

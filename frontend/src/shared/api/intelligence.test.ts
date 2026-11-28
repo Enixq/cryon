@@ -20,6 +20,36 @@ describe("AI DJ API", () => {
   it("keeps the default runtime disabled", () => {
     expect(canUseDJ()).toBe(false);
   });
+  it("enables local DJ without a key and records ordinary playback behavior", async () => {
+    (window as Window & { __CRYON_BASE__?: string }).__CRYON_BASE__ = "http://localhost:9999";
+    const fetcher = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ enabled: true, configured: false }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    await getDJStatus();
+    expect(canUseDJ()).toBe(true);
+    reportDJEvent(
+      mapTrack({
+        id: "ordinary",
+        title: "Song",
+        artists: ["A"],
+        service: "soundcloud",
+        playableKind: "stream",
+      } as domain.Track),
+      "completed",
+      90000,
+    );
+    await Promise.resolve();
+    const call = fetcher.mock.calls.find((c) =>
+      (c as unknown as [string])[0].endsWith("/behavior"),
+    ) as unknown as [string, RequestInit];
+    expect(call).toBeDefined();
+    expect(JSON.parse(call[1].body as string).event).toMatchObject({
+      kind: "completed",
+      played_ms: 90000,
+    });
+  });
   it("tracks plan provenance and never reads a saved key", async () => {
     (window as Window & { __CRYON_BASE__?: string }).__CRYON_BASE__ = "http://localhost:9999";
     const raw = {

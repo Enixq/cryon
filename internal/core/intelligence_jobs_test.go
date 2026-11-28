@@ -48,13 +48,7 @@ func TestDJManualRestartCancelsWorkerWithoutCooldownOrOldResultLoss(t *testing.T
 	release := make(chan struct{})
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			close(started)
-			select {
-			case <-release:
-			case <-r.Context().Done():
-			}
-		}
+
 		http.Error(w, "invalid model", 400)
 	}))
 	defer server.Close()

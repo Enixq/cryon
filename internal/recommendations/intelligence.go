@@ -22,8 +22,11 @@ func (e *Engine) SetDJSourceSearch(sources func() []string, search func(context.
 
 func (e *Engine) DJChannels() []intelligence.ChannelBudget {
 	out := []intelligence.ChannelBudget{{Channel: intelligence.Channel{Provider: "cryon", Capability: "discovery"}, MaxCandidates: 40}}
-	if e.trackSimilar != nil && e.favFn != nil {
+	if e.trackSimilar != nil && e.favFn != nil && (e.trackSimilarAvailable == nil || e.trackSimilarAvailable()) {
 		out = append(out, intelligence.ChannelBudget{Channel: intelligence.Channel{Provider: "cryon", Capability: "taste_neighbors"}, MaxCandidates: 20})
+	}
+	if e.histFn != nil && e.trackSimilar != nil && (e.trackSimilarAvailable == nil || e.trackSimilarAvailable()) {
+		out = append(out, intelligence.ChannelBudget{Channel: intelligence.Channel{Provider: "cryon", Capability: "history_neighbors"}, MaxCandidates: 20})
 	}
 	if e.favFn != nil || e.histFn != nil {
 		out = append(out, intelligence.ChannelBudget{Channel: intelligence.Channel{Provider: "cryon", Capability: "library"}, MaxCandidates: 20})
@@ -71,12 +74,21 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 					}
 				}
 			}
+			if e.localFn != nil {
+				if rows, fetchErr := e.localFn(ctx); fetchErr == nil {
+					for _, row := range rows {
+						tracks = append(tracks, domain.Track{ID: row.ID, Service: domain.ServiceLocal, Title: row.Title, Artists: row.Artists, Album: row.Album, PlayableKind: domain.PlayableStream})
+					}
+				}
+			}
 		case (intelligence.Channel{Provider: "cryon", Capability: "discovery"}):
 			// Only graph-derived candidates belong to this channel. AutoMix's
 			// fallback searches favorite names and cannot supply graph evidence.
 			tracks = e.discoveryDJPool(ctx, step.Limit)
 		case (intelligence.Channel{Provider: "cryon", Capability: "taste_neighbors"}):
 			tracks = e.tasteNeighbors(ctx, step.Limit)
+		case (intelligence.Channel{Provider: "cryon", Capability: "history_neighbors"}):
+			tracks = e.historyNeighbors(ctx, step.Limit)
 		case (intelligence.Channel{Provider: "cryon", Capability: "catalog_search"}):
 			if strings.Contains(step.Query, "://") {
 				return nil, nil
@@ -106,6 +118,9 @@ func (e *Engine) ExecuteDJStep(ctx context.Context, step intelligence.SearchStep
 		case (intelligence.Channel{Provider: "yandex", Capability: "similar_tracks"}):
 			if e.trackSimilar != nil {
 				tracks, err = e.trackSimilar(ctx, seed)
+				for _, t := range tracks {
+					recordOrigin(ctx, t, seed)
+				}
 			}
 		}
 	}
@@ -132,9 +147,7 @@ func (e *Engine) tasteNeighbors(ctx context.Context, limit int) []domain.Track {
 	if err != nil {
 		return nil
 	}
-	if len(seeds) > 3 {
-		seeds = seeds[:3]
-	}
+	seeds = djAnchors(ctx, seeds, 3)
 	rows := make([][]domain.Track, len(seeds))
 	var wg sync.WaitGroup
 	for i, seed := range seeds {
@@ -144,6 +157,9 @@ func (e *Engine) tasteNeighbors(ctx context.Context, limit int) []domain.Track {
 			child, cancel := context.WithTimeout(ctx, 8*time.Second)
 			defer cancel()
 			rows[i], _ = e.trackSimilar(child, seed)
+			for _, t := range rows[i] {
+				recordOrigin(ctx, t, seed)
+			}
 		}(i, seed)
 	}
 	wg.Wait()
@@ -212,13 +228,28 @@ func (e *Engine) FinalizeDJ(ctx context.Context, tracks []domain.Track, exclude 
 		}
 	}
 
-	return diversifyTracks(out, nil, limit, artistCap)
+	// Keep the coordinator's MMR order. Finalization is playback validation,
+	// not another musical reranker.
+	counts := map[string]int{}
+	result := []domain.Track{}
+	for _, t := range out {
+		key := artistKey(t)
+		if counts[key] >= artistCap {
+			continue
+		}
+		if len(result) >= limit {
+			break
+		}
+		counts[key]++
+		result = append(result, t)
+	}
+	return result
 }
 
 // DJUnfamiliarArtists is an observable discovery proxy against the full local
 // profile, not a claim that the user has never heard an artist elsewhere.
 func (e *Engine) DJUnfamiliarArtists(ctx context.Context, tracks []domain.Track) []bool {
-	known := familiar(e.buildTaste(ctx))
+	known := familiar(e.buildTasteWindow(ctx, 10000, 730))
 	result := make([]bool, len(tracks))
 	for i, track := range tracks {
 		key := artistKey(track)
@@ -234,7 +265,7 @@ func (e *Engine) IntelligenceTaste(ctx context.Context) intelligence.TasteProfil
 	if e == nil {
 		return out
 	}
-	profile := e.buildTaste(ctx)
+	profile := e.buildTasteWindow(ctx, 10000, 730)
 	for _, artist := range profile.artists {
 		if len(out.Artists) == 20 {
 			break
@@ -256,7 +287,7 @@ func (e *Engine) IntelligenceTaste(ctx context.Context) intelligence.TasteProfil
 		}
 	}
 	if e.histFn != nil {
-		if rows, err := e.histFn(ctx, 100); err == nil {
+		if rows, err := e.histFn(ctx, 2000); err == nil {
 			for _, row := range rows {
 				addTags([]domain.Track{row.Track}, 1)
 			}

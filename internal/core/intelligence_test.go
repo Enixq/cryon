@@ -50,41 +50,49 @@ func TestDJSettingsNeverExposeKey(t *testing.T) {
 }
 
 func TestDJSubmissionHonorsConfigurationAndPersistedBudget(t *testing.T) {
+	a := coordinatorApp(t)
 	ctx := context.Background()
-	st := &notificationFeedbackStore{settings: map[string]string{}}
-	a := &App{ctx: ctx, store: st}
-	cfg := DJConfig{Enabled: true, Provider: "openai", Model: "test", APIKey: "test", Revision: 2, DailySegments: 1}
+	st := a.store
+	a.reco.SetTrackSimilarity(func(context.Context, domain.Track) ([]domain.Track, error) {
+		return []domain.Track{{ID: "new", Title: "New", Artists: []string{"Artist"}, Service: domain.ServiceSoundCloud}}, nil
+	})
+	cfg := DJConfig{Enabled: true, Provider: "openai", Model: "mock", APIKey: "test", Revision: 2, DailySegments: 1}
 	raw, _ := json.Marshal(cfg)
-	st.settings[djConfigKey] = string(raw)
+	_ = st.SettingSet(ctx, djConfigKey, string(raw))
 	usage, _ := json.Marshal(djUsage{Day: time.Now().UTC().Format("2006-01-02"), Used: 1, Tokens: 123})
-	st.settings["intelligence.private.usage"] = string(usage)
-	a.prepareDJ(cfg, intelligence.SessionProfile{ID: "session"}, intelligence.TasteProfile{}, djRadioRequest{}, nil)
-	if a.dj.busy || a.dj.done != nil {
-		t.Fatal("budget bypass after restart")
+	_ = st.SettingSet(ctx, "intelligence.private.usage", string(usage))
+	_ = st.SettingSet(ctx, "intelligence.private.failedRevision", "2")
+	session := intelligence.SessionProfile{ID: "budget", Mode: intelligence.RadioTrack, Seed: &intelligence.TrackSummary{ID: "yandex:seed"}}
+	_ = st.(intelligence.SessionRepository).CreateDJSession(ctx, session)
+	req := djRadioRequest{Mode: intelligence.RadioTrack, Limit: 5}
+	a.prepareDJ(cfg, session, a.reco.IntelligenceTaste(ctx), req, nil)
+	a.dj.Lock()
+	done := a.dj.done
+	a.dj.Unlock()
+	if done == nil {
+		t.Fatal("budget or legacy failed revision blocked local preparation")
 	}
-	if status := a.IntelligenceStatus(); status.UsedToday != 1 || status.TokensToday != 123 {
-		t.Fatal(status)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("local preparation blocked")
 	}
-	st.settings["intelligence.private.usage"] = "{}"
-	st.settings["intelligence.private.failedRevision"] = "2"
-	a.prepareDJ(cfg, intelligence.SessionProfile{ID: "another-session"}, intelligence.TasteProfile{}, djRadioRequest{}, nil)
-	if a.dj.done != nil {
-		t.Fatal("failed configuration retried automatically")
+	status := a.IntelligenceStatus()
+	if status.UsedToday != 1 || status.TokensToday != 123 || status.Diagnostic.LLMCalls != 0 || status.Diagnostic.Stage != "ready" {
+		t.Fatal("persisted budget must apply only to model calls", status)
 	}
-	delete(st.settings, "intelligence.private.failedRevision")
-	a.dj.day = ""
 	old := cfg
 	old.Revision--
-	a.prepareDJ(old, intelligence.SessionProfile{ID: "session"}, intelligence.TasteProfile{}, djRadioRequest{}, nil)
-	if a.dj.done != nil {
-		t.Fatal("stale configuration launched worker")
-	}
+	a.prepareDJ(old, session, a.reco.IntelligenceTaste(ctx), req, nil)
 	cfg.Enabled = false
 	raw, _ = json.Marshal(cfg)
-	st.settings[djConfigKey] = string(raw)
-	a.prepareDJ(cfg, intelligence.SessionProfile{ID: "session"}, intelligence.TasteProfile{}, djRadioRequest{}, nil)
-	if a.dj.done != nil {
-		t.Fatal("disabled DJ launched worker")
+	_ = st.SettingSet(ctx, djConfigKey, string(raw))
+	a.prepareDJ(cfg, session, a.reco.IntelligenceTaste(ctx), req, nil)
+	a.dj.Lock()
+	unchanged := a.dj.done == done
+	a.dj.Unlock()
+	if !unchanged {
+		t.Fatal("disabled or stale config started another job")
 	}
 }
 
@@ -182,10 +190,10 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 		t.Fatal("planner/selector pipeline failed")
 	}
 	diagnostic := a.IntelligenceStatus().Diagnostic
-	if diagnostic.LocalAdmitted != 0 || diagnostic.AISelected != 1 {
-		t.Fatal("AI must evaluate pool even when local recommendation admits none", diagnostic)
+	if diagnostic.LocalAdmitted != 1 || diagnostic.AISelected != 0 || diagnostic.LLMCalls != 1 {
+		t.Fatal("model plans; Go ranks real candidates independently", diagnostic)
 	}
-	if diagnostic.Stage != "ready" || diagnostic.Found != 2 || diagnostic.Selected != 1 || len(diagnostic.Searches) != 2 || diagnostic.Searches[0].State != "error" {
+	if diagnostic.Stage != "ready" || diagnostic.Found != 2 || diagnostic.Selected != 1 || len(diagnostic.Searches) != 4 || diagnostic.Searches[0].State != "timeout" {
 		t.Fatal("partial source results or diagnostics lost", diagnostic)
 	}
 	collection := a.loadDJCollection(ctx)
@@ -209,8 +217,8 @@ func TestDJBackgroundPlanSearchSelectAndConsume(t *testing.T) {
 	if current := a.loadDJCollection(ctx); current.ResultID != collection.ResultID || current.Job.JobID != collection.JobID {
 		t.Fatal("radio overwrote collection", current)
 	}
-	if raw, ok, _ := st.SettingGet(ctx, "intelligence.private.radioResult."+radioSession.ID); ok || raw != "" {
-		t.Fatal("recently suggested track recommended again", raw)
+	if raw, ok, _ := st.SettingGet(ctx, "intelligence.private.radioResult."+radioSession.ID); !ok || raw == "" {
+		t.Fatal("local ranking must not turn soft repeat penalty into empty pool", raw)
 	}
 	// A reaction after preparation must not discard otherwise usable AI work.
 	_, err = st.RecordDJFeedback(ctx, intelligence.FeedbackEvent{ID: "reaction", SessionID: session.ID, TrackID: "soundcloud:other", Kind: intelligence.FeedbackCompleted, At: time.Now(), PlayedMS: 10000, DurationMS: 10000})

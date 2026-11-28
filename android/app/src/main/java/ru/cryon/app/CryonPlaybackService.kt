@@ -78,11 +78,27 @@ class CryonPlaybackService : MediaSessionService() {
     private var waitingAfterError = false
     private var commandId = 0L
     private var tickerScheduled = false
+    private val listening = mutableMapOf<String, LongArray>()
+    private fun observeListening(p: Player) {
+        val id = p.currentMediaItem?.mediaId ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val position = p.currentPosition.coerceAtLeast(0)
+        val previous = listening[id]
+        var heard = previous?.get(2) ?: 0L
+        if (previous != null && p.isPlaying) {
+            val elapsed = now - previous[1]
+            val delta = position - previous[0]
+            if (elapsed in 0..5000 && delta > 0 && delta <= minOf(5000L, elapsed * 3 / 2 + 200)) heard += delta
+        }
+        listening[id] = longArrayOf(position, now, heard)
+        if (listening.size > 100) listening.remove(listening.keys.first())
+    }
     private val progressHandler = Handler(Looper.getMainLooper())
     private val progressTicker = object : Runnable {
         override fun run() {
             tickerScheduled = false
             val playbackPlayer = player ?: return
+            observeListening(playbackPlayer)
             publishState(stateFor(playbackPlayer))
             maybePreloadNext(playbackPlayer)
             maybeRefillRadio()
@@ -681,11 +697,14 @@ class CryonPlaybackService : MediaSessionService() {
     private fun reportDJ(kind: String, track: JSONObject? = queue.getOrNull(queueIndex), playedMs: Long = player?.currentPosition ?: 0) {
         val spec = track ?: return
         val session = spec.optString("djSessionId").ifBlank { djSessionId }
-        if (session.isBlank()) return
+        if (session.isBlank() && kind !in listOf("like", "dislike", "skip", "completed", "replay")) return
+        val observed = if (kind == "completed") listening.remove(spec.optString("id"))?.get(2) ?: 0L else playedMs
         val event = JSONObject().put("id", java.util.UUID.randomUUID().toString()).put("session_id", session).put("plan_id", spec.optString("djPlanId"))
-            .put("track_id", spec.optString("id")).put("kind", kind).put("played_ms", playedMs.coerceAtLeast(0)).put("duration_ms", (spec.optDouble("duration",0.0)*1000).toLong().coerceAtLeast(0))
+            .put("track_id", spec.optString("id")).put("kind", kind).put("played_ms", observed.coerceAtLeast(0)).put("duration_ms", (spec.optDouble("duration",0.0)*1000).toLong().coerceAtLeast(0))
             .put("at", java.time.Instant.now().toString())
-        feedbackWorker.execute { runCatching { request("/v1/intelligence/feedback", event) } }
+        val body = if (session.isBlank()) JSONObject().put("track", backendTrack(spec)).put("event", event) else event
+        val endpoint = if (session.isBlank()) "/v1/intelligence/behavior" else "/v1/intelligence/feedback"
+        feedbackWorker.execute { runCatching { request(endpoint, body) } }
     }
     private fun skipNext() {
         reportDJ("skip")

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getDJStatus, saveDJConfig, type DJStatus } from "../api/intelligence";
+import { getDJStatus, saveDJConfig, rebuildDJProfile, type DJStatus } from "../api/intelligence";
 
 export function IntelligenceSettings() {
   const [status, setStatus] = useState<DJStatus>();
@@ -65,12 +65,13 @@ export function IntelligenceSettings() {
     <section className="mb-5 rounded-2xl border border-white/10 bg-white/[.025] p-5">
       <h2 className="text-lg font-semibold text-white">Cryon DJ</h2>
       <p className="mt-2 text-sm text-slate-400">
-        AI DJ координирует поиск музыки, открывает направления и оценивает кандидатов. Без
-        подключения продолжает работать обычное радио Cryon.
+        Cryon DJ координирует поиск и ранжирует музыку локально. Модель необязательна: она помогает
+        выбрать стратегию. Без ключа DJ использует профиль и музыкальные связи. При выключенном DJ
+        работает обычное радио.
       </p>
       <label className="mt-4 flex gap-2 text-sm text-white">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-        Включить AI DJ
+        Включить Cryon DJ
       </label>
       <div className="mt-4 grid gap-3 text-sm text-slate-300">
         <label>
@@ -118,15 +119,11 @@ export function IntelligenceSettings() {
             className={field}
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder={
-              status?.configured
-                ? "Ключ сохранён (скрыт)"
-                : "Введите свой API-ключ"
-            }
+            placeholder={status?.configured ? "Ключ сохранён (скрыт)" : "Введите свой API-ключ"}
           />
         </label>
         <label>
-          Лимит подготовки сегментов в сутки
+          Лимит запросов стратегии к модели в сутки
           <input
             type="number"
             min={1}
@@ -140,7 +137,7 @@ export function IntelligenceSettings() {
       <p className="mt-2 text-sm text-slate-300" role="status">
         {status?.configured
           ? "Ключ сохранён на устройстве. Его значение скрыто; пустое поле оставляет сохранённый ключ для прежнего провайдера и endpoint."
-          : "Ключ пока не сохранён. Введите его и нажмите «Сохранить»."}
+          : "Ключ не сохранён. Cryon DJ может работать без модели."}
       </p>
       <p className="mt-3 text-xs text-slate-400">
         Ключ хранится на устройстве. Выбранному провайдеру передаются названия музыки, краткий
@@ -157,19 +154,35 @@ export function IntelligenceSettings() {
       <p role="status" className="mt-2 text-sm text-slate-300">
         {message ||
           (status?.enabled
-            ? `AI DJ: ${stateLabel[status.state] || status.state} · подготовлено ${status.prepared}`
-            : "AI DJ выключен")}
+            ? `Cryon DJ: ${stateLabel[status.state] || status.state} · подготовлено ${status.prepared}`
+            : "Cryon DJ выключен")}
       </p>
       {status?.diagnostic?.error && status.state === "fallback" && (
         <p className="mt-2 text-sm text-rose-300">{status.diagnostic.error}</p>
       )}
       {status?.enabled && (
         <p className="mt-2 text-xs text-slate-400">
-          Сегодня: {status.usedToday ?? 0} / {status.dailySegments} попыток ·{" "}
-          {status.tokensToday ?? 0} токенов по ответам API. Две AI-фазы на сегмент. Стоимость
-          зависит от модели.
+          Сегодня: {status.usedToday ?? 0} / {status.dailySegments} запросов стратегии ·{" "}
+          {status.tokensToday ?? 0} токенов по ответам API. Ранжирование выполняется на устройстве.
         </p>
       )}
+      <button
+        disabled={busy}
+        className="mt-4 text-sm text-slate-300 underline disabled:opacity-40"
+        onClick={() => {
+          setBusy(true);
+          void rebuildDJProfile()
+            .then((p) =>
+              setMessage(
+                `Профиль пересчитан: ${p.preferences.length} исполнителей. Новые подборки учтут изменения.`,
+              ),
+            )
+            .catch((e) => setMessage((e as Error).message))
+            .finally(() => setBusy(false));
+        }}
+      >
+        Пересчитать профиль из библиотеки и истории
+      </button>
     </section>
   );
 }

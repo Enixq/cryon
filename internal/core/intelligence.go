@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"Cryon2/internal/domain"
-	"Cryon2/internal/identity"
 	"Cryon2/internal/intelligence"
 	djproviders "Cryon2/internal/intelligence/providers"
 )
@@ -77,6 +76,7 @@ type djState struct {
 	fallbacks uint64
 	pending   map[string]djPending
 	done      chan struct{}
+	toolSlots chan struct{}
 }
 
 func djID() string { var b [16]byte; _, _ = rand.Read(b[:]); return hex.EncodeToString(b[:]) }
@@ -109,8 +109,6 @@ func (a *App) IntelligenceStatus() DJStatus {
 	state := a.dj.state
 	if !c.Enabled {
 		state = "disabled"
-	} else if c.APIKey == "" {
-		state = "not_configured"
 	} else if state == "" {
 		state = "ready"
 	}
@@ -151,7 +149,7 @@ func (a *App) ConfigureIntelligence(c DJConfig) error {
 	if c.APIKey == "" && old.Provider == c.Provider && old.BaseURL == c.BaseURL {
 		c.APIKey = old.APIKey
 	}
-	if c.Enabled && (c.Model == "" || c.APIKey == "") {
+	if c.Enabled && ((c.APIKey != "" && c.Model == "") || (old.APIKey != "" && c.APIKey == "" && (old.Provider != c.Provider || old.BaseURL != c.BaseURL))) {
 		return fmt.Errorf("укажите модель и ключ; при смене endpoint введите ключ заново")
 	}
 	if c.DailySegments <= 0 {
@@ -208,7 +206,7 @@ func (a *App) djRadio(ctx context.Context, req djRadioRequest) (djRadioResult, e
 		return a.reco.RelatedTracks(ctx, req.Track, req.Limit, req.Exclude...)
 	}
 	repo, ok := a.store.(intelligence.SessionRepository)
-	if !cfg.Enabled || cfg.APIKey == "" || !ok {
+	if !cfg.Enabled || !ok {
 		if req.PreparedOnly {
 			return result, nil
 		}
@@ -264,7 +262,7 @@ func (a *App) djRadio(ctx context.Context, req djRadioRequest) (djRadioResult, e
 	}
 	// Enabled DJ never substitutes ordinary radio for its unfinished result.
 
-	// Return the baseline now; only the next, unissued segment is prepared by AI.
+	// Refill the next unissued segment after consuming the ready queue.
 	if hit {
 		issued := append([]domain.Track{}, result.Tracks...)
 		go func() {
@@ -284,16 +282,13 @@ func djSummary(t domain.Track) intelligence.TrackSummary {
 }
 
 func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste intelligence.TasteProfile, req djRadioRequest, issued []domain.Track) {
-	a.dj.Lock()
-	if a.store != nil {
-		raw, _, _ := a.store.SettingGet(context.Background(), "intelligence.private.failedRevision")
-		if raw == fmt.Sprint(cfg.Revision) {
-			a.dj.Unlock()
-			return
-		}
+	if _, ok := a.store.(intelligence.SessionRepository); !ok || a.reco == nil {
+		return
 	}
+	a.dj.Lock()
+	req.Limit = max(1, min(req.Limit, 40))
 	currentConfig := a.djConfig(context.Background())
-	if currentConfig.Revision != cfg.Revision || (!req.Collection && (!currentConfig.Enabled || currentConfig.APIKey == "")) {
+	if currentConfig.Revision != cfg.Revision || (!req.Collection && !currentConfig.Enabled) {
 		a.dj.Unlock()
 		return
 	}
@@ -318,7 +313,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			}
 		}
 	}
-	if a.dj.busy || time.Now().Before(a.dj.cooldown) || (cfg.Enabled && cfg.APIKey != "" && a.dj.used >= cfg.DailySegments) {
+	if a.dj.busy || time.Now().Before(a.dj.cooldown) {
 		a.dj.Unlock()
 		return
 	}
@@ -331,9 +326,7 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 	a.dj.done = make(chan struct{})
 	done := a.dj.done
 	a.dj.cancel = cancel
-	if cfg.Enabled && cfg.APIKey != "" {
-		a.dj.used++
-	}
+
 	usage, _ := json.Marshal(djUsage{day, a.dj.used, a.dj.tokens})
 	if err := a.store.SettingSet(ctx, "intelligence.private.usage", string(usage)); err != nil {
 		a.dj.busy = false
@@ -373,8 +366,6 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 				diagnostic.Stage = "failed"
 				if ctx.Err() == context.Canceled {
 					diagnostic.Stage = "cancelled"
-				} else {
-					_ = a.store.SettingSet(context.WithoutCancel(ctx), "intelligence.private.failedRevision", fmt.Sprint(cfg.Revision))
 				}
 			}
 			a.saveDJDiagnostic(ctx, diagnostic)
@@ -426,15 +417,10 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		a.saveDJTasteSnapshot(ctx, jobID, taste)
 		input.Directions = []intelligence.Direction{}
 		input.RecentSuggestions = []intelligence.TrackSummary{}
-		if raw, _, err := a.store.SettingGet(ctx, "intelligence.private.suggestions"); err == nil {
-			_ = json.Unmarshal([]byte(raw), &input.RecentSuggestions)
+		for _, row := range a.recentDJSuggestions(ctx) {
+			input.RecentSuggestions = append(input.RecentSuggestions, row.Track)
 		}
-		for _, track := range a.loadDJCollection(ctx).Tracks {
-			if len(input.RecentSuggestions) >= 200 {
-				break
-			}
-			input.RecentSuggestions = append(input.RecentSuggestions, djSummary(track))
-		}
+
 		if repo, ok := a.store.(intelligence.PlanRepository); ok {
 			input.Directions, _ = repo.DJDirections(ctx, session.ID)
 		}
@@ -457,270 +443,15 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			raw, _ := json.Marshal(djUsage{a.dj.day, a.dj.used, a.dj.tokens})
 			_ = a.store.SettingSet(context.WithoutCancel(ctx), "intelligence.private.usage", string(raw))
 		}()
-		var plan, bestPlan intelligence.SearchPlan
-		var ranked, bestRanked intelligence.SelectionPlan
-		var selection, bestSelection intelligence.SelectionInput
-		var pool, bestPool, ordered, bestTracks []domain.Track
-		var candidates, bestCandidates []intelligence.Candidate
-		visited := map[string]bool{}
-		for iteration := 0; iteration < 2; iteration++ {
-			if ctx.Err() != nil {
-				return
-			}
-			if iteration > 0 && director != nil && director.TokenUsage() >= 12000 {
-				break
-			}
-			diagnostic.Iteration = iteration + 1
-			diagnostic.Stage = "planning"
-			diagnostic.RequestDeadlineAt = ""
-			a.saveDJDiagnostic(ctx, diagnostic)
-			input.Scope.RequestID = djID()
-			limits := intelligence.Limits{MaxSteps: 5, MaxCandidates: 40, MaxDirections: 3, MaxQueryRunes: 120, MaxReasonRunes: 160}
-			plan = intelligence.PersonalSearch(input)
-			if director != nil {
-				diagnostic.RequestDeadlineAt = time.Now().Add(djproviders.RequestTimeout).UTC().Format(time.RFC3339)
-				a.saveDJDiagnostic(ctx, diagnostic)
-				plan, err = director.PlanSearch(ctx, input)
-			} else {
-				err = nil
-			}
-			if err != nil {
-				diagnostic.Error = err.Error()
-				if iteration > 0 {
-					break
-				}
-				return
-			}
-			plan = intelligence.CanonicalSearch(plan)
-			if err = intelligence.ValidateSearch(input, plan, limits); err != nil {
-				diagnostic.Error = "План поиска модели отклонён: " + err.Error()
-				if iteration > 0 {
-					break
-				}
-				return
-			}
-			// Graph discovery resolves through existing catalogs; no arbitrary name probes.
-			steps := plan.Steps[:0]
-			for _, step := range plan.Steps {
-				key := step.Channel.Provider + "/" + step.Channel.Capability + ":" + strings.ToLower(strings.TrimSpace(step.Query))
-				if !visited[key] {
-					visited[key] = true
-					steps = append(steps, step)
-				}
-			}
-			plan.Steps = steps
-			if len(steps) == 0 {
-				diagnostic.Error = "Модель повторила уже исследованные направления"
-				break
-			}
-			if session.Mode == intelligence.RadioTrack {
-				plan.Strategy.SeedAdherence = max(.7, plan.Strategy.SeedAdherence)
-			}
-			queries := []string{}
-			for _, step := range plan.Steps {
-				queries = append(queries, step.Channel.Provider+"/"+step.Channel.Capability+": "+step.Query)
-			}
-			diagnostic.Stage = "searching"
-			diagnostic.RequestDeadlineAt = ""
-			searchOffset := len(diagnostic.Searches)
-			diagnostic.Searches = append(diagnostic.Searches, make([]DJSearchStatus, len(plan.Steps))...)
-			for i, step := range plan.Steps {
-				diagnostic.Searches[searchOffset+i] = DJSearchStatus{Iteration: iteration + 1, Source: step.Channel.Provider + "/" + step.Channel.Capability, Query: step.Query, State: "searching"}
-			}
-			a.saveDJDiagnostic(ctx, diagnostic)
-			pool = []domain.Track{}
-			provenance := map[string][]intelligence.Channel{}
-			origins := map[string]map[int]bool{}
-			// Channels run concurrently with a hard total budget from the validated plan.
-			var mu sync.Mutex
-			var wg sync.WaitGroup
-			for index, step := range plan.Steps {
-				wg.Add(1)
-				go func(index int, step intelligence.SearchStep) {
-					defer wg.Done()
-					defer a.recoverGoroutine("intelligence channel")
-					stepCtx, stop := context.WithTimeout(ctx, 45*time.Second)
-					if step.Channel.Capability == "discovery" || step.Channel.Capability == "taste_neighbors" {
-						stop()
-						stepCtx, stop = context.WithTimeout(ctx, 8*time.Second)
-					}
-					defer stop()
-					started := time.Now()
-					tracks, e := a.reco.ExecuteDJStep(stepCtx, step, req.Track)
-					mu.Lock()
-					defer mu.Unlock()
-					status := &diagnostic.Searches[searchOffset+index]
-					status.Found = len(tracks)
-					status.ElapsedMS = time.Since(started).Milliseconds()
-					unique := map[string]bool{}
-					for _, track := range tracks {
-						unique[djTrackID(track)] = true
-					}
-					status.Unique = len(identity.GroupTracks(tracks))
-					status.State = "ok"
-					if len(tracks) == 0 {
-						status.State = "empty"
-					}
-					if e != nil {
-						status.State = "error"
-					}
-					if stepCtx.Err() != nil {
-						status.State = "timeout"
-					}
-					diagnostic.Found += len(tracks)
-					// Keep partial results from a source that exceeded its budget.
-					for _, t := range tracks {
-						pool = append(pool, t)
-						if origins[djTrackID(t)] == nil {
-							origins[djTrackID(t)] = map[int]bool{}
-						}
-						origins[djTrackID(t)][index] = true
-						provenance[djTrackID(t)] = append(provenance[djTrackID(t)], step.Channel)
-					}
-				}(index, step)
-			}
-			wg.Wait()
-			exclude := append(append([]domain.Track{}, req.Exclude...), issued...)
-			if req.Mode == intelligence.RadioTrack {
-				exclude = append(exclude, req.Track)
-			}
-			// Preserve all metadata channels and query origins when catalogs agree on identity.
-			for _, group := range identity.GroupTracks(pool) {
-				channels := []intelligence.Channel{}
-				seenChannels := map[intelligence.Channel]bool{}
-				mergedOrigins := map[int]bool{}
-				for _, c := range group.Candidates {
-					for _, ch := range provenance[djTrackID(c.Track)] {
-						if !seenChannels[ch] {
-							channels = append(channels, ch)
-							seenChannels[ch] = true
-						}
-					}
-					for index := range origins[djTrackID(c.Track)] {
-						mergedOrigins[index] = true
-					}
-				}
-				for _, c := range group.Candidates {
-					provenance[djTrackID(c.Track)] = channels
-					origins[djTrackID(c.Track)] = mergedOrigins
-				}
-			}
-			pool = a.reco.PrepareDJPool(ctx, pool, exclude, 40)
-			diagnostic.Candidates = len(pool)
-			if len(pool) == 0 {
-				diagnostic.Error = "Источники не вернули доступные треки; оценка качества и AI не запускались"
-				input.Outcomes = append(input.Outcomes, intelligence.SearchOutcome{Iteration: iteration + 1, Queries: queries, Reason: "No usable candidates; change direction or provider"})
-				if iteration == 0 {
-					continue
-				}
-				diagnostic.Error = "Поиск не нашёл доступных кандидатов"
-				break
-			}
-			diagnostic.Stage = "ranking"
-			diagnostic.RequestDeadlineAt = time.Now().Add(djproviders.RequestTimeout).UTC().Format(time.RFC3339)
-			a.saveDJDiagnostic(ctx, diagnostic)
-			candidates = []intelligence.Candidate{}
-			unfamiliar := a.reco.DJUnfamiliarArtists(ctx, pool)
-			evidence := a.reco.DJEvidence(ctx, pool, req.Track, taste, input.RecentSuggestions)
-			for i, t := range pool {
-				candidates = append(candidates, intelligence.Candidate{Evidence: evidence[i], UnfamiliarArtist: unfamiliar[i], ID: fmt.Sprintf("c%d", i), Track: djSummary(t), BaseRank: i + 1, Channels: provenance[djTrackID(t)]})
-			}
-			input.Scope.RequestID = djID()
-			selection = intelligence.SelectionInput{Strategy: plan.Strategy, Context: input, PoolID: djID(), Candidates: candidates}
-			ranked = intelligence.PersonalSelection(selection)
-			diagnostic.LocalAdmitted = len(ranked.Ranked)
-			diagnostic.AISelected = 0
-			diagnostic.Engine = "personal"
-			if director != nil {
-				proposed, modelErr := director.Select(ctx, selection)
-				if modelErr == nil {
-					modelErr = intelligence.ValidateSelection(selection, proposed, limits)
-				}
-				if modelErr == nil {
-
-					diagnostic.AISelected = len(proposed.Ranked)
-					ranked = proposed
-					diagnostic.Engine = "ai"
-				} else {
-					diagnostic.Warning = "AI-корректировка не применена: " + modelErr.Error() + "; использована персональная оценка Cryon"
-				}
-			}
-
-			diagnostic.Stage = "saving"
-			diagnostic.RequestDeadlineAt = ""
-			a.saveDJDiagnostic(ctx, diagnostic)
-			current, exists, err := repo.DJSession(ctx, session.ID)
-			if err != nil || !exists || current.ID != session.ID || ctx.Err() != nil {
-				return
-			}
-			if a.djConfig(ctx).Revision != cfg.Revision {
-				return
-			}
-			ordered = a.reco.SelectDJ(ctx, pool, candidates, ranked, plan.Strategy, session.Mode, 20)
-			for i := range plan.Steps {
-				count := 0
-				for _, t := range ordered {
-					if origins[djTrackID(t)][i] {
-						count++
-					}
-				}
-				diagnostic.Searches[searchOffset+i].Accepted = count
-			}
-			for _, candidate := range candidates {
-				a.recordDJLifecycle(ctx, session.ID, selection.PoolID, candidate.Track.ID, intelligence.FeedbackCandidate)
-			}
-			for i := range ordered {
-				ordered[i].DJSessionID = session.ID
-				ordered[i].DJPlanID = selection.PoolID
-			}
-
-			reason := "Enough admitted candidates"
-			if len(ordered) < min(6, max(1, req.Limit)) {
-				reason = "Too few relevant accepted candidates; try different anchors and providers"
-			}
-			input.Outcomes = append(input.Outcomes, intelligence.SearchOutcome{Iteration: iteration + 1, Queries: queries, Found: len(pool), Accepted: len(ordered), Reason: reason})
-			if len(ordered) > len(bestTracks) {
-				bestTracks = append([]domain.Track{}, ordered...)
-				bestPool = append([]domain.Track{}, pool...)
-				bestCandidates = append([]intelligence.Candidate{}, candidates...)
-				bestPlan = plan
-				bestRanked = ranked
-				bestSelection = selection
-			}
-			novel := 0
-			for _, candidate := range candidates {
-				if candidate.UnfamiliarArtist {
-					for _, track := range ordered {
-						if candidate.Track.ID == djTrackID(track) {
-							novel++
-							break
-						}
-					}
-				}
-			}
-			sources := map[domain.ServiceID]bool{}
-			for _, track := range ordered {
-				sources[track.Service] = true
-			}
-			enough := len(ordered) >= min(6, max(1, req.Limit))
-			if plan.Strategy.Exploration >= .5 && novel == 0 {
-				enough = false
-				input.Outcomes[len(input.Outcomes)-1].Reason = "Only familiar artists; explore compatible unfamiliar artists"
-			}
-			if plan.Strategy.Diversity >= .7 && len(sources) < 2 {
-				enough = false
-				input.Outcomes[len(input.Outcomes)-1].Reason = "Low source coverage; try another available catalog without adding unrelated filler"
-			}
-			if enough {
-				break
-			}
-			input.Directions = ranked.Directions
+		output := a.coordinateDJ(ctx, cfg, input, req, issued, director, &diagnostic)
+		ordered, candidates, plan, ranked, selection := output.tracks, output.candidates, output.plan, output.ranked, output.selection
+		for i := range ordered {
+			ordered[i].DJSessionID = session.ID
+			ordered[i].DJPlanID = selection.PoolID
 		}
-		ordered, pool, candidates, plan, ranked, selection = bestTracks, bestPool, bestCandidates, bestPlan, bestRanked, bestSelection
 		if len(ordered) == 0 {
-			diagnostic.Outcomes = input.Outcomes
 			if diagnostic.Error == "" {
-				diagnostic.Error = "Кандидаты не прошли отбор. Предыдущая подборка не обновлена"
+				diagnostic.Error = "Нет кандидатов с подтверждёнными персональными связями; предыдущая коллекция сохранена"
 			}
 			return
 		}
@@ -740,7 +471,6 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 			return
 		}
 		diagnostic.Error = ""
-		diagnostic.Outcomes = input.Outcomes
 		diagnostic.Stage = "saving"
 		diagnostic.RequestDeadlineAt = ""
 		a.saveDJDiagnostic(ctx, diagnostic)
@@ -770,15 +500,11 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 		for _, track := range ordered {
 			a.recordDJLifecycle(ctx, session.ID, selection.PoolID, djTrackID(track), intelligence.FeedbackRecommended)
 		}
-		suggestions := append([]intelligence.TrackSummary{}, input.RecentSuggestions...)
+		suggestions := []intelligence.TrackSummary{}
 		for _, track := range ordered {
 			suggestions = append(suggestions, djSummary(track))
 		}
-		if len(suggestions) > 200 {
-			suggestions = suggestions[len(suggestions)-200:]
-		}
-		rawSuggestions, _ := json.Marshal(suggestions)
-		_ = a.store.SettingSet(ctx, "intelligence.private.suggestions", string(rawSuggestions))
+		a.saveDJSuggestions(ctx, suggestions)
 		a.dj.ready[session.ID] = djReady{ordered, selection.Context.Scope, time.Now()}
 		a.dj.prepared++
 		diagnostic.Selected = len(ordered)
@@ -788,6 +514,20 @@ func (a *App) prepareDJ(cfg DJConfig, session intelligence.SessionProfile, taste
 
 func (a *App) handleIntelligence(w http.ResponseWriter, r *http.Request) {
 	switch strings.TrimPrefix(r.URL.Path, "/v1/intelligence/") {
+	case "tuning":
+		a.handleDJTuning(w, r)
+	case "profile":
+		if r.Method != "GET" {
+			writeAPIError(w, 405, "требуется GET")
+			return
+		}
+		if a.reco == nil {
+			writeAPIError(w, 503, "движок недоступен")
+			return
+		}
+		writeAPIJSON(w, 200, a.reco.IntelligenceTaste(r.Context()))
+	case "behavior":
+		a.handleDJBehavior(w, r)
 	case "collection":
 		a.handleDJCollection(w, r)
 	case "config":

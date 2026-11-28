@@ -18,7 +18,7 @@ describe("radio session", () => {
     expect(reportDJEvent).not.toHaveBeenCalled();
     expect(consumeRadioCompletion(item)).toBe(true);
     recordRadioSignal(item, "completed");
-    expect(reportDJEvent).toHaveBeenCalledWith(item, "completed", 180000);
+    expect(reportDJEvent).toHaveBeenCalledWith(item, "completed", 0);
   });
 
   it("removes skipped tracks and favours artists completed in this session", () => {

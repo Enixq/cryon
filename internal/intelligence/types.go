@@ -111,21 +111,34 @@ type SearchPlan struct {
 }
 
 type Candidate struct {
-	Evidence         Evidence     `json:"evidence"`
-	UnfamiliarArtist bool         `json:"unfamiliar_artist"`
-	ID               string       `json:"candidate_id"`
-	Track            TrackSummary `json:"track"`
-	BaseRank         int          `json:"base_rank"`
-	Channels         []Channel    `json:"channels"`
+	CanonicalID      string            `json:"canonical_id,omitempty"`
+	Origins          []CandidateOrigin `json:"origins"`
+	Evidence         Evidence          `json:"evidence"`
+	UnfamiliarArtist bool              `json:"unfamiliar_artist"`
+	ID               string            `json:"candidate_id"`
+	Track            TrackSummary      `json:"track"`
+	BaseRank         int               `json:"base_rank"`
+	Channels         []Channel         `json:"channels"`
+}
+type CandidateOrigin struct {
+	Channel       Channel  `json:"channel"`
+	AnchorID      string   `json:"anchor_id"`
+	Query         string   `json:"query"`
+	AnchorArtists []string `json:"anchor_artists,omitempty"`
 }
 type Evidence struct {
-	TasteSimilarity   float64 `json:"taste_similarity"`
-	SeedSimilarity    float64 `json:"seed_similarity"`
-	SeedKnown         bool    `json:"seed_evidence_known"`
-	MetadataQuality   float64 `json:"metadata_quality"`
-	RecentlyPlayed    bool    `json:"recently_played"`
-	RecentlySuggested bool    `json:"recently_suggested"`
-	Version           string  `json:"version"`
+	ArtistAffinity     float64 `json:"artist_affinity"`
+	SessionAffinity    float64 `json:"session_affinity"`
+	GraphAffinity      float64 `json:"graph_affinity"`
+	Feedback           float64 `json:"feedback"`
+	IdentityConfidence float64 `json:"identity_confidence"`
+	TasteSimilarity    float64 `json:"taste_similarity"`
+	SeedSimilarity     float64 `json:"seed_similarity"`
+	SeedKnown          bool    `json:"seed_evidence_known"`
+	MetadataQuality    float64 `json:"metadata_quality"`
+	RecentlyPlayed     bool    `json:"recently_played"`
+	RecentlySuggested  bool    `json:"recently_suggested"`
+	Version            string  `json:"version"`
 }
 
 type SelectionInput struct {

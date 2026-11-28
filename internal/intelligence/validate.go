@@ -29,7 +29,7 @@ func bounded(s string, n int) bool {
 // invented text query for them rejects otherwise executable model plans.
 func UsesContextQuery(ch Channel) bool {
 	return (ch.Capability == "similar_tracks" && (ch.Provider == "lastfm" || ch.Provider == "yandex")) ||
-		(ch.Provider == "cryon" && (ch.Capability == "discovery" || ch.Capability == "taste_neighbors" || ch.Capability == "library"))
+		(ch.Provider == "cryon" && (ch.Capability == "discovery" || ch.Capability == "taste_neighbors" || ch.Capability == "history_neighbors" || ch.Capability == "library"))
 }
 
 // CanonicalSearch preserves the selected tools, limits and strategy. It only

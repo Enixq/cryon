@@ -72,7 +72,7 @@ it("updates the result and status from the same collection snapshot, retaining o
       </QueryClientProvider>
     </MemoryRouter>,
   );
-  await screen.findByText("Cryon DJ · AI-подборка готова");
+  await screen.findByText("Cryon DJ · Персональная подборка готова");
   fireEvent.click(screen.getByText("Подобрать музыку"));
   await screen.findByText("Cryon DJ · Инструменты DJ собирают кандидатов…");
   expect(screen.getByTestId("tracks")).toHaveTextContent("old-result");
@@ -96,7 +96,7 @@ it("updates the result and status from the same collection snapshot, retaining o
     await client.invalidateQueries({ queryKey: ["djCollection"] });
   });
   await waitFor(() => expect(screen.getByTestId("tracks")).toHaveTextContent("new-result"));
-  expect(screen.getByText("Cryon DJ · AI-подборка готова")).toBeInTheDocument();
+  expect(screen.getByText("Cryon DJ · Персональная подборка готова")).toBeInTheDocument();
   expect(screen.queryByText(/Предыдущая подборка/)).not.toBeInTheDocument();
   client.clear();
 });

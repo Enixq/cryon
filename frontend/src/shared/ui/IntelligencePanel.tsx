@@ -30,7 +30,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
   });
   const job = view?.job;
   const preparingStages = ["planning", "searching", "ranking", "saving"];
-  const active = status?.enabled && status.configured;
+  const active = status?.enabled;
   const preparing = preparingStages.includes(job?.stage ?? "");
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -46,7 +46,7 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
   const stages: Record<string, string> = {
     planning: active ? "DJ определяет стратегию поиска…" : "Строим персональный план…",
     searching: "Инструменты DJ собирают кандидатов…",
-    ranking: "AI оценивает найденные треки…",
+    ranking: "Cryon оценивает кандидатов локально…",
     saving: "Сохраняем подборку…",
   };
   const label = !status
@@ -61,7 +61,9 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
             ? diagnostic?.error ||
               "Предыдущая попытка не завершилась. Запустите поиск для подробной диагностики"
             : view?.updatedAt
-              ? (job?.engine === "personal" ? "Персональная подборка готова · без AI-корректировки" : "AI-подборка готова")
+              ? job?.engine === "local_ai_strategy"
+                ? "Подборка готова · стратегия AI, оценка Cryon"
+                : "Персональная подборка готова"
               : "AI подключён. Запустите подборку или радио";
   const start = async () => {
     setStarting(true);
@@ -92,6 +94,17 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
             : ""}
         </p>
       )}
+      {job?.stage && (
+        <p className="mt-1 text-slate-400">
+          Стратегия:{" "}
+          {job.strategySource === "model"
+            ? "AI"
+            : job.strategySource === "cache"
+              ? "сохранённый план AI"
+              : "Cryon"}{" "}
+          · запросов к модели в задаче: {job.llmCalls ?? 0} · ранжирование в Go
+        </p>
+      )}
       {job?.warning && <p className="mt-2 text-slate-400">{job.warning}</p>}
       {view?.updatedAt && (
         <p className="mt-1 text-slate-400">
@@ -109,7 +122,8 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
       {diagnostic && diagnostic.stage && (
         <div className="mt-2 text-slate-400">
           Итерация: {diagnostic.iteration ?? 1} · найдено: {diagnostic.found} · допущено к оценке:{" "}
-          {diagnostic.candidates} · отбор Cryon: {diagnostic.localAdmitted ?? "—"} · отбор AI: {diagnostic.engine === "ai" ? diagnostic.aiSelected ?? 0 : "не применён"} · в результате: {diagnostic.selected}
+          {diagnostic.candidates} · отбор Cryon: {diagnostic.localAdmitted ?? "—"} · отбор AI: не
+          используется · в результате: {diagnostic.selected}
           {(diagnostic.searches ?? []).length > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer">Как DJ искал музыку</summary>
@@ -120,9 +134,11 @@ export function IntelligencePanel({ compact = false }: { compact?: boolean }) {
                   · {search.elapsedMs ?? 0} мс
                   {search.state === "timeout"
                     ? " · источник не уложился во время"
-                    : search.state === "error"
-                      ? " · источник недоступен"
-                      : ""}
+                    : search.state === "cancelled"
+                      ? " · ожидание остановлено: кандидатов достаточно"
+                      : search.state === "error"
+                        ? " · источник недоступен"
+                        : ""}
                 </p>
               ))}
             </details>

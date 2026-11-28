@@ -1,5 +1,6 @@
 import { reportDJEvent } from "../shared/api/intelligence";
 import type { Track } from "../shared/types";
+import { consumeListening } from "./listeningTime";
 
 type RadioSignal = { trackId: string; artist: string; outcome: "skipped" | "completed" };
 
@@ -20,7 +21,7 @@ export function resetRadioSession(): void {
   completedTrackId = "";
 }
 
-export function recordRadioSignal(track: Track, outcome: RadioSignal["outcome"], playedMs = outcome === "completed" ? track.duration * 1000 : 0, observationOnly = false): void {
+export function recordRadioSignal(track: Track, outcome: RadioSignal["outcome"], playedMs = consumeListening(track.id), observationOnly = false): void {
   if (!observationOnly) reportDJEvent(track, outcome === "completed" ? "completed" : "skip", playedMs);
   const artist = (track.primaryArtist || track.artist).trim().toLocaleLowerCase();
   completedTrackId = outcome === "completed" ? track.id : "";

@@ -33,9 +33,11 @@ func (e *Engine) DJEvidence(ctx context.Context, pool []domain.Track, seed domai
 	tv = applyIDF(tv, idf)
 	played := map[string]bool{}
 	if e.histFn != nil {
-		if rows, err := e.histFn(ctx, 120); err == nil {
+		if rows, err := e.histFn(ctx, 2000); err == nil {
 			for _, r := range rows {
-				played[trackKey(r.Track)] = true
+				if time.Since(time.UnixMilli(r.PlayedAtMs)) < 24*time.Hour {
+					played[trackKey(r.Track)] = true
+				}
 			}
 		}
 	}
@@ -73,7 +75,7 @@ func (e *Engine) DJEvidence(ctx context.Context, pool []domain.Track, seed domai
 		if gs := identity.GroupTracks([]domain.Track{t}); len(gs) > 0 && len(gs[0].Candidates) > 0 {
 			version = string(gs[0].Candidates[0].Version)
 		}
-		out[i] = intelligence.Evidence{TasteSimilarity: cosine(tv, cv), SeedSimilarity: sim, SeedKnown: known, MetadataQuality: quality, RecentlyPlayed: played[trackKey(t)], RecentlySuggested: suggested[trackKey(t)], Version: version}
+		out[i] = intelligence.Evidence{ArtistAffinity: artistAffinity(t.Artists, taste), IdentityConfidence: .9, Feedback: e.feedbackFor(ctx, t), TasteSimilarity: cosine(tv, cv), SeedSimilarity: sim, SeedKnown: known, MetadataQuality: quality, RecentlyPlayed: played[trackKey(t)], RecentlySuggested: suggested[trackKey(t)], Version: version}
 	}
 	return out
 }
@@ -163,7 +165,7 @@ func (e *Engine) SelectDJ(ctx context.Context, pool []domain.Track, candidates [
 }
 
 func (e *Engine) enrichDJTaste(ctx context.Context, out *intelligence.TasteProfile) {
-	profile := e.buildTaste(ctx)
+	profile := e.buildTasteWindow(ctx, 10000, 730)
 	out.Preferences = []intelligence.ArtistPreference{}
 	out.Positive = []intelligence.TrackSummary{}
 	out.Negative = []intelligence.TrackSummary{}
@@ -173,14 +175,14 @@ func (e *Engine) enrichDJTaste(ctx context.Context, out *intelligence.TasteProfi
 		peak = math.Max(peak, a.weight)
 	}
 	for _, a := range profile.artists {
-		if len(out.Preferences) == 20 {
+		if len(out.Preferences) == 100 {
 			break
 		}
 		confidence := math.Min(1, float64(a.plays)/8)
 		if a.deliberate {
 			confidence = math.Max(confidence, .8)
 		}
-		out.Preferences = append(out.Preferences, intelligence.ArtistPreference{Name: a.name, Weight: a.weight / peak, Confidence: confidence, LastPlayedMS: a.lastPlayed})
+		out.Preferences = append(out.Preferences, intelligence.ArtistPreference{Name: a.name, Weight: math.Round(a.weight/peak*100) / 100, Confidence: confidence, LastPlayedMS: a.lastPlayed})
 	}
 	summary := func(t domain.Track) intelligence.TrackSummary {
 		tags := []string{}
@@ -199,13 +201,31 @@ func (e *Engine) enrichDJTaste(ctx context.Context, out *intelligence.TasteProfi
 			}
 		}
 	}
+	if len(out.Positive) < 12 && e.histFn != nil {
+		if rows, err := e.histFn(ctx, 2000); err == nil {
+			seen := map[string]bool{}
+			for _, t := range out.Positive {
+				seen[t.ID] = true
+			}
+			for _, r := range rows {
+				t := summary(r.Track)
+				if !seen[t.ID] {
+					out.Positive = append(out.Positive, t)
+					seen[t.ID] = true
+				}
+				if len(out.Positive) >= 12 {
+					break
+				}
+			}
+		}
+	}
 	feedback := e.loadFeedback(ctx)
 	for artist := range profile.blockedArtists {
 		out.BlockedArtists = append(out.BlockedArtists, artist)
 	}
 	sort.Strings(out.BlockedArtists)
 	if e.histFn != nil {
-		if rows, err := e.histFn(ctx, 120); err == nil {
+		if rows, err := e.histFn(ctx, 2000); err == nil {
 			for _, r := range rows {
 				if feedback.Tracks[trackKey(r.Track)] < 0 && len(out.Negative) < 12 {
 					out.Negative = append(out.Negative, summary(r.Track))
@@ -228,22 +248,11 @@ func (e *Engine) djReactionWeights(ctx context.Context) map[string]float64 {
 		Track intelligence.TrackSummary  `json:"track"`
 	}
 	_ = json.Unmarshal([]byte(raw), &rows)
+	weights := e.behaviorWeights(ctx)
 	for _, r := range rows {
-		weight := 0.0
-		switch r.Event.Kind {
-		case intelligence.FeedbackLike:
-			weight = 3
-		case intelligence.FeedbackDislike:
-			weight = -3
-		case intelligence.FeedbackReplay:
-			weight = 1.5
-		case intelligence.FeedbackCompleted:
-			if r.Event.DurationMS > 0 && r.Event.PlayedMS*100 >= r.Event.DurationMS*80 {
-				weight = .4
-			}
-		}
+		weight := weights.Signal(r.Event)
 		if !r.Event.At.IsZero() {
-			weight *= math.Exp2(-math.Max(0, time.Since(r.Event.At).Hours()) / (30 * 24))
+			weight *= math.Exp2(-math.Max(0, time.Since(r.Event.At).Hours()) / (weights.HalfLifeDays * 24))
 		}
 		for _, artist := range r.Track.Artists {
 			key := strings.ToLower(strings.TrimSpace(artist))
@@ -281,4 +290,15 @@ func djTagVector(tags []string) tagVector {
 		}
 	}
 	return v
+}
+
+func (e *Engine) behaviorWeights(ctx context.Context) intelligence.BehaviorWeights {
+	weights := intelligence.DefaultBehaviorWeights()
+	if raw, _, _ := e.storeSetting(ctx, "intelligence.behavior.weights"); raw != "" {
+		var configured intelligence.BehaviorWeights
+		if json.Unmarshal([]byte(raw), &configured) == nil && configured.Valid() {
+			weights = configured
+		}
+	}
+	return weights
 }

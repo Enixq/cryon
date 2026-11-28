@@ -13,6 +13,9 @@ export const djPollingOptions = {
 
 export type DJDiagnostic = {
   requestDeadlineAt?: string;
+  strategySource?: string;
+  planFromCache?: boolean;
+  llmCalls?: number;
   engine?: string;
   localAdmitted?: number;
   aiSelected?: number;
@@ -66,7 +69,7 @@ export function canUseDJ(): boolean {
 }
 export async function getDJStatus(): Promise<DJStatus> {
   const status = await request<DJStatus>("/v1/intelligence/config");
-  enabled = status.enabled && status.configured;
+  enabled = status.enabled;
   return status;
 }
 export async function saveDJConfig(value: {
@@ -82,7 +85,7 @@ export async function saveDJConfig(value: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(value),
   });
-  enabled = status.enabled && status.configured;
+  enabled = status.enabled;
   resetDJSession();
   return status;
 }
@@ -160,7 +163,27 @@ export function reportDJEvent(
   playedMs = 0,
 ): void {
   const session = track.djSessionId || sessions.get(track.id);
-  if (!session || !hasApiV1Runtime()) return;
+  if (!hasApiV1Runtime()) return;
+  if (!session) {
+    if (["like", "dislike", "skip", "completed", "replay"].includes(kind)) {
+      void request("/v1/intelligence/behavior", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          track: toBackendTrack(track),
+          event: {
+            id: crypto.randomUUID(),
+            track_id: track.id,
+            kind,
+            played_ms: Math.max(0, Math.round(playedMs)),
+            duration_ms: Math.max(0, Math.round(track.duration * 1000)),
+            at: new Date().toISOString(),
+          },
+        }),
+      }).catch(() => {});
+    }
+    return;
+  }
   void request("/v1/intelligence/feedback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -201,4 +224,10 @@ export async function getDJCollection(): Promise<Track[]> {
 }
 export async function refreshDJCollection(): Promise<void> {
   await request("/v1/intelligence/collection", { method: "POST" });
+}
+
+export async function rebuildDJProfile(): Promise<{
+  preferences: { name: string; weight: number }[];
+}> {
+  return request("/v1/intelligence/profile");
 }

@@ -85,7 +85,7 @@ func TestDJEmptyContextQueryReachesSourceAndSavesResult(t *testing.T) {
 		t.Fatal("worker leaked")
 	}
 	result := a.loadDJCollection(ctx)
-	if result.Job.Stage != "ready" || len(result.Tracks) != 1 || modelCalls.Load() != 2 || sourceCalls.Load() != 1 {
+	if result.Job.Stage != "ready" || len(result.Tracks) != 1 || modelCalls.Load() != 1 || sourceCalls.Load() != 1 {
 		t.Fatal(result.Job, modelCalls.Load(), sourceCalls.Load())
 	}
 }
